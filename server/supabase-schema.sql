@@ -37,6 +37,24 @@ $$ language plpgsql;
 -- Row Level Security is intentionally left OFF on these tables. This app's
 -- own server-side code (server/routes.js, server/auth.js) already enforces
 -- every permission check before it ever calls the database, and it always
--- connects using the service role key (never the public anon key), so RLS
--- would be redundant here. Do not expose SUPABASE_URL/SUPABASE_ANON_KEY-based
--- direct browser access to these tables without adding RLS policies first.
+-- connects using the service role (or new "secret") key — never the public
+-- anon/publishable key — so RLS would be redundant here. Do not expose
+-- SUPABASE_URL + the anon/publishable key to the browser for direct access
+-- to these tables without adding RLS policies first.
+
+-- Explicit grants for the service_role connection this app always uses.
+-- Newer Supabase projects let you turn OFF "Automatically expose new
+-- tables" at project-creation time (Supabase's own recommended, more
+-- secure default) — when that's off, NO role (not even service_role) gets
+-- default access to a newly created table, so without the grants below the
+-- app would get permission errors even though it's using the elevated key.
+-- These grants intentionally go to service_role only, not anon/authenticated
+-- — this app never uses the anon/publishable key, and keeping this table
+-- ungranted to anon/authenticated is a stronger security posture than the
+-- old "grant to all three roles by default" behavior anyway. Safe to run
+-- even if your project used the old default (or you left "Automatically
+-- expose new tables" checked) — these are additive and idempotent.
+grant usage on schema public to service_role;
+grant select, insert, update, delete on records to service_role;
+grant select, insert, update, delete on counters to service_role;
+grant execute on function increment_counter(text) to service_role;

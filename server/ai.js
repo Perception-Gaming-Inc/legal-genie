@@ -29,15 +29,18 @@
  * the README's AI section). Everything else works with zero setup.
  */
 
-// gemini-2.5-flash is used as the default: a confirmed-real, generally
-// available, cost-effective model as of when this file was written, and
-// historically the kind of model tier Google keeps on its free tier. Google
-// ships new model generations fairly often — if you want a newer one, just
-// set GEMINI_MODEL to its exact model ID from
-// https://ai.google.dev/gemini-api/docs/models (no code change needed).
+// Google rolls its model lineup over fairly often, and — as confirmed in
+// real testing on this project — sometimes restricts an older model from
+// *new* API keys/users well before that model's official deprecation date,
+// which is exactly what happened with the previous default here
+// (gemini-2.5-flash started returning 404 "no longer available to new
+// users" for a freshly created key). gemini-3.6-flash is the current
+// confirmed-working default as of when this was last updated. If this ever
+// happens again, no code change is needed — just set GEMINI_MODEL to
+// whatever's current from https://ai.google.dev/gemini-api/docs/models.
 // Check https://aistudio.google.com/rate-limit (after signing in) for your
 // account's current free-tier limits and which models they apply to.
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = 'gemini-3.6-flash';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 // ---------------------------------------------------------------------------

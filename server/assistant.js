@@ -30,7 +30,7 @@ const auth = require('./auth');
 
 // Kept in sync with server/ai.js's default — see that file's comment for
 // why this specific model, and how to change it via GEMINI_MODEL.
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = 'gemini-3.6-flash';
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const MAX_TOOL_ROUNDS = 4; // safety cap against runaway tool-call loops
 

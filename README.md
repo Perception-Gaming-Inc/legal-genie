@@ -127,7 +127,7 @@ not required to get started, though.
 Optionally, set **`GEMINI_MODEL`** to a different model ID (from
 [Google's model list](https://ai.google.dev/gemini-api/docs/models)) if you
 want to use a newer/faster model later; the app ships with a safe,
-known-working default (`gemini-2.5-flash`) so this isn't required to get
+known-working default (`gemini-3.6-flash`) so this isn't required to get
 started.
 
 ### What it can and can't read

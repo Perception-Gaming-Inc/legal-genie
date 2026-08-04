@@ -84,14 +84,112 @@ To run on a different port locally: `PORT=8080 node server.js`.
 Role-based access control is enforced on both the API (server-side, so it
 cannot be bypassed) and the UI (relevant buttons/nav items hidden per role).
 
+## AI smart-fill (optional)
+
+The "New Case" / "New Contract" / "New Compliance Item" / "Upload Document"
+forms each have an **"AI 智慧填寫" (AI smart-fill)** panel at the top. Paste
+in free text (an email, a case summary, a contract excerpt, a regulator's
+notice...) and/or upload a file (PDF, image, or plain text), click **"AI 幫我填"**,
+and Gemini reads it and pre-fills the matching fields below — title, type,
+priority, dates, a summary, etc. Nothing is ever submitted automatically:
+the form is just pre-filled, so the person still reviews and edits before
+saving, same as filling it by hand.
+
+**This is entirely optional.** Every other part of the app works exactly
+the same with or without it configured — if the API key below isn't set,
+only the "AI 幫我填" button itself shows a message asking to set it up;
+nothing else is affected.
+
+Uses **Google's Gemini API** specifically (rather than a paid-only
+provider) because it has a genuinely free tier — no credit card required,
+just rate limits (requests-per-minute/day caps; see below).
+
+### Setup (one-time, free)
+
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey),
+   sign in with a Google account, and create an API key — no credit card
+   needed for the free tier.
+2. Set an environment variable **`GEMINI_API_KEY`** to that key —
+   locally in your shell before `node server.js`, or in Vercel's Project
+   Settings → Environment Variables (same place `SUPABASE_URL` lives; see
+   the Go-Live Guide for the click-by-click steps if needed), then
+   redeploy.
+3. That's it — no other setup, database changes, or billing required.
+
+The free tier has rate limits (a cap on requests per minute/day, not
+money) — check your account's current limits at
+[aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit)
+after signing in. If your team's usage ever needs more headroom than the
+free tier allows, linking a billing account raises those limits (see
+[ai.google.dev/gemini-api/docs/billing](https://ai.google.dev/gemini-api/docs/billing)) —
+not required to get started, though.
+
+Optionally, set **`GEMINI_MODEL`** to a different model ID (from
+[Google's model list](https://ai.google.dev/gemini-api/docs/models)) if you
+want to use a newer/faster model later; the app ships with a safe,
+known-working default (`gemini-2.5-flash`) so this isn't required to get
+started.
+
+### What it can and can't read
+
+- **Pasted text** — always works, for any field.
+- **PDF and image files (PNG/JPG/GIF/WEBP)** — read directly.
+- **Plain text files (.txt)** — read directly.
+- **Word/Excel files (.docx/.xlsx) and other formats** — not supported
+  directly; copy the relevant text and paste it instead, or save/print the
+  file to PDF first.
+
+Fields that reference another record by internal ID — Owner, Assignee,
+Related Case/Contract — are intentionally left for the person to pick from
+the dropdown; the AI has no way to know your team's user IDs or your
+existing case/contract IDs, so it never guesses those.
+
+See `server/ai.js` for the implementation (all extraction schemas per
+module live there, in one place, if you want to adjust what it looks for).
+
+## AI Assistant (optional)
+
+A chat panel — the **"AI Assistant"** item at the top of the sidebar,
+available to everyone regardless of role. Instead of navigating to a
+specific module, just describe what you want in plain language:
+
+- *"幫我找去年所有菲律賓客戶的授權合約"* (find something) — the assistant
+  searches cases/contracts/documents and answers directly.
+- *"幫我開一個高優先度的商務案件，負責人是我自己"* (create something) — the
+  assistant proposes the record it would create (title, type, priority,
+  owner, etc. — resolved to your team's real names) as a card with
+  **"確認執行" / "取消"** buttons. Nothing is written to the database until
+  you click confirm — the assistant never creates or changes a record on
+  its own.
+
+It shares the same `GEMINI_API_KEY` setup as AI smart-fill above — no
+separate setup needed. It also respects the same permission model as the
+rest of the app: a Viewer can still ask it to search/look things up, but
+if they ask it to create a case, confirming that proposal is rejected with
+the same permission error the "New Case" button itself would give them —
+the assistant is a shortcut for using the app, not a way around its
+permission checks.
+
+**What it does not do yet** (deliberately deferred — see `server/assistant.js`'s
+comments for why): it does not read your email/Teams/ERP system to create
+cases on its own, and it does not monitor regulatory changes in the
+background — both would require integrating a real external system
+(mailbox OAuth access, a paid legal/regulatory data feed) that isn't set up
+today. Today, a person always types the request that starts things off.
+
 ## Architecture
 
 ```
 legal-genie/
-├── server.js              Vercel entry point (also used for local dev &
-│                           Render) — HTTP server, static file serving,
-│                           request routing. Must stay named server.js at
-│                           the project root: Vercel auto-detects it.
+├── api/
+│   └── index.js           Vercel entry point (current path) — one Vercel
+│                           Function, handles every /api/* request. See
+│                           "Why api/index.js and not server.js" below.
+├── vercel.json            Rewrites every /api/(.*) request to api/index.js
+├── server.js              HTTP server used for LOCAL DEV and the Render
+│                           fallback path only (not used on Vercel — see
+│                           below). Same request routing as api/index.js,
+│                           just wrapped in .listen() instead.
 ├── server/
 │   ├── index.js            Thin compatibility alias -> ../server.js
 │   ├── router.js           Minimal router + JSON body parsing (no Express)
@@ -100,6 +198,8 @@ legal-genie/
 │   ├── supabase-schema.sql  Run once in Supabase's SQL editor before first deploy
 │   ├── store.sqlite-backup.js  Preserved SQLite datastore (Render fallback path — see below)
 │   ├── auth.js              Password hashing (PBKDF2), sessions, lockout, permission checks
+│   ├── ai.js                Optional AI smart-fill (Anthropic Claude) — see "AI smart-fill" above
+│   ├── assistant.js         Optional AI Assistant chat — see "AI Assistant" above
 │   ├── seed.js              Demo data seeding (safe to re-run; no-ops once seeded)
 │   ├── mime.js              Static file content-type lookup
 │   └── routes.js            All REST API endpoints
@@ -115,8 +215,27 @@ legal-genie/
 └── .node-version         Pins the Node version for Render specifically
 ```
 
-The backend is a single Node.js HTTP server (`server.js`, built on the
-`http` module — no Express or other web framework). The frontend is a
+### Why `api/index.js` and not `server.js` on Vercel
+
+Vercel has a newer "zero-config" feature that's supposed to auto-detect a
+root-level `server.js` calling `.listen()` and capture it as a Function
+with no configuration at all. In real testing on this project, that
+feature silently failed instead: Vercel deployed the whole project as
+static-only (a ~30ms build, no `npm install`, zero Functions created), so
+every `/api/...` request 404'd with no error or warning anywhere in the
+build log. Rather than depend on that newer, under-documented behavior,
+this project uses Vercel's older, extremely well-established convention
+instead: any file under `api/` becomes its own Function, one-to-one. Here
+there's just one, `api/index.js`, and `vercel.json` rewrites every
+`/api/(.*)` request to it so it can do its own path matching internally
+(`server/router.js`) exactly like `server.js` already did. `server.js`
+itself is kept for local dev (`npm install && node server.js`) and the
+Render fallback path, where its own `.listen()`-based server works fine —
+it's simply not what actually runs in production on Vercel anymore.
+
+The backend logic is a single Node.js HTTP handler (`server/router.js` +
+`server/routes.js`, built on the `http` module — no Express or other web
+framework) shared by both entry points above. The frontend is a
 single-page app (hash-based routing) that talks to a JSON REST API under
 `/api/...`. Authentication uses a bearer session token (created on login,
 checked on every API call, 12-hour expiry); passwords are hashed with

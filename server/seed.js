@@ -20,6 +20,13 @@ async function seed() {
   const deptIP = await store.insert('departments', { name: 'IP & Licensing' });
 
   // ---- Roles & permissions ---------------------------------------------
+  // Note: 'assistant' (the AI Assistant chat) is deliberately NOT one of
+  // these gated modules — see canView() in public/js/app.js. It's always
+  // visible to any signed-in user regardless of role, since it's a
+  // cross-cutting shortcut for using the app rather than its own data
+  // module; any write action it proposes is still checked against the
+  // *real* underlying module's own permission (cases/contracts/tasks)
+  // below at execute-time.
   const fullAccess = {};
   for (const m of ['dashboard', 'cases', 'contracts', 'compliance', 'documents', 'tasks', 'approvals', 'notifications', 'settings']) {
     fullAccess[m] = perm(true, true, true, true, true);

@@ -3,6 +3,8 @@ const { Router, sendJson } = require('./router');
 const store = require('./store');
 const auth = require('./auth');
 const storage = require('./storage');
+const ai = require('./ai');
+const assistant = require('./assistant');
 const { mimeFor } = require('./mime');
 
 const router = new Router();
@@ -98,6 +100,68 @@ router.get('/api/lookups', async (req, res) => {
     cases: cases.map((c) => ({ id: c.id, title: c.title, caseNumber: c.caseNumber })),
     contracts: contracts.map((c) => ({ id: c.id, title: c.title, contractNumber: c.contractNumber })),
   });
+});
+
+// ---------------------------------------------------------------------------
+// AI smart-fill (optional — see server/ai.js; works only once
+// GEMINI_API_KEY is configured, everything else in the app is
+// unaffected either way)
+// ---------------------------------------------------------------------------
+router.post('/api/ai/extract/:module', async (req, res, params, body) => {
+  const moduleName = params.module;
+  if (!ai.MODULE_SCHEMAS[moduleName]) {
+    return sendJson(res, 400, { error: `Unknown AI module "${moduleName}"` });
+  }
+  // Same permission this module's own "create" form action already
+  // requires — AI smart-fill is just a shortcut for filling that same form.
+  const user = await requirePerm(req, res, moduleName, 'create');
+  if (!user) return;
+  try {
+    const fields = await ai.extractFields({
+      module: moduleName,
+      text: body.text,
+      fileName: body.fileName,
+      fileContentBase64: body.fileContentBase64,
+    });
+    sendJson(res, 200, { fields });
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AI Assistant (optional — see server/assistant.js; requires
+// GEMINI_API_KEY same as AI smart-fill above). Read-only lookups
+// (search_*) execute immediately; anything that would create a record
+// comes back as a `pendingAction` that the user must separately confirm
+// via /api/assistant/confirm before it's actually written.
+// ---------------------------------------------------------------------------
+router.post('/api/assistant/message', async (req, res, params, body) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  try {
+    const { reply, pendingActions } = await assistant.runTurn({
+      history: Array.isArray(body.history) ? body.history : [],
+      text: body.text || '',
+      user,
+    });
+    sendJson(res, 200, { reply, pendingActions });
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
+router.post('/api/assistant/confirm', async (req, res, params, body) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { type, input } = body || {};
+  if (!type || !input) return sendJson(res, 400, { error: 'Missing action type/input' });
+  try {
+    const result = await assistant.executeAction({ type, input }, user);
+    sendJson(res, 201, { result });
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
 });
 
 // ---------------------------------------------------------------------------

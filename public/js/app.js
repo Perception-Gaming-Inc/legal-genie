@@ -23,6 +23,7 @@ const ICON_PATHS = {
   check: '<polyline points="4 12 10 18 20 6"/>',
   x: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/>',
   scale: '<path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7l-3 6a3 3 0 0 0 6 0Z"/><path d="M19 7l-3 6a3 3 0 0 0 6 0Z"/>',
+  sparkle: '<path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/>',
 };
 function Icon(name, cls) {
   const d = ICON_PATHS[name] || '';
@@ -65,10 +66,11 @@ const Api = {
 // ---------------------------------------------------------------------------
 // Global state
 // ---------------------------------------------------------------------------
-const State = { user: null, role: null, lookups: null };
+const State = { user: null, role: null, lookups: null, assistant: { turns: [] } };
 
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+  { key: 'assistant', label: 'AI Assistant', icon: 'sparkle' },
   { key: 'cases', label: 'Case Management', icon: 'briefcase' },
   { key: 'contracts', label: 'Contract Management', icon: 'file' },
   { key: 'compliance', label: 'Compliance', icon: 'shield' },
@@ -80,6 +82,14 @@ const NAV = [
 ];
 
 function canView(moduleKey) {
+  // AI Assistant is a cross-cutting utility, not a data module with its own
+  // row in the roles table (existing, already-seeded roles predate this
+  // feature and have no 'assistant' permission entry at all) — so it's
+  // always visible to any signed-in user. The write actions it can propose
+  // (create_case/create_contract/create_task) are still individually
+  // permission-checked server-side against the real module, same as the
+  // normal forms — this bypass only affects whether the nav link shows up.
+  if (moduleKey === 'assistant') return true;
   if (!State.role) return false;
   if (State.role.name === 'Admin') return true;
   const p = (State.role.permissions || {})[moduleKey];
@@ -180,7 +190,23 @@ function fileToBase64(file) {
   });
 }
 
-async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabel = 'Save' }) {
+function aiAssistHtml() {
+  return `
+    <div class="ai-assist border rounded p-3 mb-3 bg-light">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <strong class="d-flex align-items-center gap-1">${sparkleMark()} AI 智慧填寫</strong>
+        <span class="small text-secondary">選填 — 可貼文字，也可上傳檔案</span>
+      </div>
+      <textarea class="form-control form-control-sm mb-2" id="aiAssistText" rows="3" placeholder="貼上 email、案件說明、合約內容…（選填）"></textarea>
+      <div class="d-flex align-items-center gap-2">
+        <input type="file" class="form-control form-control-sm" id="aiAssistFile" accept=".pdf,image/*,.txt">
+        <button type="button" class="btn btn-sm btn-outline-primary text-nowrap" id="aiAssistBtn">AI 幫我填</button>
+      </div>
+      <div id="aiAssistMsg" class="small mt-2"></div>
+    </div>`;
+}
+
+async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabel = 'Save', aiAssist = null }) {
   const modalId = 'formModal';
   let modalEl = document.getElementById(modalId);
   if (modalEl) modalEl.remove();
@@ -197,6 +223,7 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
         </div>
         <form id="modalForm">
           <div class="modal-body">
+            ${aiAssist ? aiAssistHtml() : ''}
             ${fields.map((f) => `
               <div class="mb-3">
                 <label class="form-label">${escapeHtml(f.label)}</label>
@@ -214,6 +241,47 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
   document.body.appendChild(modalEl);
   const modal = new bootstrap.Modal(modalEl);
   modal.show();
+
+  if (aiAssist) {
+    modalEl.querySelector('#aiAssistBtn').addEventListener('click', async () => {
+      const btn = modalEl.querySelector('#aiAssistBtn');
+      const msgEl = modalEl.querySelector('#aiAssistMsg');
+      const textVal = modalEl.querySelector('#aiAssistText').value;
+      const fileEl = modalEl.querySelector('#aiAssistFile');
+      const payload = { text: textVal };
+      if (fileEl.files && fileEl.files[0]) {
+        payload.fileName = fileEl.files[0].name;
+        payload.fileContentBase64 = await fileToBase64(fileEl.files[0]);
+      }
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = '處理中…';
+      msgEl.className = 'small mt-2 text-secondary';
+      msgEl.textContent = '';
+      try {
+        const { fields: extracted } = await Api.post(`/api/ai/extract/${aiAssist.module}`, payload);
+        const form = modalEl.querySelector('#modalForm');
+        let filledCount = 0;
+        for (const f of fields) {
+          if (extracted[f.name] === undefined || extracted[f.name] === null || extracted[f.name] === '') continue;
+          const el = form.elements[f.name];
+          if (!el) continue;
+          el.value = extracted[f.name];
+          filledCount++;
+        }
+        msgEl.className = 'small mt-2 text-success';
+        msgEl.textContent = filledCount > 0
+          ? `已由 AI 自動填入 ${filledCount} 個欄位，請檢查無誤後再送出。`
+          : 'AI 沒有從這份內容抓到可以填入的欄位，請確認貼上的內容或改用貼上文字/上傳檔案。';
+      } catch (err) {
+        msgEl.className = 'small mt-2 text-danger';
+        msgEl.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+  }
 
   modalEl.querySelector('#modalForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -298,6 +366,7 @@ async function refreshNotifBadge() {
 
 const ROUTES = {
   dashboard: renderDashboard,
+  assistant: renderAssistant,
   cases: renderCases,
   contracts: renderContracts,
   compliance: renderCompliance,
@@ -385,6 +454,7 @@ async function doLogout() {
   try { await Api.post('/api/auth/logout'); } catch (e) { /* ignore */ }
   Api.setToken(null);
   State.user = null;
+  State.assistant = { turns: [] }; // don't leak one user's chat into the next login
   renderLogin();
 }
 
@@ -456,6 +526,153 @@ function listToolbar({ title, canCreate, onCreate }) {
 }
 
 // ---------------------------------------------------------------------------
+// Page: AI Assistant
+// ---------------------------------------------------------------------------
+// Chat with the AI Assistant (server/assistant.js). Read-only lookups
+// (search) answer directly; anything that would create a record comes back
+// as a "pending action" card the user must confirm before it's written.
+const ASSISTANT_EXAMPLES = [
+  '幫我建立一個日本客戶的 NDA',
+  '幫我找去年所有菲律賓客戶的授權合約',
+  '幫我開一個高優先度的商務案件，負責人是我自己',
+];
+
+function assistantActionCardHtml(turnIdx, actionIdx, action, state) {
+  const stateHtml = {
+    pending: `
+      <button class="btn btn-sm btn-success btn-confirm-action" data-turn="${turnIdx}" data-action="${actionIdx}">確認執行</button>
+      <button class="btn btn-sm btn-outline-secondary btn-cancel-action" data-turn="${turnIdx}" data-action="${actionIdx}">取消</button>`,
+    confirming: `<span class="small text-secondary"><span class="spinner-border spinner-border-sm me-1"></span>執行中…</span>`,
+    confirmed: `<span class="small text-success">${Icon('check', 'me-1')}已建立</span>`,
+    cancelled: `<span class="small text-secondary">已取消</span>`,
+    error: `<span class="small text-danger">執行失敗，請重試</span>`,
+  }[state] || '';
+  return `
+    <div class="border rounded p-2 mb-2 bg-light" style="max-width:520px;">
+      <div class="small mb-2">${escapeHtml(action.summary)}</div>
+      ${stateHtml}
+    </div>`;
+}
+
+function renderAssistantLog() {
+  const log = document.getElementById('assistantLog');
+  if (!log) return;
+  const turns = State.assistant.turns;
+  if (turns.length === 0) {
+    log.innerHTML = `
+      <div class="text-secondary">
+        <p>你好，我是 Legal Genie 的 AI 助理。你可以請我幫忙搜尋現有的案件/合約/文件，或請我建立新的案件、合約、待辦事項。</p>
+        <p class="mb-1">可以試試看：</p>
+        <ul>${ASSISTANT_EXAMPLES.map((ex) => `<li><a href="#" class="assistant-example">${escapeHtml(ex)}</a></li>`).join('')}</ul>
+      </div>`;
+    log.querySelectorAll('.assistant-example').forEach((a) => a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('assistantInput');
+      if (input) { input.value = a.textContent; input.focus(); }
+    }));
+    return;
+  }
+  log.innerHTML = turns.map((t, i) => {
+    if (t.role === 'user') {
+      return `<div class="mb-3 text-end"><span class="badge bg-primary-subtle text-dark p-2 fw-normal" style="white-space:normal;">${escapeHtml(t.text)}</span></div>`;
+    }
+    const actions = (t.pendingActions || []).map((a, ai) => assistantActionCardHtml(i, ai, a, (t.actionStates || [])[ai] || 'pending')).join('');
+    return `
+      <div class="mb-3">
+        <div class="d-flex align-items-start gap-2">
+          <div class="mt-1">${sparkleMark('text-primary')}</div>
+          <div style="max-width:600px;">
+            ${t.text ? `<div class="mb-2">${escapeHtml(t.text).replace(/\n/g, '<br>')}</div>` : ''}
+            ${actions}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+  log.scrollTop = log.scrollHeight;
+  log.querySelectorAll('.btn-confirm-action').forEach((btn) => btn.addEventListener('click', () => confirmAssistantAction(Number(btn.dataset.turn), Number(btn.dataset.action))));
+  log.querySelectorAll('.btn-cancel-action').forEach((btn) => btn.addEventListener('click', () => cancelAssistantAction(Number(btn.dataset.turn), Number(btn.dataset.action))));
+}
+
+function assistantHistoryForApi() {
+  // Plain {role, text} pairs only — see server/assistant.js for why raw
+  // tool-call details are deliberately not threaded across turns.
+  return State.assistant.turns.map((t) => ({
+    role: t.role,
+    text: t.text || (t.pendingActions && t.pendingActions.length ? '（建議了一個動作）' : ''),
+  }));
+}
+
+async function sendAssistantMessage(text) {
+  const historyForApi = assistantHistoryForApi();
+  State.assistant.turns.push({ role: 'user', text });
+  renderAssistantLog();
+  try {
+    const resp = await Api.post('/api/assistant/message', { history: historyForApi, text });
+    State.assistant.turns.push({
+      role: 'assistant',
+      text: resp.reply,
+      pendingActions: resp.pendingActions || [],
+      actionStates: (resp.pendingActions || []).map(() => 'pending'),
+    });
+  } catch (err) {
+    State.assistant.turns.push({ role: 'assistant', text: `發生錯誤：${err.message}` });
+  }
+  renderAssistantLog();
+}
+
+async function confirmAssistantAction(turnIdx, actionIdx) {
+  const turn = State.assistant.turns[turnIdx];
+  const action = turn.pendingActions[actionIdx];
+  turn.actionStates[actionIdx] = 'confirming';
+  renderAssistantLog();
+  try {
+    await Api.post('/api/assistant/confirm', { type: action.type, input: action.input });
+    turn.actionStates[actionIdx] = 'confirmed';
+    toast('已建立');
+  } catch (err) {
+    turn.actionStates[actionIdx] = 'error';
+    toast(err.message, 'danger');
+  }
+  renderAssistantLog();
+}
+
+function cancelAssistantAction(turnIdx, actionIdx) {
+  const turn = State.assistant.turns[turnIdx];
+  turn.actionStates[actionIdx] = 'cancelled';
+  renderAssistantLog();
+}
+
+async function renderAssistant(content) {
+  content.innerHTML = `
+    <div class="card stat-card d-flex flex-column p-0" style="height: calc(100vh - 170px);">
+      <div class="flex-grow-1 overflow-auto p-3" id="assistantLog"></div>
+      <form id="assistantForm" class="d-flex gap-2 p-3 border-top">
+        <input type="text" class="form-control" id="assistantInput" autocomplete="off"
+          placeholder="用一般文字描述你要做的事，例如：幫我找去年所有菲律賓客戶的授權合約">
+        <button type="submit" class="btn btn-primary text-nowrap">送出</button>
+      </form>
+    </div>`;
+  renderAssistantLog();
+  content.querySelector('#assistantForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = content.querySelector('#assistantInput');
+    const text = input.value.trim();
+    if (!text) return;
+    const btn = content.querySelector('button[type="submit"]');
+    input.value = '';
+    input.disabled = true;
+    btn.disabled = true;
+    try {
+      await sendAssistantMessage(text);
+    } finally {
+      input.disabled = false;
+      btn.disabled = false;
+      input.focus();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Page: Case Management
 // ---------------------------------------------------------------------------
 async function renderCases(content) {
@@ -502,6 +719,7 @@ async function renderCases(content) {
     content.querySelector('#btnCreate').addEventListener('click', () => {
       showFormModal({
         title: 'New Case', fields: fields(), initial: { status: 'Open', priority: 'Medium' },
+        aiAssist: { module: 'cases' },
         onSubmit: async (data) => { await Api.post('/api/cases', data); toast('Case created'); route(); },
       });
     });
@@ -571,6 +789,7 @@ async function renderContracts(content) {
     content.querySelector('#btnCreate').addEventListener('click', () => {
       showFormModal({
         title: 'New Contract', fields: fields(), initial: { status: 'Active' },
+        aiAssist: { module: 'contracts' },
         onSubmit: async (data) => { await Api.post('/api/contracts', data); toast('Contract created'); route(); },
       });
     });
@@ -659,6 +878,7 @@ async function renderCompliance(content) {
 
   if (canCreate) content.querySelector('#btnCreate').addEventListener('click', () => {
     showFormModal({ title: 'New Compliance Item', fields: fields(), initial: { status: 'Compliant' },
+      aiAssist: { module: 'compliance' },
       onSubmit: async (data) => { await Api.post('/api/compliance', data); toast('Compliance item created'); route(); } });
   });
   content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
@@ -714,6 +934,7 @@ async function renderDocuments(content) {
 
   if (canCreate) content.querySelector('#btnCreate').addEventListener('click', () => {
     showFormModal({ title: 'Upload Document', fields: fields(), submitLabel: 'Upload',
+      aiAssist: { module: 'documents' },
       onSubmit: async (data) => { await Api.post('/api/documents', data); toast('Document uploaded'); route(); } });
   });
   content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {

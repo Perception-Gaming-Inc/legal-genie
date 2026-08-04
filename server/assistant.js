@@ -27,6 +27,7 @@
  */
 const store = require('./store');
 const auth = require('./auth');
+const pagcor = require('./pagcor');
 
 // Kept in sync with server/ai.js's default — see that file's comment for
 // why this specific model, and how to change it via GEMINI_MODEL.
@@ -79,6 +80,8 @@ const WRITE_TOOLS = {
         deadline: { type: 'string', description: 'ISO date YYYY-MM-DD, omit if not mentioned.' },
         description: { type: 'string' },
         ownerUsername: { type: 'string', description: 'Username of the person to own this case, if mentioned. Must be one of the usernames listed in the team roster below. Omit if not mentioned — defaults to the requesting user.' },
+        provider: { type: 'string', description: 'The overseas game Provider company this case is for (e.g. FC, JDB, VP), only if this is a PAGCOR game-submission case. Omit entirely if not applicable.' },
+        gameTitle: { type: 'string', description: 'The specific game title being submitted to PAGCOR, if mentioned. Omit if not mentioned.' },
       },
       required: ['title', 'type'],
     },
@@ -152,6 +155,8 @@ async function compactCases(query) {
     id: c.id, caseNumber: c.caseNumber, title: c.title, type: c.type,
     status: c.status, priority: c.priority, deadline: c.deadline || null,
     owner: nameOf(c.ownerId), description: truncate(c.description || '', 300),
+    provider: c.provider || null, gameTitle: c.gameTitle || null,
+    pagcorStage: c.pagcorStage || null, loaExpiryDate: c.loaExpiryDate || null,
   }));
 }
 
@@ -167,7 +172,10 @@ async function compactContracts() {
 
 async function compactDocuments() {
   const docs = await store.all('documents');
-  return docs.map((d) => ({ id: d.id, title: d.title, category: d.category, fileName: d.fileName || null, createdAt: d.createdAt }));
+  return docs.map((d) => ({
+    id: d.id, title: d.title, category: d.category, fileName: d.fileName || null, createdAt: d.createdAt,
+    provider: d.provider || null, gameTitle: d.gameTitle || null, reportType: d.reportType || null,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -230,8 +238,11 @@ function textFrom(parts) {
 function summarize(type, resolvedInput, notes) {
   const noteSuffix = notes.length ? `（${notes.join('；')}）` : '';
   if (type === 'create_case') {
+    const pagcorPart = resolvedInput.provider
+      ? `，Provider ${resolvedInput.provider}${resolvedInput.gameTitle ? `，遊戲《${resolvedInput.gameTitle}》` : ''}`
+      : '';
     return `建立案件:「${resolvedInput.title}」— 類型 ${resolvedInput.type}，優先度 ${resolvedInput.priority || 'Medium'}` +
-      `${resolvedInput.deadline ? `，期限 ${resolvedInput.deadline}` : ''}${noteSuffix}`;
+      `${resolvedInput.deadline ? `，期限 ${resolvedInput.deadline}` : ''}${pagcorPart}${noteSuffix}`;
   }
   if (type === 'create_contract') {
     return `建立合約:「${resolvedInput.title}」— 對象 ${resolvedInput.counterparty}，類型 ${resolvedInput.type}${noteSuffix}`;
@@ -257,11 +268,15 @@ function summarize(type, resolvedInput, notes) {
 async function runTurn({ history = [], text, user }) {
   const [roster, caseDirectory] = await Promise.all([buildRoster(), buildCaseDirectory()]);
   const system =
-    'You are the AI Assistant embedded in "Legal Genie", an internal legal department system for a gaming machine manufacturer. ' +
+    'You are the AI Assistant embedded in "Legal Genie", an internal legal system for an iGaming BPO / game-licensing company based in Manila, Philippines. ' +
+    'A core part of the business: helping overseas game Providers (e.g. FC, JDB, VP) organize game math models and RNG test reports, and draft/submit filings to PAGCOR (the Philippine Amusement and Gaming Corporation) in order to obtain a Letter of Approval (LOA) for a game. ' +
     'You help the legal team look things up and create records via natural language, in whichever language the user writes in (respond in the same language they used). ' +
     'Use the search_* tools for any lookup/find/list request — never guess data, always look it up. ' +
     'Each search_* tool returns the full current list of that record type, not a server-filtered subset — call each one AT MOST ONCE per request, then read through what it returned yourself to find matches. Calling the same search tool again will return identical results, so never retry a search hoping for a different result. If nothing in the returned list matches, just tell the user that plainly instead of searching again. ' +
+    'Cases and documents may carry a "provider" (the Provider company) and "gameTitle" (the game being submitted). PAGCOR-submission cases also carry a "pagcorStage" ' +
+    `(one of: ${pagcor.PAGCOR_STAGE_OPTIONS.join(' / ')}) and, once approved, a "loaExpiryDate" — use these when the user asks about submission progress or upcoming LOA renewals. ` +
     'Use the create_* tools when the user clearly wants to create/open/file/draft something. If a required detail is genuinely ambiguous or missing (e.g. no case type given), ask a brief clarifying question in plain text instead of guessing. ' +
+    'If the user asks you to draft a PAGCOR submission cover letter (or a similar official filing letter), do NOT use a tool for this — just write the full letter text directly in your reply, formatted as a proper formal letter addressed to PAGCOR, using whatever Provider name / game title / math model / RNG test report details the user gave you (ask for anything critical that is missing, like the game title or Provider name, instead of inventing it). Always close it by reminding the user this is a draft that should be reviewed before actual submission. ' +
     `Team roster (username (full name)): ${roster || '(none yet)'}. ` +
     `Existing case numbers: ${caseDirectory || '(none yet)'}. ` +
     `The user making this request is ${user.username} (${user.fullName}).`;
@@ -334,8 +349,14 @@ async function resolvePendingAction(call, user) {
     const resolvedInput = {
       title: input.title, type: input.type, priority: input.priority || 'Medium',
       status: 'Open', deadline: input.deadline || null, description: input.description || '',
-      ownerId: owner.id,
+      ownerId: owner.id, provider: input.provider || null, gameTitle: input.gameTitle || null,
     };
+    // A case with a Provider is a PAGCOR game-submission case — same default
+    // checklist/stage the manual "New Case" form gets (see routes.js).
+    if (resolvedInput.provider) {
+      resolvedInput.pagcorStage = 'Preparing Documents';
+      resolvedInput.pagcorChecklist = pagcor.defaultChecklist();
+    }
     return { type: 'create_case', input: resolvedInput, summary: summarize('create_case', resolvedInput, notes) };
   }
 

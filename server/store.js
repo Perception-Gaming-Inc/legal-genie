@@ -20,11 +20,30 @@
  * that one — routes.js/auth.js/seed.js don't need to change either way,
  * since both versions expose the same function names, just sync vs async.
  */
-const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
+const path = require('path');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// Local/offline testing (see local-mock/README.md) sets SUPABASE_URL to this
+// exact sentinel value and expects @supabase/supabase-js to resolve to the
+// in-memory fake package under local-mock/node_modules instead of the real
+// one. Originally this relied on NODE_PATH putting local-mock/node_modules
+// ahead of the real node_modules — but Node's module resolution actually
+// checks the ordinary node_modules folder tree *before* ever consulting
+// NODE_PATH, so once `npm install` has installed the real
+// @supabase/supabase-js (which it always will, since it's a normal
+// dependency in package.json), the real package wins regardless of
+// NODE_PATH, and this would try to make a real network call to the fake
+// "http://local-mock" host and fail. Requiring the mock by its exact path
+// here, only when that sentinel URL is set, sidesteps resolution order
+// entirely. In production this branch never triggers (no real Supabase
+// project is ever actually at that URL), and the local-mock folder doesn't
+// exist in the deployed source anyway.
+const { createClient } = SUPABASE_URL === 'http://local-mock'
+  ? require(path.join(__dirname, '..', 'local-mock', 'node_modules', '@supabase', 'supabase-js'))
+  : require('@supabase/supabase-js');
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   throw new Error(

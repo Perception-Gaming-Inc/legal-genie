@@ -1,6 +1,7 @@
 'use strict';
 const store = require('./store');
 const { hashPassword } = require('./auth');
+const pagcor = require('./pagcor');
 
 function perm(view, create, edit, del, approve = false) {
   return { view, create, edit, delete: del, approve };
@@ -128,6 +129,30 @@ async function seed() {
     deadline: daysFromNow(-5), description: 'Completed review of invention assignment agreements.',
   });
 
+  // ---- PAGCOR game-submission cases (Provider math model / RNG report /
+  // filing workflow) — demonstrates the checklist + stage tracking feature.
+  const case4 = await store.insert('cases', {
+    caseNumber: await store.nextNumber('case', 'CASE'),
+    title: 'PAGCOR game submission - Fortune Dragon',
+    type: 'Regulatory', ownerId: staff1.id, priority: 'High', status: 'In Progress',
+    deadline: daysFromNow(14),
+    description: 'Math model and RNG test report received from Provider; preparing PAGCOR submission package.',
+    provider: 'FC', gameTitle: 'Fortune Dragon',
+    pagcorStage: 'Submitted to PAGCOR',
+    pagcorChecklist: pagcor.PAGCOR_CHECKLIST_ITEMS.map((item, idx) => ({ ...item, done: idx < 2 })),
+  });
+  const case5 = await store.insert('cases', {
+    caseNumber: await store.nextNumber('case', 'CASE'),
+    title: 'PAGCOR game submission - Golden Empire',
+    type: 'Regulatory', ownerId: staff2.id, priority: 'Medium', status: 'Closed',
+    deadline: daysFromNow(-10),
+    description: 'LOA issued for this title; monitoring renewal date.',
+    provider: 'JDB', gameTitle: 'Golden Empire',
+    pagcorStage: 'LOA Approved',
+    pagcorChecklist: pagcor.PAGCOR_CHECKLIST_ITEMS.map((item) => ({ ...item, done: true })),
+    loaExpiryDate: daysFromNow(20),
+  });
+
   // ---- Contracts -------------------------------------------------------
   const contract1 = await store.insert('contracts', {
     contractNumber: await store.nextNumber('contract', 'CTR'),
@@ -184,6 +209,16 @@ async function seed() {
   await store.insert('documents', {
     title: 'Nevada Gaming License Certificate', category: 'Certificates', uploadedBy: manager.id,
     fileName: 'NV_Gaming_Cert_2026.pdf', filePath: null, relatedCaseId: case1.id, relatedContractId: null, tags: ['certificate', 'nevada'],
+  });
+  await store.insert('documents', {
+    title: 'Fortune Dragon RNG Test Report', category: 'Certificates', uploadedBy: staff1.id,
+    fileName: 'FortuneDragon_RNG_Report.pdf', filePath: null, relatedCaseId: case4.id, relatedContractId: null, tags: ['rng', 'pagcor'],
+    provider: 'FC', gameTitle: 'Fortune Dragon', reportType: 'RNG Test Report',
+  });
+  await store.insert('documents', {
+    title: 'Golden Empire Letter of Approval', category: 'Certificates', uploadedBy: staff2.id,
+    fileName: 'GoldenEmpire_LOA.pdf', filePath: null, relatedCaseId: case5.id, relatedContractId: null, tags: ['loa', 'pagcor'],
+    provider: 'JDB', gameTitle: 'Golden Empire', reportType: 'Letter of Approval (LOA)',
   });
 
   // ---- Tasks -----------------------------------------------------------

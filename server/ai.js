@@ -62,6 +62,8 @@ const MODULE_SCHEMAS = {
       status: { type: 'string', enum: ['Open', 'In Progress', 'Closed'] },
       deadline: { type: 'string', description: 'ISO date YYYY-MM-DD if a specific deadline/due date is mentioned. Omit this field entirely if none is mentioned — do not guess.' },
       description: { type: 'string', description: 'A clear 2-4 sentence summary of the matter, written for a legal case record.' },
+      provider: { type: 'string', description: 'The overseas game Provider company this relates to (e.g. FC, JDB, VP), only if this is a PAGCOR game-submission case. Omit entirely if not applicable/mentioned.' },
+      gameTitle: { type: 'string', description: 'The specific game title being submitted to PAGCOR, if mentioned. Omit if not mentioned.' },
     },
     required: ['title'],
   },
@@ -93,6 +95,9 @@ const MODULE_SCHEMAS = {
     properties: {
       title: { type: 'string', description: 'A short, descriptive title for this document.' },
       category: { type: 'string', enum: ['Templates', 'Policies', 'Agreements', 'Certificates', 'Other'] },
+      provider: { type: 'string', description: 'The overseas game Provider company this document is from/about (e.g. FC, JDB, VP), if identifiable from the content. Omit if not applicable/mentioned.' },
+      gameTitle: { type: 'string', description: 'The specific game title this document relates to, if identifiable. Omit if not mentioned.' },
+      reportType: { type: 'string', enum: ['Math Model Report', 'RNG Test Report', 'Game Rules / Paytable', 'PAGCOR Submission Letter', 'Letter of Approval (LOA)', 'Other'], description: 'What kind of PAGCOR-related report/document this is, if identifiable from the content or file name. Omit entirely if it does not look like one of these.' },
     },
     required: ['title'],
   },

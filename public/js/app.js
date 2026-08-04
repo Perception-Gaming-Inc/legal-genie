@@ -81,6 +81,27 @@ const NAV = [
   { key: 'settings', label: 'Settings', icon: 'gear' },
 ];
 
+// ---------------------------------------------------------------------------
+// PAGCOR-domain constants (Case Management / Document Center extensions)
+// ---------------------------------------------------------------------------
+// Mirrors server/pagcor.js exactly — kept as a separate copy here because
+// this is plain browser JS with no build step to share a module with the
+// server. If you change the wording/keys in server/pagcor.js, update this
+// copy too.
+const PAGCOR_STAGE_OPTIONS = [
+  'Not Started', 'Preparing Documents', 'Submitted to PAGCOR', 'Under PAGCOR Review', 'LOA Approved', 'Rejected',
+];
+const PAGCOR_CHECKLIST_ITEMS = [
+  { key: 'gameManual', label: 'Game Manual' },
+  { key: 'parameter', label: 'Parameter' },
+  { key: 'rtpCertification', label: 'RTP Certification' },
+];
+const REPORT_TYPE_OPTIONS = [
+  'Math Model Report', 'RNG Test Report', 'Game Rules / Paytable', 'PAGCOR Submission Letter', 'Letter of Approval (LOA)', 'Other',
+];
+const GAME_TYPE_OPTIONS = ['Slots', 'Arcade-Type', 'Table', 'eBingo', 'Other'];
+const YES_NO_OPTIONS = ['Yes', 'No'];
+
 function canView(moduleKey) {
   // AI Assistant is a cross-cutting utility, not a data module with its own
   // row in the roles table (existing, already-seeded roles predate this
@@ -125,6 +146,7 @@ const STATUS_TONE = {
   Closed: 'neutral', Completed: 'success', Approved: 'success', Compliant: 'success',
   Overdue: 'danger', Rejected: 'danger', 'Due Soon': 'warning', 'Not Started': 'neutral',
   Expired: 'neutral', Terminated: 'neutral', Draft: 'neutral',
+  'Preparing Documents': 'neutral', 'Submitted to PAGCOR': 'info', 'Under PAGCOR Review': 'warning', 'LOA Approved': 'success',
 };
 function badge(text) {
   const tone = STATUS_TONE[text] || 'neutral';
@@ -165,12 +187,13 @@ function toast(message, variant = 'success') {
 function fieldInputHtml(f, value) {
   const val = value === undefined || value === null ? '' : value;
   const req = f.required ? 'required' : '';
+  const placeholder = f.placeholder ? `placeholder="${escapeHtml(f.placeholder)}"` : '';
   if (f.type === 'select') {
     const opts = f.options.map((o) => `<option value="${escapeHtml(o.value)}" ${String(o.value) === String(val) ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('');
     return `<select class="form-select" name="${f.name}" ${req}>${f.allowEmpty ? '<option value="">— None —</option>' : ''}${opts}</select>`;
   }
   if (f.type === 'textarea') {
-    return `<textarea class="form-control" name="${f.name}" rows="${f.rows || 3}" ${req}>${escapeHtml(val)}</textarea>`;
+    return `<textarea class="form-control" name="${f.name}" rows="${f.rows || 3}" ${req} ${placeholder}>${escapeHtml(val)}</textarea>`;
   }
   if (f.type === 'checkbox') {
     return `<div class="form-check pt-2"><input type="checkbox" class="form-check-input" name="${f.name}" ${val ? 'checked' : ''}></div>`;
@@ -178,7 +201,7 @@ function fieldInputHtml(f, value) {
   if (f.type === 'file') {
     return `<input type="file" class="form-control" name="${f.name}">`;
   }
-  return `<input type="${f.type || 'text'}" class="form-control" name="${f.name}" value="${escapeHtml(val)}" ${req}>`;
+  return `<input type="${f.type || 'text'}" class="form-control" name="${f.name}" value="${escapeHtml(val)}" ${req} ${placeholder}>`;
 }
 
 function fileToBase64(file) {
@@ -380,7 +403,11 @@ const ROUTES = {
 async function route() {
   if (!State.user) return;
   const hash = location.hash.replace(/^#\/?/, '') || 'dashboard';
-  const key = hash.split('/')[0];
+  // Split off an optional "?query=string" (e.g. "#/cases?stage=Under%20PAGCOR%20Review",
+  // used by the Dashboard's PAGCOR board links to deep-link into a pre-filtered
+  // Case Management list) before taking the route key, so a query string never
+  // breaks route matching.
+  const key = hash.split('?')[0].split('/')[0];
   document.querySelectorAll('#sideNav .nav-link').forEach((a) => a.classList.toggle('active', a.dataset.key === key));
   const title = (NAV.find((n) => n.key === key) || {}).label || 'Legal Genie';
   const titleEl = document.getElementById('pageTitle');
@@ -486,29 +513,39 @@ async function renderDashboard(content) {
         <div class="stat-label">Overdue Compliance Items</div>
       </div></div></div>
     </div>
-    <div class="row g-3">
-      <div class="col-md-6">
-        <div class="card stat-card h-100">
-          <div class="card-header bg-white">Upcoming Deadlines (next 14 days)</div>
-          <ul class="list-group list-group-flush">
-            ${s.upcomingDeadlines.length ? s.upcomingDeadlines.map((d) => `
-              <li class="list-group-item d-flex justify-content-between">
-                <span><span class="badge text-bg-light border me-2">${d.type}</span>${escapeHtml(d.title)}</span>
-                <span class="text-secondary">${fmtDate(d.date)}</span>
-              </li>`).join('') : '<li class="list-group-item text-secondary">No upcoming deadlines.</li>'}
-          </ul>
-        </div>
-      </div>
-      <div class="col-md-6">
-        <div class="card stat-card h-100">
-          <div class="card-header bg-white">Recent Notifications</div>
-          <ul class="list-group list-group-flush">
-            ${s.recentNotifications.length ? s.recentNotifications.map((n) => `
-              <li class="list-group-item d-flex justify-content-between">
-                <span>${!n.isRead ? '<span class="notif-dot me-2"></span>' : ''}${escapeHtml(n.message)}</span>
-                <span class="text-secondary small">${fmtDateTime(n.createdAt)}</span>
-              </li>`).join('') : '<li class="list-group-item text-secondary">No notifications yet.</li>'}
-          </ul>
+    ${pagcorBoardHtml(s.pagcorBoard)}`;
+}
+
+// PAGCOR submission pipeline overview — one horizontal bar per PAGCOR Stage,
+// bar length proportional to that stage's share of the largest stage, count
+// shown alongside. Clicking a row jumps to Case Management pre-filtered to
+// that Stage (see /api/dashboard/summary's pagcorBoard for the per-stage
+// counts computed server-side). Skipped entirely if there are no PAGCOR
+// cases yet (nothing to show). Deliberately just counts, not individual
+// game cards — a stage like "Under PAGCOR Review" can hold hundreds of
+// games, and this is meant to answer "how are we distributed across
+// stages?" at a glance, not to browse the games themselves (that's what
+// clicking through to the filtered Case Management list is for).
+function pagcorBoardHtml(board) {
+  if (!board || !board.some((col) => col.count > 0)) return '';
+  const max = Math.max(...board.map((col) => col.count), 1);
+  return `
+    <div class="mt-4">
+      <h6 class="mb-2">PAGCOR Submission Pipeline</h6>
+      <div class="card stat-card">
+        <div class="list-group list-group-flush">
+          ${board.map((col) => {
+            const tone = STATUS_TONE[col.stage] || 'neutral';
+            const pct = Math.round((col.count / max) * 100);
+            return `
+            <a href="#/cases?stage=${encodeURIComponent(col.stage)}" class="list-group-item pagcor-bar-row">
+              <span class="pagcor-bar-label">${escapeHtml(col.stage)}</span>
+              <span class="pagcor-bar-track">
+                <span class="pagcor-bar-fill tone-${tone}" style="width:${pct}%"></span>
+              </span>
+              <span class="pagcor-bar-count tone-${tone}">${col.count}</span>
+            </a>`;
+          }).join('')}
         </div>
       </div>
     </div>`;
@@ -517,11 +554,14 @@ async function renderDashboard(content) {
 // ---------------------------------------------------------------------------
 // Generic list page builder
 // ---------------------------------------------------------------------------
-function listToolbar({ title, canCreate, onCreate }) {
+function listToolbar({ title, canCreate, onCreate, extraButtonsHtml }) {
   return `
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h5 class="mb-0">${escapeHtml(title)}</h5>
-      ${canCreate ? `<button class="btn btn-primary btn-sm" id="btnCreate">${Icon('plus', 'me-1')}New</button>` : ''}
+      <div class="d-flex gap-2">
+        ${extraButtonsHtml || ''}
+        ${canCreate ? `<button class="btn btn-primary btn-sm" id="btnCreate">${Icon('plus', 'me-1')}New</button>` : ''}
+      </div>
     </div>`;
 }
 
@@ -535,6 +575,7 @@ const ASSISTANT_EXAMPLES = [
   '幫我建立一個日本客戶的 NDA',
   '幫我找去年所有菲律賓客戶的授權合約',
   '幫我開一個高優先度的商務案件，負責人是我自己',
+  '幫我起草一封 PAGCOR 送審公文，Provider 是 FC，遊戲是 Fortune Dragon',
 ];
 
 function assistantActionCardHtml(turnIdx, actionIdx, action, state) {
@@ -675,35 +716,253 @@ async function renderAssistant(content) {
 // ---------------------------------------------------------------------------
 // Page: Case Management
 // ---------------------------------------------------------------------------
+function pagcorChecklistLabel(item) {
+  const list = item.pagcorChecklist || [];
+  if (!list.length) return item.provider ? 'Checklist' : null;
+  const done = list.filter((i) => i.done).length;
+  return `${done}/${list.length}`;
+}
+
+function showPagcorChecklistModal(item) {
+  const canEditCase = canDo('cases', 'edit');
+  const checklist = PAGCOR_CHECKLIST_ITEMS.map((tpl) => {
+    const existing = (item.pagcorChecklist || []).find((i) => i.key === tpl.key);
+    return { key: tpl.key, label: tpl.label, done: existing ? !!existing.done : false };
+  });
+  const modalEl = document.createElement('div');
+  modalEl.className = 'modal fade';
+  modalEl.innerHTML = `
+    <div class="modal-dialog"><div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">PAGCOR Checklist — ${escapeHtml(item.caseNumber)}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <div class="fw-semibold">${escapeHtml(item.title)}</div>
+          ${(item.provider || item.gameTitle) ? `<div class="small text-secondary">${escapeHtml(item.provider || '—')}${item.gameTitle ? ` — ${escapeHtml(item.gameTitle)}` : ''}</div>` : ''}
+        </div>
+        <div class="list-group">
+          ${checklist.map((c) => `
+            <label class="list-group-item d-flex align-items-center gap-2">
+              <input type="checkbox" class="form-check-input mt-0 chk-item" data-key="${c.key}" ${c.done ? 'checked' : ''} ${canEditCase ? '' : 'disabled'}>
+              <span>${escapeHtml(c.label)}</span>
+            </label>`).join('')}
+        </div>
+        ${!canEditCase ? '<div class="small text-secondary mt-2">You do not have permission to edit cases, so this checklist is read-only.</div>' : ''}
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
+    </div></div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+  let dirty = false;
+  modalEl.querySelectorAll('.chk-item').forEach((chk) => chk.addEventListener('change', async () => {
+    const key = chk.dataset.key;
+    const updated = checklist.map((c) => (c.key === key ? { ...c, done: chk.checked } : c));
+    checklist.splice(0, checklist.length, ...updated);
+    try {
+      await Api.put(`/api/cases/${item.id}`, { pagcorChecklist: updated });
+      item.pagcorChecklist = updated;
+      dirty = true;
+    } catch (err) {
+      chk.checked = !chk.checked;
+      toast(err.message, 'danger');
+    }
+  }));
+  modalEl.addEventListener('hidden.bs.modal', () => { modalEl.remove(); if (dirty) route(); });
+}
+
+// ---------------------------------------------------------------------------
+// Import Excel/CSV -> bulk-create Cases (see server/import.js). Two-step:
+// pick a file -> server parses + shows a per-sheet preview/settings -> user
+// reviews/adjusts Provider & PAGCOR Stage per sheet -> confirm actually
+// creates the records. Nothing is written until "確認匯入" is clicked.
+// ---------------------------------------------------------------------------
+function importSheetSettingsHtml(sheet) {
+  const needsProvider = !sheet.hasProviderColumn;
+  const needsStage = !sheet.hasStatusColumn;
+  const sampleNames = sheet.sampleRows.map((r) => escapeHtml(r.title)).join('、');
+  return `
+    <div class="border rounded p-2 mb-2 import-sheet-row" data-sheet="${escapeHtml(sheet.name)}">
+      <div class="d-flex align-items-start gap-2">
+        <input type="checkbox" class="form-check-input mt-1 sheet-include" ${sheet.rowCount > 0 ? 'checked' : ''} ${sheet.rowCount === 0 ? 'disabled' : ''}>
+        <div class="flex-grow-1">
+          <div class="d-flex justify-content-between align-items-center">
+            <strong>${escapeHtml(sheet.name.trim() || '(未命名工作表)')}</strong>
+            <span class="badge text-bg-light border">${sheet.rowCount} 筆</span>
+          </div>
+          <div class="small text-secondary mt-1">${sampleNames ? `例如：${sampleNames}${sheet.rowCount > sheet.sampleRows.length ? '…' : ''}` : '(沒有偵測到可匯入的資料列)'}</div>
+          <div class="d-flex flex-wrap gap-3 mt-2 align-items-end">
+            ${needsProvider ? `
+              <div>
+                <label class="form-label small mb-1">Provider</label>
+                <input type="text" class="form-control form-control-sm sheet-provider" value="${escapeHtml(sheet.suggestedProvider || '')}" style="width:160px;">
+              </div>` : `<div class="small text-secondary">已偵測到 Provider 欄位，會使用每列各自的值。</div>`}
+            ${needsStage ? `
+              <div>
+                <label class="form-label small mb-1">PAGCOR Stage</label>
+                <select class="form-select form-select-sm sheet-stage" style="width:200px;">
+                  ${PAGCOR_STAGE_OPTIONS.map((s) => `<option value="${escapeHtml(s)}" ${s === 'Preparing Documents' ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+                </select>
+              </div>` : `<div class="small text-secondary">已偵測到 Status 欄位，會依每列自動判斷階段。</div>`}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function showImportCasesModal() {
+  const modalId = 'importCasesModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  modalEl.innerHTML = `
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">匯入 Excel / CSV</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label">選擇檔案（.xlsx 或 .csv）—— 每個工作表(分頁)會分開偵測</label>
+            <input type="file" class="form-control" id="importFile" accept=".xlsx,.csv">
+          </div>
+          <div id="importAnalyzeMsg" class="small text-secondary mb-2"></div>
+          <div id="importSheets"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-primary" id="importConfirmBtn" style="display:none;">確認匯入</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+
+  let fileContentBase64 = null;
+  let fileName = null;
+
+  modalEl.querySelector('#importFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    fileName = file.name;
+    fileContentBase64 = await fileToBase64(file);
+    const msgEl = modalEl.querySelector('#importAnalyzeMsg');
+    const sheetsEl = modalEl.querySelector('#importSheets');
+    const confirmBtn = modalEl.querySelector('#importConfirmBtn');
+    msgEl.textContent = '分析中…';
+    sheetsEl.innerHTML = '';
+    confirmBtn.style.display = 'none';
+    try {
+      const resp = await Api.post('/api/cases/import/preview', { fileName, fileContentBase64 });
+      const sheets = resp.sheets || [];
+      const totalRows = sheets.reduce((sum, s) => sum + s.rowCount, 0);
+      msgEl.textContent = totalRows > 0
+        ? `偵測到 ${sheets.length} 個工作表，共 ${totalRows} 筆資料。請確認下面每個工作表的設定後再匯入。`
+        : '沒有偵測到任何資料列，請確認檔案內容。';
+      sheetsEl.innerHTML = sheets.map((s) => importSheetSettingsHtml(s)).join('');
+      confirmBtn.style.display = totalRows > 0 ? '' : 'none';
+    } catch (err) {
+      msgEl.textContent = '';
+      sheetsEl.innerHTML = `<div class="text-danger small">${escapeHtml(err.message)}</div>`;
+    }
+  });
+
+  modalEl.querySelector('#importConfirmBtn').addEventListener('click', async () => {
+    const btn = modalEl.querySelector('#importConfirmBtn');
+    const sheetEls = modalEl.querySelectorAll('.import-sheet-row');
+    const sheets = Array.from(sheetEls).map((row) => {
+      const providerEl = row.querySelector('.sheet-provider');
+      const stageEl = row.querySelector('.sheet-stage');
+      return {
+        name: row.dataset.sheet,
+        include: row.querySelector('.sheet-include').checked,
+        provider: providerEl ? providerEl.value : undefined,
+        pagcorStage: stageEl ? stageEl.value : undefined,
+      };
+    });
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = '匯入中…';
+    try {
+      const result = await Api.post('/api/cases/import/commit', { fileName, fileContentBase64, sheets });
+      modal.hide();
+      const skippedMsg = result.skipped ? `，${result.skipped} 筆已存在（Provider + 遊戲名稱相同）故跳過` : '';
+      const errorMsg = result.errors && result.errors.length ? `，${result.errors.length} 筆發生錯誤（請查看瀏覽器 console）` : '';
+      toast(`已建立 ${result.created} 筆案件${skippedMsg}${errorMsg}`);
+      if (result.errors && result.errors.length) console.warn('Import errors:', result.errors);
+      route();
+    } catch (err) {
+      toast(err.message, 'danger');
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  });
+
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
+
 async function renderCases(content) {
-  const [cases] = await Promise.all([Api.get('/api/cases')]);
+  const cases = await Api.get('/api/cases');
   const canCreate = canDo('cases', 'create');
   const canEdit = canDo('cases', 'edit');
   const canDelete = canDo('cases', 'delete');
-  content.innerHTML = listToolbar({ title: 'Case Management', canCreate }) + `
+  const providers = Array.from(new Set(cases.map((c) => c.provider).filter(Boolean))).sort();
+
+  content.innerHTML = listToolbar({
+    title: 'Case Management', canCreate,
+    extraButtonsHtml: `
+      <button class="btn btn-outline-secondary btn-sm" id="btnExportCases">${Icon('download', 'me-1')}Export CSV</button>
+      ${canCreate ? `<button class="btn btn-outline-secondary btn-sm" id="btnImportCases">${Icon('download', 'me-1')}Import Excel/CSV</button>` : ''}`,
+  }) + `
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <input type="search" class="form-control form-control-sm" id="filterSearch" style="min-width:240px; max-width:320px;" placeholder="Search Case # / Title / Game Title…">
+      ${providers.length ? `
+      <select class="form-select form-select-sm w-auto" id="filterProvider">
+        <option value="">All Providers</option>
+        ${providers.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('')}
+      </select>
+      <select class="form-select form-select-sm w-auto" id="filterStage">
+        <option value="">All PAGCOR Stages</option>
+        ${PAGCOR_STAGE_OPTIONS.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+      </select>` : ''}
+    </div>
     <div class="card stat-card">
+      <div id="bulkActionBar" class="d-none align-items-center gap-2 p-2 border-bottom bg-light"></div>
       <div class="table-responsive">
         <table class="table table-hover mb-0 table-clickable">
-          <thead class="table-light"><tr><th>Case #</th><th>Title</th><th>Type</th><th>Owner</th><th>Priority</th><th>Status</th><th>Deadline</th><th></th></tr></thead>
-          <tbody>
-            ${cases.map((c) => `
-              <tr data-id="${c.id}">
-                <td>${escapeHtml(c.caseNumber)}</td>
-                <td>${escapeHtml(c.title)}</td>
-                <td>${escapeHtml(c.type)}</td>
-                <td>${escapeHtml(userName(c.ownerId))}</td>
-                <td>${priorityBadge(c.priority)}</td>
-                <td>${badge(c.status)}</td>
-                <td class="text-nowrap">${fmtDate(c.deadline)}</td>
-                <td class="text-end">
-                  ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${c.id}">${Icon('edit')}</button>` : ''}
-                  ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${c.id}">${Icon('trash')}</button>` : ''}
-                </td>
-              </tr>`).join('') || `<tr><td colspan="8" class="text-center text-secondary py-3">No cases yet.</td></tr>`}
-          </tbody>
+          <thead class="table-light"><tr>
+            <th style="width:34px;"><input type="checkbox" id="selectAllCheckbox" title="Select all on this page"></th>
+            <th class="sortable-th" data-sort="caseNumber">Case # <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="title">Title <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="type">Type <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="provider">Provider <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="pagcorStage">PAGCOR Stage <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="owner">Owner <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="priority">Priority <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="status">Status <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="deadline">Deadline <span class="sort-indicator"></span></th>
+            <th></th>
+          </tr></thead>
+          <tbody id="casesTbody"></tbody>
         </table>
       </div>
+      <div class="card-footer bg-white d-flex align-items-center justify-content-between" id="casesPagination"></div>
     </div>`;
+
+  const PAGE_SIZE = 30;
+  let currentPage = 1;
+  let filteredCases = cases;
+  let currentPageItems = [];
+  let sortColumn = null;
+  let sortDir = 'asc';
+  const selectedIds = new Set();
 
   const fields = () => ([
     { name: 'title', label: 'Title', required: true },
@@ -712,8 +971,285 @@ async function renderCases(content) {
     { name: 'priority', label: 'Priority', type: 'select', options: ['High', 'Medium', 'Low'].map((v) => ({ value: v, label: v })), required: true },
     { name: 'status', label: 'Status', type: 'select', options: ['Open', 'In Progress', 'Closed'].map((v) => ({ value: v, label: v })), required: true },
     { name: 'deadline', label: 'Deadline', type: 'date' },
+    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP' },
+    { name: 'gameTitle', label: 'Game Title (optional)' },
+    { name: 'gameType', label: 'Game Type (optional)', type: 'select', allowEmpty: true, options: GAME_TYPE_OPTIONS.map((v) => ({ value: v, label: v })) },
+    { name: 'gameId', label: 'Game ID (optional)' },
+    { name: 'gameVersion', label: 'Game Version (optional)' },
+    { name: 'withJackpot', label: 'With Jackpot? (optional)', type: 'select', allowEmpty: true, options: YES_NO_OPTIONS.map((v) => ({ value: v, label: v })) },
+    { name: 'pagcorStage', label: 'PAGCOR Stage (optional)', type: 'select', allowEmpty: true, options: PAGCOR_STAGE_OPTIONS.map((v) => ({ value: v, label: v })) },
+    { name: 'loaExpiryDate', label: 'LOA Expiry Date (optional)', type: 'date' },
     { name: 'description', label: 'Description', type: 'textarea' },
   ]);
+
+  function rowHtml(c) {
+    const checklistLabel = pagcorChecklistLabel(c);
+    return `
+      <tr data-id="${c.id}">
+        <td><input type="checkbox" class="row-checkbox" data-id="${c.id}" ${selectedIds.has(c.id) ? 'checked' : ''}></td>
+        <td>${escapeHtml(c.caseNumber)}</td>
+        <td>${escapeHtml(c.title)}</td>
+        <td>${escapeHtml(c.type)}</td>
+        <td>${escapeHtml(c.provider || '—')}</td>
+        <td>${c.pagcorStage ? badge(c.pagcorStage) : '<span class="text-secondary">—</span>'}</td>
+        <td>${escapeHtml(userName(c.ownerId))}</td>
+        <td>${priorityBadge(c.priority)}</td>
+        <td>${badge(c.status)}</td>
+        <td class="text-nowrap">${fmtDate(c.deadline)}</td>
+        <td class="text-end text-nowrap">
+          ${checklistLabel ? `<button class="btn btn-sm btn-outline-secondary btn-checklist" data-id="${c.id}" title="PAGCOR Checklist">${Icon('checkSquare')} ${checklistLabel}</button>` : ''}
+          ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${c.id}">${Icon('edit')}</button>` : ''}
+          ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${c.id}">${Icon('trash')}</button>` : ''}
+        </td>
+      </tr>`;
+  }
+
+  function attachRowHandlers() {
+    content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = cases.find((c) => c.id === btn.dataset.id);
+      showFormModal({
+        title: 'Edit Case', fields: fields(), initial: item,
+        onSubmit: async (data) => { await Api.put(`/api/cases/${item.id}`, data); toast('Case updated'); route(); },
+      });
+    }));
+    content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!(await confirmDialog('Delete this case?'))) return;
+      await Api.del(`/api/cases/${btn.dataset.id}`);
+      toast('Case deleted');
+      route();
+    }));
+    content.querySelectorAll('.btn-checklist').forEach((btn) => btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = cases.find((c) => c.id === btn.dataset.id);
+      showPagcorChecklistModal(item);
+    }));
+    content.querySelectorAll('.row-checkbox').forEach((cb) => cb.addEventListener('change', (e) => {
+      e.stopPropagation();
+      if (cb.checked) selectedIds.add(cb.dataset.id); else selectedIds.delete(cb.dataset.id);
+      updateSelectAllCheckbox();
+      updateBulkBar();
+    }));
+  }
+
+  function updateSelectAllCheckbox() {
+    const el = content.querySelector('#selectAllCheckbox');
+    if (!el) return;
+    el.checked = currentPageItems.length > 0 && currentPageItems.every((c) => selectedIds.has(c.id));
+  }
+
+  function updateBulkBar() {
+    const bar = content.querySelector('#bulkActionBar');
+    if (!bar) return;
+    if (selectedIds.size === 0) {
+      bar.classList.add('d-none');
+      bar.classList.remove('d-flex');
+      bar.innerHTML = '';
+      return;
+    }
+    bar.classList.remove('d-none');
+    bar.classList.add('d-flex');
+    bar.innerHTML = `
+      <span class="fw-semibold small">已選取 ${selectedIds.size} 筆</span>
+      ${canEdit ? `<button class="btn btn-sm btn-primary" id="btnBulkStage">${Icon('checkSquare', 'me-1')}批次更新 PAGCOR Stage</button>` : ''}
+      <button class="btn btn-sm btn-outline-secondary" id="btnBulkClear">清除選取</button>`;
+    const stageBtn = bar.querySelector('#btnBulkStage');
+    if (stageBtn) stageBtn.addEventListener('click', showBulkStageModal);
+    bar.querySelector('#btnBulkClear').addEventListener('click', () => { selectedIds.clear(); renderPage(); });
+  }
+
+  function showBulkStageModal() {
+    const modalId = 'bulkStageModal';
+    let modalEl = document.getElementById(modalId);
+    if (modalEl) modalEl.remove();
+    modalEl = document.createElement('div');
+    modalEl.id = modalId;
+    modalEl.className = 'modal fade';
+    modalEl.tabIndex = -1;
+    modalEl.innerHTML = `
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">批次更新 PAGCOR Stage（${selectedIds.size} 筆案件）</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <label class="form-label">將選取的案件全部設定為：</label>
+            <select class="form-select" id="bulkStageSelect">
+              ${PAGCOR_STAGE_OPTIONS.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            <button type="button" class="btn btn-primary" id="bulkStageConfirmBtn">確認更新</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(modalEl);
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+
+    modalEl.querySelector('#bulkStageConfirmBtn').addEventListener('click', async () => {
+      const btn = modalEl.querySelector('#bulkStageConfirmBtn');
+      const pagcorStage = modalEl.querySelector('#bulkStageSelect').value;
+      btn.disabled = true;
+      const originalLabel = btn.textContent;
+      btn.textContent = '更新中…';
+      try {
+        const result = await Api.post('/api/cases/bulk-update-stage', { ids: Array.from(selectedIds), pagcorStage });
+        modal.hide();
+        toast(`已更新 ${result.updated} 筆案件的 PAGCOR Stage${result.errors && result.errors.length ? `，${result.errors.length} 筆發生錯誤` : ''}`);
+        selectedIds.clear();
+        route();
+      } catch (err) {
+        toast(err.message, 'danger');
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+
+    modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+  }
+
+  // Sort value per column — pagcorStage sorts by pipeline order (Not Started
+  // → ... → Rejected), not alphabetically; priority sorts High/Medium/Low
+  // rather than alphabetically; everything else is a case-insensitive string
+  // (or numeric epoch for Deadline, with no-deadline sorting last).
+  function sortValue(c, col) {
+    switch (col) {
+      case 'caseNumber': return c.caseNumber || '';
+      case 'title': return (c.title || '').toLowerCase();
+      case 'type': return (c.type || '').toLowerCase();
+      case 'provider': return (c.provider || '').toLowerCase();
+      case 'pagcorStage': return c.pagcorStage ? PAGCOR_STAGE_OPTIONS.indexOf(c.pagcorStage) : -1;
+      case 'owner': return userName(c.ownerId).toLowerCase();
+      case 'priority': return { High: 0, Medium: 1, Low: 2 }[c.priority] ?? 3;
+      case 'status': return (c.status || '').toLowerCase();
+      case 'deadline': return c.deadline ? new Date(c.deadline).getTime() : Infinity;
+      default: return '';
+    }
+  }
+  function sortComparator(a, b) {
+    const va = sortValue(a, sortColumn);
+    const vb = sortValue(b, sortColumn);
+    const cmp = (typeof va === 'number' && typeof vb === 'number') ? va - vb : String(va).localeCompare(String(vb));
+    return sortDir === 'asc' ? cmp : -cmp;
+  }
+  function sortedFilteredCases() {
+    return sortColumn ? [...filteredCases].sort(sortComparator) : filteredCases;
+  }
+
+  function csvEscape(v) {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  // Exports every row matching the current Provider/Stage/search filters
+  // (not just the current page) in the current sort order — a CSV rather
+  // than a real .xlsx since that needs no library/build step and opens
+  // fine in Excel; mirrors the same field set the Import feature reads.
+  function exportCasesCsv() {
+    const header = ['Case #', 'Title', 'Type', 'Provider', 'Game Title', 'Game Type', 'Game ID', 'Game Version', 'With Jackpot',
+      'PAGCOR Stage', 'Game Manual', 'Parameter', 'RTP Certification', 'Owner', 'Priority', 'Status', 'Deadline', 'LOA Expiry Date', 'Description'];
+    const lines = [header.map(csvEscape).join(',')];
+    sortedFilteredCases().forEach((c) => {
+      const cl = Object.fromEntries((c.pagcorChecklist || []).map((i) => [i.key, i.done ? 'Yes' : 'No']));
+      lines.push([
+        c.caseNumber, c.title, c.type, c.provider || '', c.gameTitle || '', c.gameType || '', c.gameId || '', c.gameVersion || '', c.withJackpot || '',
+        c.pagcorStage || '', cl.gameManual || '', cl.parameter || '', cl.rtpCertification || '',
+        userName(c.ownerId), c.priority, c.status, c.deadline || '', c.loaExpiryDate || '', c.description || '',
+      ].map(csvEscape).join(','));
+    });
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cases_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // 30 rows per page (see renderPage()) — filtering always jumps back to
+  // page 1 since the previous page number may no longer make sense against
+  // the new filtered set. Search matches Case #, Title, or Game Title
+  // (substring, case-insensitive) — useful once there are hundreds of
+  // imported games and you just want to find one by name.
+  function applyFilters() {
+    const providerEl = content.querySelector('#filterProvider');
+    const stageEl = content.querySelector('#filterStage');
+    const searchEl = content.querySelector('#filterSearch');
+    const provider = providerEl ? providerEl.value : '';
+    const stage = stageEl ? stageEl.value : '';
+    const q = searchEl ? searchEl.value.trim().toLowerCase() : '';
+    filteredCases = cases.filter((c) => (!provider || c.provider === provider)
+      && (!stage || c.pagcorStage === stage)
+      && (!q || (c.title || '').toLowerCase().includes(q) || (c.gameTitle || '').toLowerCase().includes(q) || (c.caseNumber || '').toLowerCase().includes(q)));
+    currentPage = 1;
+    renderPage();
+  }
+
+  function renderPage() {
+    const sorted = sortedFilteredCases();
+    const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+    currentPage = Math.min(Math.max(1, currentPage), totalPages);
+    const start = (currentPage - 1) * PAGE_SIZE;
+    currentPageItems = sorted.slice(start, start + PAGE_SIZE);
+    content.querySelector('#casesTbody').innerHTML = currentPageItems.map(rowHtml).join('') || `<tr><td colspan="11" class="text-center text-secondary py-3">No cases match this filter.</td></tr>`;
+    attachRowHandlers();
+    updateSelectAllCheckbox();
+    updateBulkBar();
+
+    const pag = content.querySelector('#casesPagination');
+    if (sorted.length === 0) { pag.innerHTML = ''; return; }
+    const rangeStart = start + 1;
+    const rangeEnd = Math.min(start + PAGE_SIZE, sorted.length);
+    pag.innerHTML = `
+      <span class="text-secondary small">Showing ${rangeStart}–${rangeEnd} of ${sorted.length}</span>
+      <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-secondary" id="btnPagePrev" ${currentPage <= 1 ? 'disabled' : ''}>&lsaquo; Prev</button>
+        <span class="small text-secondary">Page ${currentPage} of ${totalPages}</span>
+        <button class="btn btn-sm btn-outline-secondary" id="btnPageNext" ${currentPage >= totalPages ? 'disabled' : ''}>Next &rsaquo;</button>
+      </div>`;
+    const prevBtn = pag.querySelector('#btnPagePrev');
+    const nextBtn = pag.querySelector('#btnPageNext');
+    if (prevBtn) prevBtn.addEventListener('click', () => { currentPage--; renderPage(); content.querySelector('.table-responsive').scrollIntoView({ block: 'nearest' }); });
+    if (nextBtn) nextBtn.addEventListener('click', () => { currentPage++; renderPage(); content.querySelector('.table-responsive').scrollIntoView({ block: 'nearest' }); });
+  }
+
+  content.querySelector('#filterSearch').addEventListener('input', applyFilters);
+  if (providers.length) {
+    content.querySelector('#filterProvider').addEventListener('change', applyFilters);
+    content.querySelector('#filterStage').addEventListener('change', applyFilters);
+    // Deep-link support for "#/cases?stage=Under%20PAGCOR%20Review" (used by
+    // the Dashboard's PAGCOR Submission Pipeline board's "還有 N 筆 →" links)
+    // — pre-select the Stage filter from the URL's query string, if present.
+    const stageParam = new URLSearchParams(location.hash.split('?')[1] || '').get('stage');
+    if (stageParam && PAGCOR_STAGE_OPTIONS.includes(stageParam)) {
+      content.querySelector('#filterStage').value = stageParam;
+    }
+  }
+
+  content.querySelector('#selectAllCheckbox').addEventListener('change', (e) => {
+    currentPageItems.forEach((c) => { if (e.target.checked) selectedIds.add(c.id); else selectedIds.delete(c.id); });
+    renderPage();
+  });
+
+  content.querySelectorAll('.sortable-th').forEach((th) => th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    sortDir = (sortColumn === col && sortDir === 'asc') ? 'desc' : 'asc';
+    sortColumn = col;
+    content.querySelectorAll('.sortable-th .sort-indicator').forEach((el) => { el.textContent = ''; });
+    th.querySelector('.sort-indicator').textContent = sortDir === 'asc' ? ' ▲' : ' ▼';
+    currentPage = 1;
+    renderPage();
+  }));
+
+  content.querySelector('#btnExportCases').addEventListener('click', exportCasesCsv);
+
+  applyFilters();
 
   if (canCreate) {
     content.querySelector('#btnCreate').addEventListener('click', () => {
@@ -723,22 +1259,8 @@ async function renderCases(content) {
         onSubmit: async (data) => { await Api.post('/api/cases', data); toast('Case created'); route(); },
       });
     });
+    content.querySelector('#btnImportCases').addEventListener('click', showImportCasesModal);
   }
-  content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const item = cases.find((c) => c.id === btn.dataset.id);
-    showFormModal({
-      title: 'Edit Case', fields: fields(), initial: item,
-      onSubmit: async (data) => { await Api.put(`/api/cases/${item.id}`, data); toast('Case updated'); route(); },
-    });
-  }));
-  content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async (e) => {
-    e.stopPropagation();
-    if (!(await confirmDialog('Delete this case?'))) return;
-    await Api.del(`/api/cases/${btn.dataset.id}`);
-    toast('Case deleted');
-    route();
-  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -905,12 +1427,15 @@ async function renderDocuments(content) {
     <div class="card stat-card">
       <div class="table-responsive">
         <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>Title</th><th>Category</th><th>File</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
+          <thead class="table-light"><tr><th>Title</th><th>Category</th><th>Provider</th><th>Game</th><th>Report Type</th><th>File</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
           <tbody>
             ${docs.map((d) => `
               <tr>
                 <td>${escapeHtml(d.title)}</td>
                 <td><span class="badge text-bg-light border">${escapeHtml(d.category)}</span></td>
+                <td>${escapeHtml(d.provider || '—')}</td>
+                <td>${escapeHtml(d.gameTitle || '—')}</td>
+                <td>${d.reportType ? `<span class="badge text-bg-light border">${escapeHtml(d.reportType)}</span>` : '<span class="text-secondary">—</span>'}</td>
                 <td>${d.filePath ? `<a href="/api/documents/${d.id}/download" class="text-decoration-none">${Icon('download', 'me-1')}${escapeHtml(d.fileName || 'file')}</a>` : `<span class="text-secondary">${escapeHtml(d.fileName || '—')}</span>`}</td>
                 <td>${escapeHtml(userName(d.uploadedBy))}</td>
                 <td class="text-nowrap">${fmtDate(d.createdAt)}</td>
@@ -918,7 +1443,7 @@ async function renderDocuments(content) {
                   ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${d.id}">${Icon('edit')}</button>` : ''}
                   ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${d.id}">${Icon('trash')}</button>` : ''}
                 </td>
-              </tr>`).join('') || `<tr><td colspan="6" class="text-center text-secondary py-3">No documents yet.</td></tr>`}
+              </tr>`).join('') || `<tr><td colspan="9" class="text-center text-secondary py-3">No documents yet.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -927,6 +1452,9 @@ async function renderDocuments(content) {
   const fields = () => ([
     { name: 'title', label: 'Title', required: true },
     { name: 'category', label: 'Category', type: 'select', options: ['Templates', 'Policies', 'Agreements', 'Certificates', 'Other'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP' },
+    { name: 'gameTitle', label: 'Game Title (optional)' },
+    { name: 'reportType', label: 'Report Type (optional)', type: 'select', allowEmpty: true, options: REPORT_TYPE_OPTIONS.map((v) => ({ value: v, label: v })) },
     { name: 'relatedCaseId', label: 'Related Case (optional)', type: 'select', allowEmpty: true, options: State.lookups.cases.map((c) => ({ value: c.id, label: c.caseNumber + ' - ' + c.title })) },
     { name: 'relatedContractId', label: 'Related Contract (optional)', type: 'select', allowEmpty: true, options: State.lookups.contracts.map((c) => ({ value: c.id, label: c.contractNumber + ' - ' + c.title })) },
     { name: 'fileName', label: 'File Upload', type: 'file' },

@@ -128,3 +128,33 @@ body { background: var(--lms-bg); color: var(--lms-text); }
 
 /* Icon helper --------------------------------------------------------------- */
 .icon { width: 16px; height: 16px; display: inline-block; vertical-align: -3px; }
+
+/* PAGCOR pipeline overview (Dashboard) — one horizontal bar per Stage ------- */
+.pagcor-bar-row {
+  display: flex; align-items: center; gap: .9rem; padding: .65rem 1rem;
+  text-decoration: none; color: inherit;
+}
+.pagcor-bar-row:hover { background: var(--lms-bg); }
+.pagcor-bar-label { width: 170px; flex-shrink: 0; font-size: .82rem; font-weight: 600; color: var(--lms-text); }
+.pagcor-bar-track {
+  flex: 1 1 auto; height: 10px; border-radius: 999px; background: #eef0f5; overflow: hidden;
+}
+.pagcor-bar-fill { display: block; height: 100%; border-radius: 999px; min-width: 2px; }
+.pagcor-bar-fill.tone-info { background: #6366f1; }
+.pagcor-bar-fill.tone-warning { background: #f59e0b; }
+.pagcor-bar-fill.tone-success { background: #22c55e; }
+.pagcor-bar-fill.tone-danger { background: #ef4444; }
+.pagcor-bar-fill.tone-neutral { background: #9ca3af; }
+.pagcor-bar-count {
+  width: 46px; flex-shrink: 0; text-align: right; font-weight: 700; font-size: .88rem;
+}
+.pagcor-bar-count.tone-info { color: #3730a3; }
+.pagcor-bar-count.tone-warning { color: #92400e; }
+.pagcor-bar-count.tone-success { color: #166534; }
+.pagcor-bar-count.tone-danger { color: #991b1b; }
+.pagcor-bar-count.tone-neutral { color: #374151; }
+
+/* Case Management: sortable headers + bulk action bar ----------------------- */
+.sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
+.sortable-th:hover { color: var(--lms-primary); }
+.sortable-th .sort-indicator { font-size: .7em; color: var(--lms-primary); }

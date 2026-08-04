@@ -5,6 +5,8 @@ const auth = require('./auth');
 const storage = require('./storage');
 const ai = require('./ai');
 const assistant = require('./assistant');
+const pagcor = require('./pagcor');
+const caseImport = require('./import');
 const { mimeFor } = require('./mime');
 
 const router = new Router();
@@ -186,6 +188,17 @@ router.get('/api/dashboard/summary', async (req, res) => {
     if (c.deadline && c.status !== 'Closed' && new Date(c.deadline) <= in14) {
       upcomingDeadlines.push({ type: 'Case', id: c.id, title: c.title, date: c.deadline });
     }
+    // LOA (Letter of Approval) renewal tracking reuses this same "upcoming
+    // deadlines" widget rather than introducing new infrastructure — once a
+    // PAGCOR submission case has an loaExpiryDate set, it surfaces here
+    // exactly like any other deadline.
+    if (c.loaExpiryDate && new Date(c.loaExpiryDate) <= in14) {
+      upcomingDeadlines.push({
+        type: 'LOA Expiry', id: c.id,
+        title: `${c.title}${c.gameTitle ? ` (${c.gameTitle})` : ''}`,
+        date: c.loaExpiryDate,
+      });
+    }
   });
   contracts.forEach((c) => {
     if (c.expiryDate && new Date(c.expiryDate) <= in14) {
@@ -206,7 +219,36 @@ router.get('/api/dashboard/summary', async (req, res) => {
 
   const pendingApprovals = approvals.filter((a) => a.status === 'Pending' && a.reviewerId === user.id);
 
+  // PAGCOR submission pipeline, grouped by Stage, for the Dashboard's Kanban
+  // overview (see public/js/app.js's renderDashboard). Only cases with a
+  // Provider set are PAGCOR game-submission cases (see crudRoutes onCreate
+  // above for the same "Provider present -> PAGCOR case" convention). Each
+  // column returns a small sample (most-recently-created first) plus a total
+  // count, rather than every case, since a stage like "Under PAGCOR Review"
+  // can hold hundreds of games — the client links out to the filtered Case
+  // Management list for the rest instead of rendering them all here.
+  const PAGCOR_BOARD_SAMPLE_SIZE = 5;
+  const pagcorCases = cases.filter((c) => c.provider);
+  const pagcorBoard = pagcor.PAGCOR_STAGE_OPTIONS.map((stage) => {
+    const inStage = pagcorCases
+      .filter((c) => c.pagcorStage === stage)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return {
+      stage,
+      count: inStage.length,
+      sample: inStage.slice(0, PAGCOR_BOARD_SAMPLE_SIZE).map((c) => ({
+        id: c.id,
+        caseNumber: c.caseNumber,
+        title: c.title,
+        provider: c.provider,
+        checklistDone: (c.pagcorChecklist || []).filter((i) => i.done).length,
+        checklistTotal: (c.pagcorChecklist || []).length,
+      })),
+    };
+  });
+
   sendJson(res, 200, {
+    pagcorBoard,
     pendingTasksCount: myTasks.length,
     orgPendingTasksCount: allPendingTasks.length,
     upcomingDeadlines: upcomingDeadlines.slice(0, 10),
@@ -269,13 +311,147 @@ function crudRoutes({ base, moduleName, collection, onCreate, onUpdate }) {
 // Cases -----------------------------------------------------------------
 crudRoutes({
   base: '/api/cases', moduleName: 'cases', collection: 'cases',
-  onCreate: async (body) => ({ ...body, caseNumber: body.caseNumber || await store.nextNumber('case', 'CASE') }),
+  onCreate: async (body) => {
+    const patch = { ...body, caseNumber: body.caseNumber || await store.nextNumber('case', 'CASE') };
+    // A case with a Provider set is a PAGCOR game-submission case — give it
+    // the standard checklist/stage automatically so the user doesn't have to
+    // set those up by hand every time. Cases without a Provider (Commercial,
+    // IP, Litigation, etc.) are untouched.
+    if (body.provider && !patch.pagcorChecklist) patch.pagcorChecklist = pagcor.defaultChecklist();
+    if (body.provider && !patch.pagcorStage) patch.pagcorStage = 'Preparing Documents';
+    return patch;
+  },
+});
+
+// Bulk stage update — select multiple cases in Case Management (e.g. a
+// batch of games that all just got their LOA) and set their PAGCOR Stage
+// in one action, instead of opening each one individually. Same "cases:
+// edit" permission as the per-case Edit button. Only touches pagcorStage —
+// mirrors what editing a single case's Stage field alone does (it doesn't
+// auto-recompute status/checklist either; those are only auto-set once, at
+// creation time — see crudRoutes' onCreate above).
+router.post('/api/cases/bulk-update-stage', async (req, res, params, body) => {
+  const user = await requirePerm(req, res, 'cases', 'edit');
+  if (!user) return;
+  const ids = Array.isArray(body.ids) ? body.ids : [];
+  const { pagcorStage } = body;
+  if (!ids.length) return sendJson(res, 400, { error: '請至少選擇一筆案件。' });
+  if (!pagcor.PAGCOR_STAGE_OPTIONS.includes(pagcorStage)) {
+    return sendJson(res, 400, { error: `無效的 PAGCOR Stage: ${pagcorStage}` });
+  }
+  let updated = 0;
+  const errors = [];
+  for (const id of ids) {
+    try {
+      const row = await store.update('cases', id, { pagcorStage });
+      if (row) updated++; else errors.push(`${id}: not found`);
+    } catch (err) {
+      errors.push(`${id}: ${err.message}`);
+    }
+  }
+  sendJson(res, 200, { updated, errors });
 });
 
 router.get('/api/cases/:id/notes', async (req, res, params) => {
   const user = await requirePerm(req, res, 'cases', 'view');
   if (!user) return;
   sendJson(res, 200, (await store.all('caseNotes')).filter((n) => n.caseId === params.id));
+});
+
+// Import Excel/CSV -> bulk-create Cases (see server/import.js). Two steps:
+// preview (parse + show what would be created, without writing anything),
+// then commit (the user has reviewed/edited the per-sheet Provider/Stage
+// settings and actually wants the records created). Same "cases: create"
+// permission as the normal "New Case" button — this is a bulk shortcut for
+// the same action, not a separate capability.
+function decodeBase64File(fileContentBase64) {
+  if (!fileContentBase64) throw new Error('請上傳一個檔案。');
+  const base64Data = fileContentBase64.includes(',') ? fileContentBase64.split(',').pop() : fileContentBase64;
+  return Buffer.from(base64Data, 'base64');
+}
+
+router.post('/api/cases/import/preview', async (req, res, params, body) => {
+  const user = await requirePerm(req, res, 'cases', 'create');
+  if (!user) return;
+  try {
+    const buffer = decodeBase64File(body.fileContentBase64);
+    const sheets = caseImport.preview(buffer, body.fileName);
+    sendJson(res, 200, { sheets });
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
+// Dedup key for import commit: Provider + Game Title, case-insensitively
+// (falls back to the case Title if a row has no gameTitle — shouldn't
+// happen for real import rows, but keeps this safe for hand-built ones).
+// Only cases with a Provider are ever considered — non-PAGCOR cases never
+// collide with import rows.
+function importDedupKey(c) {
+  return `${(c.provider || '').trim().toLowerCase()}|${(c.gameTitle || c.title || '').trim().toLowerCase()}`;
+}
+
+router.post('/api/cases/import/commit', async (req, res, params, body) => {
+  const user = await requirePerm(req, res, 'cases', 'create');
+  if (!user) return;
+  const sheetSettings = Array.isArray(body.sheets) ? body.sheets : [];
+  let buffer;
+  try {
+    buffer = decodeBase64File(body.fileContentBase64);
+  } catch (err) {
+    return sendJson(res, 400, { error: err.message });
+  }
+  const errors = [];
+
+  // Stage 1: parse every included sheet into rows, tagged with the sheet
+  // name they came from (for error messages).
+  const allRows = [];
+  for (const s of sheetSettings) {
+    if (!s || s.include === false) continue;
+    try {
+      const rows = caseImport.buildCasesForSheet(buffer, body.fileName, s.name, { provider: s.provider, pagcorStage: s.pagcorStage });
+      rows.forEach((row) => allRows.push({ row, sheetName: s.name }));
+    } catch (err) {
+      errors.push(`${s.name}: ${err.message}`);
+    }
+  }
+
+  // Stage 2: a real workbook can list the same game in more than one sheet
+  // — e.g. a Provider's own pending-list tab AND the master "APPROVED" tab,
+  // once that game has actually been approved (the Provider tab just never
+  // got updated). Tiffany confirmed: treat that as ONE case, using the
+  // APPROVED-tab version (final LOA Approved stage), not two separate
+  // records for the same game — so an isApprovedRow entry always wins a
+  // same-key collision, whichever sheet order they were parsed in.
+  const byKey = new Map();
+  for (const entry of allRows) {
+    const key = importDedupKey(entry.row);
+    const existing = byKey.get(key);
+    if (!existing || (entry.row.isApprovedRow && !existing.row.isApprovedRow)) byKey.set(key, entry);
+  }
+  const collapsedByCrossSheetDedup = allRows.length - byKey.size;
+
+  // Stage 3: skip anything that's already a Case from an earlier import run
+  // (or was hand-created with the same Provider + Game Title) — this is
+  // what protects against accidentally re-running the same import twice,
+  // since this is an additive bulk-create, not an upsert.
+  const existingKeys = new Set((await store.all('cases')).filter((c) => c.provider).map(importDedupKey));
+  let created = 0;
+  let skippedExisting = 0;
+  for (const { row, sheetName } of byKey.values()) {
+    const key = importDedupKey(row);
+    if (existingKeys.has(key)) { skippedExisting++; continue; }
+    try {
+      const caseNumber = await store.nextNumber('case', 'CASE');
+      const { isApprovedRow, ...caseFields } = row; // internal-only flag, not a Case field
+      await store.insert('cases', { ...caseFields, ownerId: user.id, caseNumber });
+      created++;
+      existingKeys.add(key);
+    } catch (err) {
+      errors.push(`${sheetName} / ${row.title}: ${err.message}`);
+    }
+  }
+  sendJson(res, 200, { created, skipped: collapsedByCrossSheetDedup + skippedExisting, errors });
 });
 
 router.post('/api/cases/:id/notes', async (req, res, params, body) => {

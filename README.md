@@ -177,6 +177,142 @@ background — both would require integrating a real external system
 (mailbox OAuth access, a paid legal/regulatory data feed) that isn't set up
 today. Today, a person always types the request that starts things off.
 
+## PAGCOR game-submission features
+
+A set of small, additive features for the specific workflow of helping
+overseas game Providers (e.g. FC, JDB, VP) get a game approved by PAGCOR
+(Philippine Amusement and Gaming Corporation) — organizing their math model /
+RNG test report, and filing for a Letter of Approval (LOA). None of these are
+a new module: they're all extensions of Case Management, the Document
+Center, and the AI Assistant/AI smart-fill you already have.
+
+1. **PAGCOR checklist + stage, right on the Case.** Give any Case a
+   "Provider" (e.g. `FC`) and it automatically gets the standard checklist
+   (Game Manual / Parameter / RTP Certification — matched to what's actually
+   tracked in Tiffany's real submission tracking sheet) and a `pagcorStage`
+   (Not Started → Preparing Documents → Submitted to PAGCOR → Under PAGCOR
+   Review → LOA Approved / Rejected). A case can also carry `gameType`
+   (Slots/Arcade-Type/Table/eBingo/Other), `gameId`, `gameVersion`, and
+   `withJackpot` (Yes/No) — the other per-game attributes that tracking
+   sheet records. Click the checklist button on a case row to tick items off
+   as they're done — see `server/pagcor.js` for the shared list,
+   `showPagcorChecklistModal()` in `public/js/app.js` for the modal.
+2. **Document Center auto-tagging.** The "AI 智慧填寫" button on Upload
+   Document now also detects `provider`, `gameTitle`, and `reportType` (Math
+   Model Report / RNG Test Report / Game Rules & Paytable / Submission
+   Letter / LOA / Other) straight from the uploaded file or pasted text — see
+   the `documents` entry in `server/ai.js`'s `MODULE_SCHEMAS`.
+3. **LOA expiry/renewal tracking.** Set a case's `loaExpiryDate` once its LOA
+   is approved, and it shows up in the Dashboard's "Upcoming Deadlines"
+   widget (labeled "LOA Expiry") the same way case deadlines and contract
+   expirations already do — no new notification infrastructure, just one
+   more date field feeding the existing widget (see `/api/dashboard/summary`
+   in `server/routes.js`).
+4. **AI Assistant drafts the PAGCOR cover letter.** Ask it directly, e.g.
+   *"幫我起草一封 PAGCOR 送審公文，Provider 是 FC，遊戲是 Fortune Dragon"* —
+   it writes the actual letter text in its reply. This is pure text
+   generation (nothing is saved), so it does **not** go through the
+   propose-then-confirm flow the create_* actions use — see the system
+   prompt in `server/assistant.js`'s `runTurn()`.
+5. **Filter Case Management by Provider / PAGCOR Stage.** Once at least one
+   case has a Provider set, two filter dropdowns appear above the Case
+   Management table so you can quickly see, e.g., "everything for JDB that's
+   still Under PAGCOR Review." The Case Management table is also paginated,
+   30 rows per page, so a large imported list doesn't turn into one long
+   scroll — see `PAGE_SIZE` / `renderPage()` in `renderCases()` in
+   `public/js/app.js`.
+6. **Dashboard: PAGCOR Submission Pipeline overview.** A row of horizontal
+   bars on the Dashboard, one per PAGCOR Stage, sized relative to each
+   other, so you can see at a glance how submissions are distributed across
+   stages (e.g. "Under PAGCOR Review: 308") without opening Case Management
+   at all. Clicking a bar jumps to Case Management with that Stage
+   pre-filtered. Only cases with a Provider set (i.e. PAGCOR
+   game-submission cases) are counted — see the `pagcorBoard` field added to
+   `/api/dashboard/summary` in `server/routes.js`, and `pagcorBoardHtml()`
+   in `public/js/app.js`.
+7. **Search Case Management by Case #, Title, or Game Title.** A search box
+   next to the Provider/Stage filters narrows the list to whatever text you
+   type (substring, case-insensitive) — combines with the other filters, so
+   you can e.g. search within a Provider's cases only. Once you have
+   hundreds of imported games, this is usually faster than paging through.
+8. **Export the case list to CSV.** The "Export CSV" button downloads
+   whatever the current Provider/Stage/search filters and sort order show
+   (not just the current page) as a `.csv` file — every field the Import
+   feature reads, including the PAGCOR checklist as three Yes/No columns —
+   for reporting or archiving in Excel. This is a real CSV rather than a
+   `.xlsx` file (opens fine in Excel either way) since it needs no library
+   or build step — see `exportCasesCsv()` in `public/js/app.js`.
+9. **Bulk-update PAGCOR Stage for multiple cases at once.** Checkboxes on
+   each case row (plus a "select all on this page" checkbox in the header)
+   let you select a batch of cases and set their PAGCOR Stage in one action
+   via the toolbar that appears once something's selected, instead of
+   opening each case individually. Only touches `pagcorStage` — same as
+   editing one case's Stage field by hand, it doesn't recompute
+   status/checklist. Requires the same "cases: edit" permission as the
+   per-case Edit button — see `POST /api/cases/bulk-update-stage` in
+   `server/routes.js`.
+10. **Sortable Case Management columns.** Click any column header (Case #,
+    Title, Type, Provider, PAGCOR Stage, Owner, Priority, Status, Deadline)
+    to sort by it; click again to reverse. PAGCOR Stage sorts by pipeline
+    order (Not Started → ... → Rejected), not alphabetically, and Priority
+    sorts High → Medium → Low — see `sortValue()`/`sortComparator()` in
+    `renderCases()` in `public/js/app.js`.
+11. **Import Excel/CSV de-duplicates.** Re-running the same import (or
+    importing a workbook where the same game appears in both a Provider's
+    own tab and the master "APPROVED" tab — a real shape in Tiffany's actual
+    workbook) no longer creates duplicate cases. Matching is by
+    (Provider, Game Title), case-insensitively: a game already in both
+    an included Provider sheet and the APPROVED sheet in the **same**
+    commit collapses to one case using the APPROVED (final) version; a game
+    that already exists as a Case from an **earlier** import run is skipped
+    entirely. The import result now reports a `skipped` count alongside
+    `created` — see `POST /api/cases/import/commit` in `server/routes.js`.
+
+Demo data for the first six is included in `server/seed.js` (two PAGCOR-flavored
+cases — one mid-submission, one with an approaching LOA expiry — plus two
+tagged documents) so a fresh local/mock database shows them immediately.
+Your **existing, already-seeded production database won't get this demo
+data automatically** (seeding only runs once, on an empty database) — the
+features themselves work regardless; you'd just start from your own real
+cases instead of the two demo ones.
+
+### Import Excel/CSV -> bulk-create Cases
+
+A 6th, larger feature: an **"Import Excel/CSV"** button next to "New" on the
+Case Management page, for bringing in an existing spreadsheet of game
+submissions instead of typing each one in by hand. Built and tested directly
+against Tiffany's real tracking workbook (one sheet per Provider of pending
+submissions, plus an "APPROVED" sheet with its own extra columns per game) —
+343 rows across 6 sheets, imported end-to-end with 0 errors in testing.
+
+How it works:
+
+1. Pick a `.xlsx` or `.csv` file. Every sheet in the workbook is analyzed
+   separately (a plain `.csv` is treated as one sheet).
+2. For each sheet, common header names are auto-recognized (Game Name/Game
+   Title/Title, Provider, Game Type, Game ID, Game Version, Status, With
+   Jackpot, Game Manual, Parameter, RTP Certification, Remarks, Date
+   Received — matched case-insensitively, so header wording doesn't need to
+   be exact). A sheet without its own "Provider" column gets an editable
+   suggested Provider name (from the sheet/tab name); a sheet without a
+   "Status" column gets an editable default PAGCOR Stage applied to every
+   row in it. A sheet **with** a Status column (like "APPROVED") maps
+   `STATUS = APPROVED` rows straight to `pagcorStage: 'LOA Approved'` and
+   uses that row's own Game Manual/Parameter/RTP Certification values for
+   the checklist, instead of a blanket default.
+3. Review the per-sheet row counts and sample games, adjust Provider/Stage
+   if needed, and click "確認匯入" — only then does anything get written.
+
+No new npm dependency was added for this — `.xlsx` files are just ZIP
+archives of XML, and Node's built-in `zlib` already knows how to decompress
+ZIP's "deflate" entries, so `server/xlsx-lite.js` is a small, dependency-free
+reader written for this project (see that file's header comment for why:
+this sandbox had no registry access to install a package like `xlsx` when
+this was built). The actual column-mapping/normalization logic lives in
+`server/import.js`; the two endpoints are `POST /api/cases/import/preview`
+and `POST /api/cases/import/commit` in `server/routes.js`, both gated behind
+the same "cases: create" permission the normal "New Case" button uses.
+
 ## Architecture
 
 ```

@@ -37,21 +37,32 @@ const MAX_TOOL_ROUNDS = 4; // safety cap against runaway tool-call loops
 // ---------------------------------------------------------------------------
 // Tool definitions
 // ---------------------------------------------------------------------------
+// IMPORTANT (learned from a real bug): these tools do NOT filter server-side
+// by `query` — they return the CURRENT FULL LIST of that record type, and
+// the model itself is expected to read through it and pick out whatever
+// matches. `query` only exists so the model can express intent; passing a
+// different query string will NOT change what comes back. The description
+// text below says this explicitly, because without it a model would (and
+// in testing, did) call the same search again and again with reworded
+// queries hoping for a filtered/different result, looping until the
+// MAX_TOOL_ROUNDS safety cap kicked in — every retry returned the exact
+// same unfiltered list, so it could never converge. See the system prompt
+// in runTurn() for the matching "call each search tool at most once" rule.
 const READ_TOOLS = {
   search_cases: {
     module: 'cases',
-    description: 'Search existing legal cases by any criteria (title, type, status, priority, owner, date range, keywords in the description). Returns matching cases.',
-    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'What to search for, in plain language.' } }, required: ['query'] },
+    description: 'Returns the full current list of legal cases in the system (NOT filtered server-side by `query` — every call returns the same complete list regardless of what query you pass). Read through the returned records yourself to find whatever matches the user\'s request (by title, type, status, priority, owner, date, keywords, etc.).',
+    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'What the user is looking for, in plain language — for your own reference only, this does not filter the results.' } }, required: ['query'] },
   },
   search_contracts: {
     module: 'contracts',
-    description: 'Search existing contracts by any criteria (title, counterparty, type, status, date range, keywords). Returns matching contracts.',
-    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'What to search for, in plain language.' } }, required: ['query'] },
+    description: 'Returns the full current list of contracts in the system (NOT filtered server-side by `query` — every call returns the same complete list regardless of what query you pass). Read through the returned records yourself to find whatever matches the user\'s request (by title, counterparty, type, status, dates, keywords, etc.).',
+    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'What the user is looking for, in plain language — for your own reference only, this does not filter the results.' } }, required: ['query'] },
   },
   search_documents: {
     module: 'documents',
-    description: 'Search the document center by title, category, or keywords.',
-    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'What to search for, in plain language.' } }, required: ['query'] },
+    description: 'Returns the full current list of documents in the document center (NOT filtered server-side by `query` — every call returns the same complete list regardless of what query you pass). Read through the returned records yourself to find whatever matches the user\'s request.',
+    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'What the user is looking for, in plain language — for your own reference only, this does not filter the results.' } }, required: ['query'] },
   },
 };
 
@@ -249,6 +260,7 @@ async function runTurn({ history = [], text, user }) {
     'You are the AI Assistant embedded in "Legal Genie", an internal legal department system for a gaming machine manufacturer. ' +
     'You help the legal team look things up and create records via natural language, in whichever language the user writes in (respond in the same language they used). ' +
     'Use the search_* tools for any lookup/find/list request — never guess data, always look it up. ' +
+    'Each search_* tool returns the full current list of that record type, not a server-filtered subset — call each one AT MOST ONCE per request, then read through what it returned yourself to find matches. Calling the same search tool again will return identical results, so never retry a search hoping for a different result. If nothing in the returned list matches, just tell the user that plainly instead of searching again. ' +
     'Use the create_* tools when the user clearly wants to create/open/file/draft something. If a required detail is genuinely ambiguous or missing (e.g. no case type given), ask a brief clarifying question in plain text instead of guessing. ' +
     `Team roster (username (full name)): ${roster || '(none yet)'}. ` +
     `Existing case numbers: ${caseDirectory || '(none yet)'}. ` +

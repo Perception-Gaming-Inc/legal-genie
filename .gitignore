@@ -1,0 +1,9 @@
+node_modules/
+data/db.json
+data/db.json.migrated-backup
+data/legal-genie.sqlite
+data/legal-genie.sqlite-shm
+data/legal-genie.sqlite-wal
+uploads/*
+!uploads/.gitkeep
+*.log

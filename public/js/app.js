@@ -20,6 +20,7 @@ const ICON_PATHS = {
   trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>',
   download: '<path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M5 19h14"/>',
+  upload: '<path d="M12 21V9"/><polyline points="7 14 12 9 17 14"/><path d="M5 5h14"/>',
   check: '<polyline points="4 12 10 18 20 6"/>',
   x: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/>',
   scale: '<path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7l-3 6a3 3 0 0 0 6 0Z"/><path d="M19 7l-3 6a3 3 0 0 0 6 0Z"/>',
@@ -73,7 +74,6 @@ const NAV = [
   { key: 'assistant', label: 'AI Assistant', icon: 'sparkle' },
   { key: 'cases', label: 'Case Management', icon: 'briefcase' },
   { key: 'contracts', label: 'Contract Management', icon: 'file' },
-  { key: 'compliance', label: 'Compliance', icon: 'shield' },
   { key: 'documents', label: 'Document Center', icon: 'folder' },
   { key: 'tasks', label: 'Task Management', icon: 'checklist' },
   { key: 'approvals', label: 'Approval Center', icon: 'checkSquare' },
@@ -91,6 +91,48 @@ const NAV = [
 const PAGCOR_STAGE_OPTIONS = [
   'Not Started', 'Preparing Documents', 'Submitted to PAGCOR', 'Under PAGCOR Review', 'LOA Approved', 'Rejected',
 ];
+// The normal, linear left-to-right pipeline a game submission moves through.
+// 'Rejected' is deliberately excluded here — it's an off-path terminal state
+// (a submission can be rejected from any point in the pipeline), not a
+// further step along it, so it gets its own distinct visual treatment in
+// pagcorStageStepperHtml() below rather than a 6th step on the bar.
+const PAGCOR_LINEAR_STAGES = [
+  'Not Started', 'Preparing Documents', 'Submitted to PAGCOR', 'Under PAGCOR Review', 'LOA Approved',
+];
+// Renders the horizontal PAGCOR review progress stepper shown at the top of
+// the case detail page (renderCaseDetail() below). Steps before the current
+// stage are marked done (checkmark), the current stage is highlighted, and
+// later steps are shown as upcoming. 'Rejected' shows a separate red banner
+// instead of a stepper position, since it isn't a point on the linear path.
+// When canEdit is true, each linear step gets a data-stage attribute and a
+// clickable style — renderCaseDetail() wires up the actual click handler,
+// this function only marks which steps should be clickable and with what
+// value, same split as the PAGCOR Checklist (markup here, save-on-click
+// logic at the call site).
+function pagcorStageStepperHtml(stage, canEdit) {
+  if (stage === 'Rejected') {
+    return `
+      <div class="pagcor-stepper pagcor-stepper-rejected d-flex align-items-center gap-2">
+        ${Icon('x', 'text-danger')}
+        <span class="fw-semibold text-danger">Rejected</span>
+        <span class="small text-secondary">This game submission did not pass PAGCOR review.</span>
+      </div>`;
+  }
+  const idx = Math.max(0, PAGCOR_LINEAR_STAGES.indexOf(stage || 'Not Started'));
+  return `
+    <div class="pagcor-stepper d-flex align-items-start">
+      ${PAGCOR_LINEAR_STAGES.map((s, i) => {
+        const state = i < idx ? 'done' : (i === idx ? 'current' : 'upcoming');
+        const connector = i > 0 ? `<div class="pagcor-step-connector ${i <= idx ? 'done' : ''}"></div>` : '';
+        const clickable = canEdit && i !== idx;
+        return `${connector}
+        <div class="pagcor-step pagcor-step-${state}${clickable ? ' pagcor-step-clickable' : ''}" ${clickable ? `data-stage="${escapeHtml(s)}"` : ''} title="${clickable ? `點擊設為「${escapeHtml(s)}」` : escapeHtml(s)}">
+          <div class="pagcor-step-dot">${state === 'done' ? Icon('check') : (i + 1)}</div>
+          <div class="pagcor-step-label">${escapeHtml(s)}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
 const PAGCOR_CHECKLIST_ITEMS = [
   { key: 'gameManual', label: 'Game Manual' },
   { key: 'parameter', label: 'Parameter' },
@@ -336,6 +378,37 @@ function confirmDialog(message) {
   return Promise.resolve(window.confirm(message));
 }
 
+// Generic read-only info modal (title + arbitrary body HTML, just a Close
+// button) — used by the Document Center's "AI 幫我抓重點" summary result,
+// and reusable for any other simple "show some content" popup later instead
+// of every caller building its own one-off modal markup.
+function showInfoModal({ title, bodyHtml }) {
+  const modalId = 'infoModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  modalEl.innerHTML = `
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">${escapeHtml(title)}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">${bodyHtml}</div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
+
 // ---------------------------------------------------------------------------
 // Shell (sidebar + topbar) & router
 // ---------------------------------------------------------------------------
@@ -392,7 +465,6 @@ const ROUTES = {
   assistant: renderAssistant,
   cases: renderCases,
   contracts: renderContracts,
-  compliance: renderCompliance,
   documents: renderDocuments,
   tasks: renderTasks,
   approvals: renderApprovals,
@@ -406,8 +478,14 @@ async function route() {
   // Split off an optional "?query=string" (e.g. "#/cases?stage=Under%20PAGCOR%20Review",
   // used by the Dashboard's PAGCOR board links to deep-link into a pre-filtered
   // Case Management list) before taking the route key, so a query string never
-  // breaks route matching.
-  const key = hash.split('?')[0].split('/')[0];
+  // breaks route matching. A second path segment after the key (e.g.
+  // "#/cases/<id>") is a record id for that module's own detail page, if it
+  // has one — currently only Case Management does (see the "cases" branch
+  // below and renderCaseDetail()).
+  const pathPart = hash.split('?')[0];
+  const segments = pathPart.split('/').filter(Boolean);
+  const key = segments[0] || 'dashboard';
+  const subId = segments[1];
   document.querySelectorAll('#sideNav .nav-link').forEach((a) => a.classList.toggle('active', a.dataset.key === key));
   const title = (NAV.find((n) => n.key === key) || {}).label || 'Legal Genie';
   const titleEl = document.getElementById('pageTitle');
@@ -419,8 +497,12 @@ async function route() {
   }
   content.innerHTML = `<div class="text-secondary"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div>`;
   try {
-    const renderer = ROUTES[key] || renderDashboard;
-    await renderer(content);
+    if (key === 'cases' && subId) {
+      await renderCaseDetail(content, subId);
+    } else {
+      const renderer = ROUTES[key] || renderDashboard;
+      await renderer(content);
+    }
   } catch (err) {
     content.innerHTML = `<div class="alert alert-danger">Failed to load: ${escapeHtml(err.message)}</div>`;
   }
@@ -492,25 +574,20 @@ async function renderDashboard(content) {
   const s = await Api.get('/api/dashboard/summary');
   content.innerHTML = `
     <div class="row g-3 mb-4">
-      <div class="col-md-3"><div class="card stat-card"><div class="card-body">
+      <div class="col-md-4"><div class="card stat-card"><div class="card-body">
         <div class="stat-icon tone-indigo">${Icon('checklist')}</div>
         <div class="stat-value">${s.pendingTasksCount}</div>
         <div class="stat-label">My Pending Tasks</div>
       </div></div></div>
-      <div class="col-md-3"><div class="card stat-card"><div class="card-body">
+      <div class="col-md-4"><div class="card stat-card"><div class="card-body">
         <div class="stat-icon tone-amber">${Icon('checkSquare')}</div>
         <div class="stat-value">${s.pendingApprovalsCount}</div>
         <div class="stat-label">Pending Approvals (mine to review)</div>
       </div></div></div>
-      <div class="col-md-3"><div class="card stat-card"><div class="card-body">
+      <div class="col-md-4"><div class="card stat-card"><div class="card-body">
         <div class="stat-icon tone-rose">${Icon('bell')}</div>
         <div class="stat-value">${s.unreadNotificationsCount}</div>
         <div class="stat-label">Unread Notifications</div>
-      </div></div></div>
-      <div class="col-md-3"><div class="card stat-card"><div class="card-body">
-        <div class="stat-icon tone-rose">${Icon('shield')}</div>
-        <div class="stat-value">${s.counts.complianceOverdue}</div>
-        <div class="stat-label">Overdue Compliance Items</div>
       </div></div></div>
     </div>
     ${pagcorBoardHtml(s.pagcorBoard)}`;
@@ -895,8 +972,11 @@ async function showImportCasesModal() {
       modal.hide();
       const skippedMsg = result.skipped ? `，${result.skipped} 筆已存在（Provider + 遊戲名稱相同）故跳過` : '';
       const errorMsg = result.errors && result.errors.length ? `，${result.errors.length} 筆發生錯誤（請查看瀏覽器 console）` : '';
-      toast(`已建立 ${result.created} 筆案件${skippedMsg}${errorMsg}`);
+      const conflictMsg = result.gameIdConflicts && result.gameIdConflicts.length
+        ? `；⚠️ ${result.gameIdConflicts.length} 組 Game ID 相同但名稱看起來是不同遊戲，未自動合併，請查看瀏覽器 console` : '';
+      toast(`已建立 ${result.created} 筆案件${skippedMsg}${errorMsg}${conflictMsg}`);
       if (result.errors && result.errors.length) console.warn('Import errors:', result.errors);
+      if (result.gameIdConflicts && result.gameIdConflicts.length) console.warn('Game ID conflicts (not auto-merged):', result.gameIdConflicts);
       route();
     } catch (err) {
       toast(err.message, 'danger');
@@ -906,6 +986,143 @@ async function showImportCasesModal() {
   });
 
   modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
+
+// Shared between renderCases()'s "New"/"Edit" form modal and the case
+// detail page's own "Edit" button (renderCaseDetail()) — kept as one
+// top-level function so both call sites stay in sync automatically.
+function caseFormFields() {
+  return [
+    { name: 'title', label: 'Title', required: true },
+    { name: 'type', label: 'Type', type: 'select', options: ['Regulatory', 'Commercial', 'IP', 'Litigation', 'Employment', 'Other'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'ownerId', label: 'Owner', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
+    { name: 'priority', label: 'Priority', type: 'select', options: ['High', 'Medium', 'Low'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'status', label: 'Status', type: 'select', options: ['Open', 'In Progress', 'Closed'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'deadline', label: 'Deadline', type: 'date' },
+    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP' },
+    { name: 'gameTitle', label: 'Game Title (optional)' },
+    { name: 'gameType', label: 'Game Type (optional)', type: 'select', allowEmpty: true, options: GAME_TYPE_OPTIONS.map((v) => ({ value: v, label: v })) },
+    { name: 'gameId', label: 'Game ID (optional)' },
+    { name: 'gameVersion', label: 'Game Version (optional)' },
+    { name: 'withJackpot', label: 'With Jackpot? (optional)', type: 'select', allowEmpty: true, options: YES_NO_OPTIONS.map((v) => ({ value: v, label: v })) },
+    { name: 'pagcorStage', label: 'PAGCOR Stage (optional)', type: 'select', allowEmpty: true, options: PAGCOR_STAGE_OPTIONS.map((v) => ({ value: v, label: v })) },
+    { name: 'loaExpiryDate', label: 'LOA Expiry Date (optional)', type: 'date' },
+    { name: 'description', label: 'Description', type: 'textarea' },
+  ];
+}
+
+// Full-page, read/write case + game detail view — reached by clicking a row
+// in Case Management (see attachRowHandlers() below), routed via
+// "#/cases/<id>" (see the route() dispatcher's cases-with-id branch).
+// Originally this was a modal, but with every game-specific field plus the
+// PAGCOR Checklist shown at once it felt cramped in a dialog, so it's a
+// real page instead — same pattern as every other module's list page, just
+// for a single record.
+async function renderCaseDetail(content, id) {
+  let item;
+  try {
+    item = await Api.get(`/api/cases/${id}`);
+  } catch (err) {
+    content.innerHTML = `<div class="alert alert-danger">Failed to load case: ${escapeHtml(err.message)}</div>`;
+    return;
+  }
+  const canEdit = canDo('cases', 'edit');
+  const canDelete = canDo('cases', 'delete');
+  const field = (label, value) => `
+    <div class="col-6 col-md-3 mb-3">
+      <div class="small text-secondary">${escapeHtml(label)}</div>
+      <div class="fw-semibold">${value === undefined || value === null || value === '' ? '<span class="text-secondary">—</span>' : escapeHtml(String(value))}</div>
+    </div>`;
+  content.innerHTML = `
+    <div class="mb-3"><a href="#/cases" class="small text-decoration-none">&larr; Back to Case Management</a></div>
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+      <div>
+        <h4 class="mb-0">${escapeHtml(item.caseNumber)}</h4>
+        <div class="text-secondary">${escapeHtml(item.title)}</div>
+      </div>
+      <div class="d-flex gap-2">
+        ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnEditCase">${Icon('edit', 'me-1')}Edit</button>` : ''}
+        ${canDelete ? `<button class="btn btn-outline-danger btn-sm" id="btnDeleteCase">${Icon('trash', 'me-1')}Delete</button>` : ''}
+      </div>
+    </div>
+    <div class="card mb-3"><div class="card-body">
+      <div class="small text-secondary mb-2">PAGCOR Review Progress${canEdit && item.pagcorStage !== 'Rejected' ? ' — 點擊階段可直接切換' : ''}</div>
+      ${pagcorStageStepperHtml(item.pagcorStage, canEdit)}
+    </div></div>
+    <div class="card mb-3"><div class="card-body">
+      <div class="row">
+        ${field('Game ID', item.gameId)}
+        ${field('Game Title', item.gameTitle)}
+        ${field('Game Type', item.gameType)}
+        ${field('Game Version', item.gameVersion)}
+        ${field('With Jackpot', item.withJackpot)}
+        ${field('Provider', item.provider)}
+        ${field('Type', item.type)}
+        ${field('Owner', userName(item.ownerId))}
+        ${field('Priority', item.priority)}
+        ${field('Status', item.status)}
+        ${field('Deadline', fmtDate(item.deadline))}
+        ${field('LOA Expiry Date', fmtDate(item.loaExpiryDate))}
+      </div>
+      ${item.description ? `<div class="mt-2"><div class="small text-secondary">Description</div><div>${escapeHtml(item.description)}</div></div>` : ''}
+    </div></div>
+    <div class="card"><div class="card-body">
+      <h6 class="mb-2">PAGCOR Checklist</h6>
+      <div class="list-group">
+        ${PAGCOR_CHECKLIST_ITEMS.map((tpl) => {
+          const existing = (item.pagcorChecklist || []).find((i) => i.key === tpl.key);
+          return `
+          <label class="list-group-item d-flex align-items-center gap-2">
+            <input type="checkbox" class="form-check-input mt-0 chk-item" data-key="${tpl.key}" ${existing && existing.done ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
+            <span>${escapeHtml(tpl.label)}</span>
+          </label>`;
+        }).join('')}
+      </div>
+      ${!canEdit ? '<div class="small text-secondary mt-2">You do not have permission to edit cases, so this checklist is read-only.</div>' : ''}
+    </div></div>`;
+
+  content.querySelectorAll('.chk-item').forEach((chk) => chk.addEventListener('change', async () => {
+    const updatedChecklist = Array.from(content.querySelectorAll('.chk-item')).map((el) => ({ key: el.dataset.key, done: el.checked }));
+    try {
+      await Api.put(`/api/cases/${item.id}`, { pagcorChecklist: updatedChecklist });
+      item.pagcorChecklist = updatedChecklist;
+    } catch (err) {
+      chk.checked = !chk.checked;
+      toast(err.message, 'danger');
+    }
+  }));
+
+  // Clicking a step on the PAGCOR Review Progress stepper jumps straight to
+  // that stage — no need to open the Edit form just to change one field.
+  // Only rendered on steps other than the current one (see
+  // pagcorStageStepperHtml()), so every click is a real change. Re-renders
+  // the whole detail page afterward so the stepper, and anything else that
+  // depends on pagcorStage, stays in sync.
+  content.querySelectorAll('.pagcor-step-clickable').forEach((stepEl) => stepEl.addEventListener('click', async () => {
+    const newStage = stepEl.dataset.stage;
+    try {
+      await Api.put(`/api/cases/${item.id}`, { pagcorStage: newStage });
+      toast(`PAGCOR Stage 已更新為「${newStage}」`);
+      await renderCaseDetail(content, id);
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  }));
+
+  const editBtn = content.querySelector('#btnEditCase');
+  if (editBtn) editBtn.addEventListener('click', () => {
+    showFormModal({
+      title: 'Edit Case', fields: caseFormFields(), initial: item,
+      onSubmit: async (data) => { await Api.put(`/api/cases/${item.id}`, data); toast('Case updated'); route(); },
+    });
+  });
+  const delBtn = content.querySelector('#btnDeleteCase');
+  if (delBtn) delBtn.addEventListener('click', async () => {
+    if (!(await confirmDialog('Delete this case?'))) return;
+    await Api.del(`/api/cases/${item.id}`);
+    toast('Case deleted');
+    location.hash = '#/cases';
+  });
 }
 
 async function renderCases(content) {
@@ -919,10 +1136,11 @@ async function renderCases(content) {
     title: 'Case Management', canCreate,
     extraButtonsHtml: `
       <button class="btn btn-outline-secondary btn-sm" id="btnExportCases">${Icon('download', 'me-1')}Export CSV</button>
-      ${canCreate ? `<button class="btn btn-outline-secondary btn-sm" id="btnImportCases">${Icon('download', 'me-1')}Import Excel/CSV</button>` : ''}`,
+      ${canCreate ? `<button class="btn btn-outline-secondary btn-sm" id="btnImportCases">${Icon('download', 'me-1')}Import Excel/CSV</button>` : ''}
+      ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnImportApprovalNotice">${Icon('upload', 'me-1')}上傳核准通知信</button>` : ''}`,
   }) + `
     <div class="d-flex flex-wrap gap-2 mb-3">
-      <input type="search" class="form-control form-control-sm" id="filterSearch" style="min-width:240px; max-width:320px;" placeholder="Search Case # / Title / Game Title…">
+      <input type="search" class="form-control form-control-sm" id="filterSearch" style="min-width:240px; max-width:320px;" placeholder="Search Game ID / Title / Game Title…">
       ${providers.length ? `
       <select class="form-select form-select-sm w-auto" id="filterProvider">
         <option value="">All Providers</option>
@@ -939,7 +1157,8 @@ async function renderCases(content) {
         <table class="table table-hover mb-0 table-clickable">
           <thead class="table-light"><tr>
             <th style="width:34px;"><input type="checkbox" id="selectAllCheckbox" title="Select all on this page"></th>
-            <th class="sortable-th" data-sort="caseNumber">Case # <span class="sort-indicator"></span></th>
+            <th class="sortable-th case-col" data-sort="caseNumber">Case # <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="gameId">Game ID <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="title">Title <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="type">Type <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="provider">Provider <span class="sort-indicator"></span></th>
@@ -964,30 +1183,15 @@ async function renderCases(content) {
   let sortDir = 'asc';
   const selectedIds = new Set();
 
-  const fields = () => ([
-    { name: 'title', label: 'Title', required: true },
-    { name: 'type', label: 'Type', type: 'select', options: ['Regulatory', 'Commercial', 'IP', 'Litigation', 'Employment', 'Other'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'ownerId', label: 'Owner', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
-    { name: 'priority', label: 'Priority', type: 'select', options: ['High', 'Medium', 'Low'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'status', label: 'Status', type: 'select', options: ['Open', 'In Progress', 'Closed'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'deadline', label: 'Deadline', type: 'date' },
-    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP' },
-    { name: 'gameTitle', label: 'Game Title (optional)' },
-    { name: 'gameType', label: 'Game Type (optional)', type: 'select', allowEmpty: true, options: GAME_TYPE_OPTIONS.map((v) => ({ value: v, label: v })) },
-    { name: 'gameId', label: 'Game ID (optional)' },
-    { name: 'gameVersion', label: 'Game Version (optional)' },
-    { name: 'withJackpot', label: 'With Jackpot? (optional)', type: 'select', allowEmpty: true, options: YES_NO_OPTIONS.map((v) => ({ value: v, label: v })) },
-    { name: 'pagcorStage', label: 'PAGCOR Stage (optional)', type: 'select', allowEmpty: true, options: PAGCOR_STAGE_OPTIONS.map((v) => ({ value: v, label: v })) },
-    { name: 'loaExpiryDate', label: 'LOA Expiry Date (optional)', type: 'date' },
-    { name: 'description', label: 'Description', type: 'textarea' },
-  ]);
+  const fields = caseFormFields;
 
   function rowHtml(c) {
     const checklistLabel = pagcorChecklistLabel(c);
     return `
       <tr data-id="${c.id}">
         <td><input type="checkbox" class="row-checkbox" data-id="${c.id}" ${selectedIds.has(c.id) ? 'checked' : ''}></td>
-        <td>${escapeHtml(c.caseNumber)}</td>
+        <td class="text-nowrap case-col" title="${escapeHtml(c.caseNumber)}">${escapeHtml((c.caseNumber || '').replace(/^CASE-/i, ''))}</td>
+        <td class="text-nowrap">${escapeHtml(c.gameId || '—')}</td>
         <td>${escapeHtml(c.title)}</td>
         <td>${escapeHtml(c.type)}</td>
         <td>${escapeHtml(c.provider || '—')}</td>
@@ -1005,6 +1209,17 @@ async function renderCases(content) {
   }
 
   function attachRowHandlers() {
+    // Row click navigates to the full case/game detail page (renderCaseDetail(),
+    // routed via "#/cases/<id>") — this is what makes "click in to see this
+    // game's info" possible from the list, rather than only via the Edit
+    // button's form. Guard on e.target rather than relying solely on each
+    // control's own stopPropagation(): a checkbox's own listener is on
+    // 'change', not 'click', so a bare click on it still bubbles up to this
+    // handler unless we bail out here too.
+    content.querySelectorAll('#casesTbody tr[data-id]').forEach((tr) => tr.addEventListener('click', (e) => {
+      if (e.target.closest('input, button, a')) return;
+      location.hash = `#/cases/${tr.dataset.id}`;
+    }));
     content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const item = cases.find((c) => c.id === btn.dataset.id);
@@ -1119,6 +1334,7 @@ async function renderCases(content) {
   function sortValue(c, col) {
     switch (col) {
       case 'caseNumber': return c.caseNumber || '';
+      case 'gameId': return (c.gameId || '').toLowerCase();
       case 'title': return (c.title || '').toLowerCase();
       case 'type': return (c.type || '').toLowerCase();
       case 'provider': return (c.provider || '').toLowerCase();
@@ -1174,9 +1390,12 @@ async function renderCases(content) {
 
   // 30 rows per page (see renderPage()) — filtering always jumps back to
   // page 1 since the previous page number may no longer make sense against
-  // the new filtered set. Search matches Case #, Title, or Game Title
+  // the new filtered set. Search matches Game ID, Title, or Game Title
   // (substring, case-insensitive) — useful once there are hundreds of
-  // imported games and you just want to find one by name.
+  // imported games and you just want to find one by its ID or name. Case #
+  // is intentionally not matched here (was, until Tiffany asked for Game ID
+  // instead) — it's still visible as its own sortable column and in the
+  // Provider/Stage filters, just not part of this search box.
   function applyFilters() {
     const providerEl = content.querySelector('#filterProvider');
     const stageEl = content.querySelector('#filterStage');
@@ -1186,7 +1405,7 @@ async function renderCases(content) {
     const q = searchEl ? searchEl.value.trim().toLowerCase() : '';
     filteredCases = cases.filter((c) => (!provider || c.provider === provider)
       && (!stage || c.pagcorStage === stage)
-      && (!q || (c.title || '').toLowerCase().includes(q) || (c.gameTitle || '').toLowerCase().includes(q) || (c.caseNumber || '').toLowerCase().includes(q)));
+      && (!q || (c.title || '').toLowerCase().includes(q) || (c.gameTitle || '').toLowerCase().includes(q) || (c.gameId || '').toLowerCase().includes(q)));
     currentPage = 1;
     renderPage();
   }
@@ -1197,7 +1416,7 @@ async function renderCases(content) {
     currentPage = Math.min(Math.max(1, currentPage), totalPages);
     const start = (currentPage - 1) * PAGE_SIZE;
     currentPageItems = sorted.slice(start, start + PAGE_SIZE);
-    content.querySelector('#casesTbody').innerHTML = currentPageItems.map(rowHtml).join('') || `<tr><td colspan="11" class="text-center text-secondary py-3">No cases match this filter.</td></tr>`;
+    content.querySelector('#casesTbody').innerHTML = currentPageItems.map(rowHtml).join('') || `<tr><td colspan="12" class="text-center text-secondary py-3">No cases match this filter.</td></tr>`;
     attachRowHandlers();
     updateSelectAllCheckbox();
     updateBulkBar();
@@ -1249,6 +1468,9 @@ async function renderCases(content) {
 
   content.querySelector('#btnExportCases').addEventListener('click', exportCasesCsv);
 
+  const importNoticeBtn = content.querySelector('#btnImportApprovalNotice');
+  if (importNoticeBtn) importNoticeBtn.addEventListener('click', showImportApprovalNoticeModal);
+
   applyFilters();
 
   if (canCreate) {
@@ -1261,6 +1483,88 @@ async function renderCases(content) {
     });
     content.querySelector('#btnImportCases').addEventListener('click', showImportCasesModal);
   }
+}
+
+// Upload a real PAGCOR "Notice of Approval" letter (often a scanned image
+// with no text layer — pdf-parse can't read those, which is why "檢查
+// PAGCOR 核准清單" alone isn't enough for approvals PAGCOR hasn't folded
+// into its public list yet) and have Gemini read it directly. Deliberately
+// conservative: the backend only auto-approves a game when it can match it
+// to exactly one case (by Game ID, or by exact title as a fallback) —
+// anything else comes back as "unmatched" or "ambiguous" and is shown here
+// so the user can resolve it by hand rather than the system guessing.
+function showImportApprovalNoticeModal() {
+  const modalId = 'importApprovalNoticeModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  modalEl.innerHTML = `
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">上傳核准通知信</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="approvalNoticeModalBody">
+          <div class="small text-secondary mb-2">
+            上傳 PAGCOR 寄給你的核准通知信（PDF 或圖片皆可，掃描檔也沒問題）。
+            AI 會讀取內容、找出信裡核准的遊戲，並自動比對你系統裡對應的案件，
+            把符合的案件改成「LOA Approved」。如果比對不到、或同時符合多筆案件，
+            會列出來讓你自己確認，不會用猜的。
+          </div>
+          <input type="file" class="form-control" id="approvalNoticeFile" accept="application/pdf,image/*">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+          <button type="button" class="btn btn-primary" id="approvalNoticeSubmitBtn">上傳並比對</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+
+  let didUpdateAnything = false;
+  modalEl.addEventListener('hidden.bs.modal', () => {
+    modalEl.remove();
+    if (didUpdateAnything) route();
+  });
+
+  modalEl.querySelector('#approvalNoticeSubmitBtn').addEventListener('click', async () => {
+    const fileInput = modalEl.querySelector('#approvalNoticeFile');
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) { toast('請先選擇一個檔案', 'danger'); return; }
+    const btn = modalEl.querySelector('#approvalNoticeSubmitBtn');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'AI 判讀中…';
+    try {
+      const fileContentBase64 = await fileToBase64(file);
+      const result = await Api.post('/api/cases/import-approval-notice', { fileName: file.name, fileContentBase64 });
+      if (result.updatedCases.length) didUpdateAnything = true;
+      const body = modalEl.querySelector('#approvalNoticeModalBody');
+      const section = (title, items, renderItem) => items && items.length
+        ? `<div class="mb-3"><div class="fw-semibold small mb-1">${escapeHtml(title)}</div><ul class="small mb-0">${items.map(renderItem).join('')}</ul></div>`
+        : '';
+      body.innerHTML = `
+        ${result.noticeReference || result.approvalDate ? `<div class="small text-secondary mb-2">${result.noticeReference ? `文號：${escapeHtml(result.noticeReference)}　` : ''}${result.approvalDate ? `日期：${escapeHtml(result.approvalDate)}` : ''}</div>` : ''}
+        ${section('已自動核准', result.updatedCases, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}（${escapeHtml(c.oldStage)} → LOA Approved）</li>`)}
+        ${section('本來就已經是 LOA Approved', result.alreadyApproved, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
+        ${section('案件狀態是 Rejected，未自動變更', result.skippedRejected, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
+        ${section('⚠️ 找不到對應的案件（需要手動確認）', result.unmatched, (g) => `<li>${escapeHtml(g.gameTitle || '(未命名)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''}${g.provider ? ` — ${escapeHtml(g.provider)}` : ''}</li>`)}
+        ${section('⚠️ 同時符合多筆案件，未自動變更（需要手動確認）', result.ambiguous, (g) => `<li>${escapeHtml(g.gameTitle || '(未命名)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''} — 符合：${g.matchedCaseNumbers.map(escapeHtml).join('、')}</li>`)}
+        ${!result.updatedCases.length && !result.alreadyApproved.length && !result.skippedRejected.length && !result.unmatched.length && !result.ambiguous.length ? '<div class="small text-secondary">AI 沒有從這份文件裡讀到任何遊戲資訊。</div>' : ''}`;
+      modalEl.querySelector('.modal-footer').innerHTML = `<button type="button" class="btn btn-primary" data-bs-dismiss="modal">完成</button>`;
+      toast(`已自動核准 ${result.updatedCases.length} 筆案件`, (result.unmatched.length || result.ambiguous.length) ? 'warning' : 'success');
+    } catch (err) {
+      toast(err.message, 'danger');
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1358,64 +1662,6 @@ async function renderContracts(content) {
 }
 
 // ---------------------------------------------------------------------------
-// Page: Compliance
-// ---------------------------------------------------------------------------
-async function renderCompliance(content) {
-  const rows = await Api.get('/api/compliance');
-  const canCreate = canDo('compliance', 'create');
-  const canEdit = canDo('compliance', 'edit');
-  const canDelete = canDo('compliance', 'delete');
-  content.innerHTML = listToolbar({ title: 'Compliance', canCreate }) + `
-    <div class="card stat-card">
-      <div class="table-responsive">
-        <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>Country</th><th>Regulation</th><th>Requirement</th><th>Owner</th><th>Due Date</th><th>Status</th><th></th></tr></thead>
-          <tbody>
-            ${rows.map((c) => `
-              <tr>
-                <td>${escapeHtml(c.country)}</td>
-                <td>${escapeHtml(c.regulation)}</td>
-                <td>${escapeHtml(c.requirement)}</td>
-                <td>${escapeHtml(userName(c.ownerId))}</td>
-                <td class="text-nowrap">${fmtDate(c.dueDate)}</td>
-                <td>${badge(c.status)}</td>
-                <td class="text-end">
-                  ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${c.id}">${Icon('edit')}</button>` : ''}
-                  ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${c.id}">${Icon('trash')}</button>` : ''}
-                </td>
-              </tr>`).join('') || `<tr><td colspan="7" class="text-center text-secondary py-3">No compliance items yet.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
-
-  const fields = () => ([
-    { name: 'country', label: 'Country / Jurisdiction', required: true },
-    { name: 'regulation', label: 'Regulation', required: true },
-    { name: 'requirement', label: 'Requirement', type: 'textarea', required: true },
-    { name: 'ownerId', label: 'Owner', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
-    { name: 'dueDate', label: 'Due Date', type: 'date' },
-    { name: 'status', label: 'Status', type: 'select', options: ['Compliant', 'Due Soon', 'Overdue'].map((v) => ({ value: v, label: v })), required: true },
-  ]);
-
-  if (canCreate) content.querySelector('#btnCreate').addEventListener('click', () => {
-    showFormModal({ title: 'New Compliance Item', fields: fields(), initial: { status: 'Compliant' },
-      aiAssist: { module: 'compliance' },
-      onSubmit: async (data) => { await Api.post('/api/compliance', data); toast('Compliance item created'); route(); } });
-  });
-  content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
-    const item = rows.find((c) => c.id === btn.dataset.id);
-    showFormModal({ title: 'Edit Compliance Item', fields: fields(), initial: item,
-      onSubmit: async (data) => { await Api.put(`/api/compliance/${item.id}`, data); toast('Updated'); route(); } });
-  }));
-  content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async () => {
-    if (!(await confirmDialog('Delete this compliance item?'))) return;
-    await Api.del(`/api/compliance/${btn.dataset.id}`);
-    toast('Deleted'); route();
-  }));
-}
-
-// ---------------------------------------------------------------------------
 // Page: Document Center
 // ---------------------------------------------------------------------------
 async function renderDocuments(content) {
@@ -1440,6 +1686,7 @@ async function renderDocuments(content) {
                 <td>${escapeHtml(userName(d.uploadedBy))}</td>
                 <td class="text-nowrap">${fmtDate(d.createdAt)}</td>
                 <td class="text-end">
+                  ${d.filePath ? `<button class="btn btn-sm btn-outline-primary btn-summarize" data-id="${d.id}" title="AI 幫我抓重點">${Icon('sparkle')}</button>` : ''}
                   ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${d.id}">${Icon('edit')}</button>` : ''}
                   ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${d.id}">${Icon('trash')}</button>` : ''}
                 </td>
@@ -1474,6 +1721,30 @@ async function renderDocuments(content) {
     if (!(await confirmDialog('Delete this document?'))) return;
     await Api.del(`/api/documents/${btn.dataset.id}`);
     toast('Deleted'); route();
+  }));
+  content.querySelectorAll('.btn-summarize').forEach((btn) => btn.addEventListener('click', async () => {
+    const item = docs.find((d) => d.id === btn.dataset.id);
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '…';
+    try {
+      const result = await Api.post(`/api/documents/${item.id}/summarize`, {});
+      showInfoModal({
+        title: `AI 重點摘要 – ${item.title}`,
+        bodyHtml: `
+          <p>${escapeHtml(result.summary || '')}</p>
+          ${(result.keyPoints || []).length
+            ? `<ul class="mb-0">${result.keyPoints.map((k) => `<li>${escapeHtml(k)}</li>`).join('')}</ul>`
+            : ''}
+          <p class="small text-secondary mt-3 mb-0">這是 AI 根據文件內容整理的重點摘要,僅供快速參考,實際內容仍以原文件為準。</p>
+        `,
+      });
+    } catch (err) {
+      toast(err.message, 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
   }));
 }
 
@@ -1726,11 +1997,11 @@ async function renderRolesTab(body) {
   const roles = await Api.get('/api/roles');
   const canEdit = canDo('settings', 'edit');
   body.innerHTML = `<div class="card stat-card"><div class="table-responsive"><table class="table mb-0">
-    <thead class="table-light"><tr><th>Role</th>${['Dashboard', 'Cases', 'Contracts', 'Compliance', 'Documents', 'Tasks', 'Approvals', 'Notifications', 'Settings'].map((m) => `<th class="text-center">${m}</th>`).join('')}</tr></thead>
+    <thead class="table-light"><tr><th>Role</th>${['Dashboard', 'Cases', 'Contracts', 'Documents', 'Tasks', 'Approvals', 'Notifications', 'Settings'].map((m) => `<th class="text-center">${m}</th>`).join('')}</tr></thead>
     <tbody>
       ${roles.map((r) => `<tr>
         <td class="fw-semibold">${escapeHtml(r.name)}</td>
-        ${['dashboard', 'cases', 'contracts', 'compliance', 'documents', 'tasks', 'approvals', 'notifications', 'settings'].map((m) => {
+        ${['dashboard', 'cases', 'contracts', 'documents', 'tasks', 'approvals', 'notifications', 'settings'].map((m) => {
           const p = r.name === 'Admin' ? { view: true, create: true, edit: true, delete: true, approve: true } : ((r.permissions || {})[m] || {});
           const marks = ['view', 'create', 'edit', 'delete', 'approve'].filter((a) => p[a]).map((a) => a[0].toUpperCase()).join('');
           return `<td class="text-center small">${marks || '—'}</td>`;

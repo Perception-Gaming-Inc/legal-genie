@@ -33,10 +33,36 @@ Then open **http://localhost:3000**.
 - `GEMINI_API_KEY` is still optional here too — leave it out and
   everything works except the AI buttons, same as always. Get a free one
   (no credit card) at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
-- Every time you stop (Ctrl+C) and restart `node server.js`, the data
-  resets and gets freshly re-seeded with the same demo accounts
-  (admin/admin123, etc.) — nothing persists between runs. That's normal
-  and often exactly what you want for repeated testing.
+- **Data now persists across restarts.** Every mutating action (creating a
+  case, running the Excel import, editing something, etc.) is saved to
+  `local-mock/data.json` right away, and that file is read back in the next
+  time `node server.js` starts — so stopping the server (Ctrl+C, or an
+  EADDRINUSE forcing a restart, or picking up a backend code change) no
+  longer throws away test data like an imported real workbook. Seeding
+  (the demo accounts, 5 sample cases) only ever happens once, on a
+  genuinely empty database, exactly like the real Supabase-backed path —
+  it won't run again just because you restarted.
+  - **Want a genuinely fresh start** (back to only the 5 seeded demo
+    cases)? Stop the server and delete the snapshot file:
+    `rm local-mock/data.json`, then start `node server.js` again.
+  - **Want to keep your imported data but remove just the 5 built-in demo
+    cases** (e.g. after running `import-real-data.js`, so Case Management
+    shows only your real games)? Run
+    `node local-mock/remove-seed-demo-cases.js` — see that file's own
+    header comment for details. It matches by exact title, so it never
+    touches a real imported case even though two of the five demo cases
+    (like your real ones) have a Provider set.
+  - **Want to remove the 6 placeholder demo documents in Document Center
+    too** (Standard NDA Template, AML Policy, etc.)? These all seed with no
+    actual file attached (`filePath: null` — that's why their filename
+    shows as plain text instead of a download link), so there's nothing
+    real to lose by deleting them. Run
+    `node local-mock/remove-seed-demo-documents.js` — same exact-title
+    matching approach, safe to run even if you've already uploaded real
+    documents.
+  - This file is your own local test data, so it's already excluded from
+    git via `.gitignore` (`local-mock/data.json`) — it'll never get
+    committed or pushed.
 - This is completely separate from your real Supabase database — nothing
   you do here (creating test cases, uploading test files, etc.) ever
   touches your actual production data.

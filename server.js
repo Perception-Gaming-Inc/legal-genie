@@ -22,6 +22,14 @@
  * users before inserting anything), so re-running it on every cold start
  * is harmless and cheap once the database has already been seeded once.
  */
+// Load a project-root .env file (if any) BEFORE anything else — this has
+// to come before every other require() below, since server/store.js and
+// server/storage.js read process.env.SUPABASE_URL etc. at their own module
+// top level (not lazily inside a function). See server/dotenv-lite.js for
+// exactly what this does and why it's a small hand-written loader rather
+// than the `dotenv` npm package.
+require('./server/dotenv-lite').loadDotEnv();
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');

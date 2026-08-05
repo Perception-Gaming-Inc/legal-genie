@@ -29,7 +29,7 @@ async function seed() {
   // *real* underlying module's own permission (cases/contracts/tasks)
   // below at execute-time.
   const fullAccess = {};
-  for (const m of ['dashboard', 'cases', 'contracts', 'compliance', 'documents', 'tasks', 'approvals', 'notifications', 'settings']) {
+  for (const m of ['dashboard', 'cases', 'contracts', 'documents', 'tasks', 'approvals', 'notifications', 'settings']) {
     fullAccess[m] = perm(true, true, true, true, true);
   }
   const roleAdmin = await store.insert('roles', { name: 'Admin', permissions: fullAccess });
@@ -40,7 +40,6 @@ async function seed() {
       dashboard: perm(true, false, false, false),
       cases: perm(true, true, true, true),
       contracts: perm(true, true, true, true),
-      compliance: perm(true, true, true, true),
       documents: perm(true, true, true, true),
       tasks: perm(true, true, true, true),
       approvals: perm(true, true, true, false, true),
@@ -55,7 +54,6 @@ async function seed() {
       dashboard: perm(true, false, false, false),
       cases: perm(true, true, true, false),
       contracts: perm(true, true, true, false),
-      compliance: perm(true, true, true, false),
       documents: perm(true, true, true, false),
       tasks: perm(true, true, true, false),
       approvals: perm(true, true, false, false, false),
@@ -70,7 +68,6 @@ async function seed() {
       dashboard: perm(true, false, false, false),
       cases: perm(true, false, false, false),
       contracts: perm(true, false, false, false),
-      compliance: perm(true, false, false, false),
       documents: perm(true, false, false, false),
       tasks: perm(true, false, false, false),
       approvals: perm(true, false, false, false),
@@ -179,20 +176,6 @@ async function seed() {
     contractId: contract1.id, versionNo: 2, uploadedBy: manager.id, fileName: 'PlayCloud_License_v2_amendment.pdf', filePath: null, notes: 'Amendment: territory expansion',
   });
 
-  // ---- Compliance --------------------------------------------------------
-  await store.insert('compliance', {
-    country: 'United States (Nevada)', regulation: 'Nevada Gaming Control Act', requirement: 'Annual license renewal filing',
-    status: 'Due Soon', ownerId: manager.id, dueDate: daysFromNow(10),
-  });
-  await store.insert('compliance', {
-    country: 'Malta', regulation: 'Malta Gaming Authority - Class 1 License', requirement: 'Quarterly compliance report submission',
-    status: 'Compliant', ownerId: staff1.id, dueDate: daysFromNow(60),
-  });
-  await store.insert('compliance', {
-    country: 'United Kingdom', regulation: 'UK Gambling Act 2005', requirement: 'Remote gambling software testing certificate renewal',
-    status: 'Overdue', ownerId: staff2.id, dueDate: daysFromNow(-3),
-  });
-
   // ---- Documents -----------------------------------------------------
   await store.insert('documents', {
     title: 'Standard NDA Template', category: 'Templates', uploadedBy: admin.id,
@@ -262,9 +245,6 @@ async function seed() {
   // ---- Notifications -------------------------------------------------
   await store.insert('notifications', {
     userId: manager.id, type: 'contract_expiry', message: 'PlayCloud License Agreement expires in 15 days', relatedId: contract1.id, relatedType: 'contract', isRead: false,
-  });
-  await store.insert('notifications', {
-    userId: manager.id, type: 'compliance_due', message: 'Nevada Gaming Control Act renewal due in 10 days', relatedId: null, relatedType: 'compliance', isRead: false,
   });
   await store.insert('notifications', {
     userId: admin.id, type: 'approval_pending', message: 'PlayCloud amendment execution is awaiting your approval', relatedId: null, relatedType: 'approval', isRead: false,

@@ -6,6 +6,7 @@ const storage = require('./storage');
 const ai = require('./ai');
 const assistant = require('./assistant');
 const pagcor = require('./pagcor');
+const pagcorCheck = require('./pagcor-check');
 const caseImport = require('./import');
 const { mimeFor } = require('./mime');
 
@@ -175,9 +176,9 @@ router.get('/api/dashboard/summary', async (req, res) => {
   const today = new Date();
   const in14 = new Date(today.getTime() + 14 * 86400000);
 
-  const [tasks, cases, contracts, compliance, notifications, approvals] = await Promise.all([
+  const [tasks, cases, contracts, notifications, approvals] = await Promise.all([
     store.all('tasks'), store.all('cases'), store.all('contracts'),
-    store.all('compliance'), store.all('notifications'), store.all('approvals'),
+    store.all('notifications'), store.all('approvals'),
   ]);
 
   const myTasks = tasks.filter((t) => t.assigneeId === user.id && t.status !== 'Completed');
@@ -203,11 +204,6 @@ router.get('/api/dashboard/summary', async (req, res) => {
   contracts.forEach((c) => {
     if (c.expiryDate && new Date(c.expiryDate) <= in14) {
       upcomingDeadlines.push({ type: 'Contract', id: c.id, title: c.title, date: c.expiryDate });
-    }
-  });
-  compliance.forEach((c) => {
-    if (c.dueDate && new Date(c.dueDate) <= in14) {
-      upcomingDeadlines.push({ type: 'Compliance', id: c.id, title: c.requirement, date: c.dueDate });
     }
   });
   upcomingDeadlines.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -259,7 +255,6 @@ router.get('/api/dashboard/summary', async (req, res) => {
     counts: {
       cases: cases.filter((c) => c.status !== 'Closed').length,
       contracts: contracts.filter((c) => c.status === 'Active').length,
-      complianceOverdue: compliance.filter((c) => c.status === 'Overdue').length,
     },
   });
 });
@@ -352,6 +347,27 @@ router.post('/api/cases/bulk-update-stage', async (req, res, params, body) => {
   sendJson(res, 200, { updated, errors });
 });
 
+// Upload a real PAGCOR "Notice of Approval" letter (often a scanned image
+// with no text layer) and have Gemini read it directly, instead of waiting
+// on PAGCOR's own public approved-games list (which can lag the real
+// notice by weeks — see pagcor-check.js's applyApprovalNoticeGames doc
+// comment). Reuses the same "cases: edit" permission and the same
+// conservative match-or-report-back behavior as the other PAGCOR routes —
+// a game the AI reads but can't match to exactly one case is reported back
+// as unmatched/ambiguous rather than guessed at.
+router.post('/api/cases/import-approval-notice', async (req, res, params, body) => {
+  const user = await requirePerm(req, res, 'cases', 'edit');
+  if (!user) return;
+  try {
+    const extracted = await ai.extractApprovalNotice({ fileName: body.fileName, fileContentBase64: body.fileContentBase64 });
+    const cases = await store.all('cases');
+    const result = await pagcorCheck.applyApprovalNoticeGames(cases, extracted.games, (id, patch) => store.update('cases', id, patch));
+    sendJson(res, 200, { ...result, approvalDate: extracted.approvalDate || null, noticeReference: extracted.noticeReference || null });
+  } catch (err) {
+    sendJson(res, 500, { error: err.message });
+  }
+});
+
 router.get('/api/cases/:id/notes', async (req, res, params) => {
   const user = await requirePerm(req, res, 'cases', 'view');
   if (!user) return;
@@ -389,6 +405,26 @@ router.post('/api/cases/import/preview', async (req, res, params, body) => {
 // collide with import rows.
 function importDedupKey(c) {
   return `${(c.provider || '').trim().toLowerCase()}|${(c.gameTitle || c.title || '').trim().toLowerCase()}`;
+}
+
+// Strips everything but letters/digits and lowercases, so "CATLA_S MONEY
+// MACHINE" and "CATLA'S MONEY MACHINE" (an underscore-for-apostrophe typo —
+// a real example from Tiffany's workbook) normalize to the same string.
+function normalizeGameName(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// True when two Game Titles are close enough (after normalizing) to be
+// confident they're the same game rather than two different games that
+// happen to share a Game ID (which does happen — see the comment on Stage
+// 2.5 below). One name being essentially a substring of the other covers
+// both punctuation-only typos and a shorter/longer variant of the same
+// name (e.g. "Super Niubi Fortune" vs "SuperNiubiFortuneX-huge").
+function titlesLikelySameGame(a, b) {
+  const na = normalizeGameName(a);
+  const nb = normalizeGameName(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
 }
 
 router.post('/api/cases/import/commit', async (req, res, params, body) => {
@@ -431,27 +467,103 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   }
   const collapsedByCrossSheetDedup = allRows.length - byKey.size;
 
+  // Stage 2.5: Stage 2's Provider+Title key only catches EXACT (case-
+  // insensitive) title matches, so the same real game recorded under two
+  // slightly different spellings — a typo, or a shorter/longer variant of
+  // the name — still becomes two separate cases even though it's really
+  // one game. A real example from Tiffany's workbook: "CATLA_S MONEY
+  // MACHINE" (APPROVED tab, underscore-for-apostrophe typo) vs "CATLA'S
+  // MONEY MACHINE" (FC's own tab) both under Game ID 22080. Since Game ID
+  // is normally a much stronger identity signal than the title text, group
+  // Stage 2's survivors by (Provider, Game ID) and collapse further when
+  // their titles are close enough (see titlesLikelySameGame()) to be
+  // confident it's the same game — preferring the APPROVED-tab version,
+  // same as Stage 2. But a Game ID can ALSO collide by pure typo between
+  // two genuinely different games (found in the same workbook: FC's "HOT
+  // POT PARTY" and "OPEN VAULT" rows both list Game ID 22026, because
+  // "OPEN VAULT"'s own Game Version string says 22086 — its Game ID cell
+  // is simply mistyped). Blindly merging on Game ID alone would silently
+  // drop one of two real submissions in that case, so titles that don't
+  // look related are left as two separate cases and reported back in
+  // `gameIdConflicts` instead, for a human to check the source sheet.
+  const byProviderGameId = new Map();
+  for (const entry of byKey.values()) {
+    const gid = (entry.row.gameId || '').trim();
+    if (!gid) continue;
+    const pgKey = `${(entry.row.provider || '').trim().toLowerCase()}|${gid.toLowerCase()}`;
+    if (!byProviderGameId.has(pgKey)) byProviderGameId.set(pgKey, []);
+    byProviderGameId.get(pgKey).push(entry);
+  }
+  const gameIdConflicts = [];
+  for (const entries of byProviderGameId.values()) {
+    if (entries.length < 2) continue;
+    const firstTitle = entries[0].row.gameTitle || entries[0].row.title;
+    const allSimilar = entries.every((e) => titlesLikelySameGame(e.row.gameTitle || e.row.title, firstTitle));
+    if (allSimilar) {
+      const survivor = entries.find((e) => e.row.isApprovedRow) || entries[0];
+      for (const e of entries) {
+        if (e !== survivor) byKey.delete(importDedupKey(e.row));
+      }
+    } else {
+      gameIdConflicts.push({
+        provider: entries[0].row.provider,
+        gameId: entries[0].row.gameId,
+        titles: entries.map((e) => e.row.gameTitle || e.row.title),
+      });
+    }
+  }
+  const collapsedByGameIdDedup = allRows.length - byKey.size - collapsedByCrossSheetDedup;
+
   // Stage 3: skip anything that's already a Case from an earlier import run
   // (or was hand-created with the same Provider + Game Title) — this is
   // what protects against accidentally re-running the same import twice,
-  // since this is an additive bulk-create, not an upsert.
-  const existingKeys = new Set((await store.all('cases')).filter((c) => c.provider).map(importDedupKey));
+  // since this is an additive bulk-create, not an upsert. Also re-applies
+  // Stage 2.5's same-Provider-and-Game-ID-with-similar-title check against
+  // EXISTING cases, not just this commit's own rows — otherwise importing,
+  // say, the APPROVED sheet today and a Provider's own sheet next week would
+  // re-create the CATLA/Super-Niubi-style near-duplicates that a single
+  // combined commit already merges (see Stage 2.5's comment above).
+  const existingCases = (await store.all('cases')).filter((c) => c.provider);
+  const existingKeys = new Set(existingCases.map(importDedupKey));
+  const existingByProviderGameId = new Map();
+  for (const c of existingCases) {
+    const gid = (c.gameId || '').trim();
+    if (!gid) continue;
+    const pgKey = `${(c.provider || '').trim().toLowerCase()}|${gid.toLowerCase()}`;
+    if (!existingByProviderGameId.has(pgKey)) existingByProviderGameId.set(pgKey, []);
+    existingByProviderGameId.get(pgKey).push(c);
+  }
   let created = 0;
   let skippedExisting = 0;
   for (const { row, sheetName } of byKey.values()) {
     const key = importDedupKey(row);
     if (existingKeys.has(key)) { skippedExisting++; continue; }
+    const gid = (row.gameId || '').trim();
+    const pgKey = gid ? `${(row.provider || '').trim().toLowerCase()}|${gid.toLowerCase()}` : null;
+    if (pgKey && (existingByProviderGameId.get(pgKey) || []).some((c) => titlesLikelySameGame(c.gameTitle || c.title, row.gameTitle || row.title))) {
+      skippedExisting++;
+      continue;
+    }
     try {
       const caseNumber = await store.nextNumber('case', 'CASE');
       const { isApprovedRow, ...caseFields } = row; // internal-only flag, not a Case field
       await store.insert('cases', { ...caseFields, ownerId: user.id, caseNumber });
       created++;
       existingKeys.add(key);
+      if (pgKey) {
+        if (!existingByProviderGameId.has(pgKey)) existingByProviderGameId.set(pgKey, []);
+        existingByProviderGameId.get(pgKey).push(row);
+      }
     } catch (err) {
       errors.push(`${sheetName} / ${row.title}: ${err.message}`);
     }
   }
-  sendJson(res, 200, { created, skipped: collapsedByCrossSheetDedup + skippedExisting, errors });
+  sendJson(res, 200, {
+    created,
+    skipped: collapsedByCrossSheetDedup + collapsedByGameIdDedup + skippedExisting,
+    errors,
+    gameIdConflicts,
+  });
 });
 
 router.post('/api/cases/:id/notes', async (req, res, params, body) => {
@@ -489,9 +601,6 @@ router.post('/api/contracts/:id/versions', async (req, res, params, body) => {
   sendJson(res, 201, version);
 });
 
-// Compliance ----------------------------------------------------------------
-crudRoutes({ base: '/api/compliance', moduleName: 'compliance', collection: 'compliance' });
-
 // Documents -----------------------------------------------------------------
 crudRoutes({
   base: '/api/documents', moduleName: 'documents', collection: 'documents',
@@ -514,6 +623,40 @@ router.get('/api/documents/:id/download', async (req, res, params) => {
     'Content-Disposition': `attachment; filename="${(doc.fileName || 'download').replace(/"/g, '')}"`,
   });
   res.end(buffer);
+});
+
+// "AI 幫我抓重點" — reads the document's already-stored file straight from
+// Supabase Storage (same bytes /download serves) and asks Gemini for a
+// short summary + key facts. Pure read-only convenience: this never writes
+// anything, and never judges the document as correct/complete/compliant —
+// see server/ai.js's summarizeDocument for why that's a deliberate scope
+// boundary rather than an oversight.
+router.post('/api/documents/:id/summarize', async (req, res, params) => {
+  const user = await requirePerm(req, res, 'documents', 'view');
+  if (!user) return;
+  const doc = await store.find('documents', params.id);
+  if (!doc) return sendJson(res, 404, { error: 'Document not found' });
+  if (!doc.filePath) return sendJson(res, 400, { error: '這筆文件沒有附加檔案，無法產生 AI 摘要。' });
+  const buffer = await storage.readFile(doc.filePath);
+  if (!buffer) return sendJson(res, 404, { error: 'File missing in storage' });
+  try {
+    // mimeFor() can return "text/plain; charset=utf-8" (fine as an HTTP
+    // Content-Type header, which is all it's normally used for — see the
+    // /download route above) but a data: URL's own syntax only allows a
+    // bare "type/subtype" before the first ";base64," marker, and
+    // server/ai.js's parseDataUrl() only strips the ";base64," suffix, not
+    // a "; charset=..." parameter in the middle — so the full value would
+    // fail to parse there. Strip any parameters off before building the
+    // data: URL; the actual bytes are unaffected either way.
+    const bareMimeType = mimeFor(doc.fileName || doc.filePath).split(';')[0].trim();
+    const result = await ai.summarizeDocument({
+      fileName: doc.fileName,
+      fileContentBase64: `data:${bareMimeType};base64,${buffer.toString('base64')}`,
+    });
+    sendJson(res, 200, result);
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
 });
 
 // Tasks -----------------------------------------------------------------

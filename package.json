@@ -2,7 +2,7 @@
   "name": "legal-genie",
   "version": "1.0.0",
   "private": true,
-  "description": "Legal Genie — legal department management system (cases, contracts, compliance, documents, tasks, approvals).",
+  "description": "Legal Genie — legal department management system (cases, contracts, documents, tasks, approvals).",
   "engines": {
     "node": "22.x"
   },

@@ -1,4 +1,8 @@
 node_modules/
+.env
+.env.*
+!.env.example
+local-mock/data.json
 data/db.json
 data/db.json.migrated-backup
 data/legal-genie.sqlite

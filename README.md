@@ -2,8 +2,8 @@
 
 An internal web application for the Legal Department of a gaming machine and
 online gaming manufacturer. Covers case management, contract management,
-regulatory compliance tracking, a document center, task management, an
-approval workflow, notifications, and role-based user administration.
+a document center, task management, an approval workflow, notifications,
+and role-based user administration.
 
 This started as a **working prototype for pilot use and demonstration** and
 has since been hardened and re-architected for a real, hosted go-live on a
@@ -48,7 +48,7 @@ end-to-end, including creating the Storage bucket documents/contract
 files are saved to.
 
 On first request after boot, the app seeds your (empty) database with
-sample departments, roles, users, cases, contracts, compliance items,
+sample departments, roles, users, cases, contracts,
 documents, tasks, approvals and notifications, so you can explore every
 module immediately. This seeding is safe to leave in place — it checks for
 existing users first and does nothing if your database already has data,
@@ -71,14 +71,13 @@ To run on a different port locally: `PORT=8080 node server.js`.
 
 ## What's included
 
-- **Dashboard** – pending tasks, upcoming deadlines (cases/contracts/compliance), recent notifications, pending approvals.
+- **Dashboard** – pending tasks, upcoming deadlines (cases/contracts), recent notifications, pending approvals.
 - **Case Management** – create/view/edit/close cases; owner, priority, status, deadline, notes.
 - **Contract Management** – contract records, counterparty, dates, status, and a version history log (with optional file upload per version).
-- **Compliance** – country/regulation/requirement tracker with due dates and status.
-- **Document Center** – categorized documents (Templates, Policies, Agreements, Certificates, Other) with upload/download, linkable to a case or contract.
+- **Document Center** – categorized documents (Templates, Policies, Agreements, Certificates, Other) with upload/download, linkable to a case or contract; optional AI-generated summary + key facts per document.
 - **Task Management** – personal and team tasks with status and due dates, linkable to a case/contract.
 - **Approval Center** – submit a request, assign a reviewer, approve/reject with comments; requester is notified of the decision.
-- **Notification Center** – contract expiry, compliance due dates, approval decisions, task assignments.
+- **Notification Center** – contract expiry, approval decisions, task assignments.
 - **Settings** – Users, Roles & Permissions (view/create/edit/delete/approve per module), Departments.
 
 Role-based access control is enforced on both the API (server-side, so it
@@ -86,7 +85,7 @@ cannot be bypassed) and the UI (relevant buttons/nav items hidden per role).
 
 ## AI smart-fill (optional)
 
-The "New Case" / "New Contract" / "New Compliance Item" / "Upload Document"
+The "New Case" / "New Contract" / "Upload Document"
 forms each have an **"AI 智慧填寫" (AI smart-fill)** panel at the top. Paste
 in free text (an email, a case summary, a contract excerpt, a regulator's
 notice...) and/or upload a file (PDF, image, or plain text), click **"AI 幫我填"**,
@@ -109,12 +108,27 @@ just rate limits (requests-per-minute/day caps; see below).
 1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey),
    sign in with a Google account, and create an API key — no credit card
    needed for the free tier.
-2. Set an environment variable **`GEMINI_API_KEY`** to that key —
-   locally in your shell before `node server.js`, or in Vercel's Project
-   Settings → Environment Variables (same place `SUPABASE_URL` lives; see
-   the Go-Live Guide for the click-by-click steps if needed), then
-   redeploy.
+2. Set an environment variable **`GEMINI_API_KEY`** to that key. Two
+   different places depending on where you're running the app — you don't
+   need to redo this every time you restart `node server.js` locally:
+   - **Locally:** copy `.env.example` to `.env` (`cp .env.example .env`) in
+     the project root and fill in `GEMINI_API_KEY=` there. `node server.js`
+     picks it up automatically from then on — no need to type it in front
+     of the command again. `.env` is already in `.gitignore`, so it never
+     gets committed; `.env.example` (safe, no real key) is what's checked
+     into git instead, as a template. See server/dotenv-lite.js for exactly
+     how this is loaded, and the note below on real environment variables
+     always taking priority over `.env`.
+   - **On Vercel:** Project Settings → Environment Variables (same place
+     `SUPABASE_URL` lives; see the Go-Live Guide for the click-by-click
+     steps if needed), then redeploy. This is unrelated to the `.env` file
+     above — Vercel never reads a `.env` file, only its own dashboard
+     settings — and, same idea, only needs doing once, not per-deployment.
 3. That's it — no other setup, database changes, or billing required.
+
+If you ever need to temporarily use a different key without editing `.env`,
+a real environment variable still wins: `GEMINI_API_KEY=xxx node server.js`
+overrides whatever's in the file for that one run.
 
 The free tier has rate limits (a cap on requests per minute/day, not
 money) — check your account's current limits at
@@ -146,6 +160,27 @@ existing case/contract IDs, so it never guesses those.
 
 See `server/ai.js` for the implementation (all extraction schemas per
 module live there, in one place, if you want to adjust what it looks for).
+
+## AI document summary — "AI 幫我抓重點" (optional)
+
+Any Document Center row with a file attached gets a sparkle-icon button.
+Click it and Gemini reads the actual stored file (RNG report, LOA letter,
+contract scan, whatever it is) and returns a short plain-language summary
+plus a handful of key facts, so you don't have to open and read the whole
+document just to know what's in it.
+
+This is deliberately **just a summary, not a review**: it only reports what
+the document says, and it never judges whether the document is correct,
+complete, or meets any requirement — see `server/ai.js`'s
+`summarizeDocument` for why that's an intentional scope boundary rather
+than a missing feature. If you later want an actual compliance/completeness
+checker (e.g. "does this RNG report have everything PAGCOR requires"), that
+needs a real checklist of what each document type must contain — Gemini's
+general knowledge of what these documents typically look like can get you
+a reasonable starting point, but a properly reliable version needs your own
+domain checklist to check against.
+
+Shares the same `GEMINI_API_KEY` setup as AI smart-fill above.
 
 ## AI Assistant (optional)
 
@@ -230,11 +265,14 @@ Center, and the AI Assistant/AI smart-fill you already have.
    game-submission cases) are counted — see the `pagcorBoard` field added to
    `/api/dashboard/summary` in `server/routes.js`, and `pagcorBoardHtml()`
    in `public/js/app.js`.
-7. **Search Case Management by Case #, Title, or Game Title.** A search box
+7. **Search Case Management by Game ID, Title, or Game Title.** A search box
    next to the Provider/Stage filters narrows the list to whatever text you
    type (substring, case-insensitive) — combines with the other filters, so
    you can e.g. search within a Provider's cases only. Once you have
    hundreds of imported games, this is usually faster than paging through.
+   Matches Game ID rather than the internal Case # (Tiffany's own workflow
+   is to look games up by their Game ID) — Case # is still visible as its
+   own sortable column, just not part of this search box.
 8. **Export the case list to CSV.** The "Export CSV" button downloads
    whatever the current Provider/Stage/search filters and sort order show
    (not just the current page) as a `.csv` file — every field the Import
@@ -260,13 +298,54 @@ Center, and the AI Assistant/AI smart-fill you already have.
 11. **Import Excel/CSV de-duplicates.** Re-running the same import (or
     importing a workbook where the same game appears in both a Provider's
     own tab and the master "APPROVED" tab — a real shape in Tiffany's actual
-    workbook) no longer creates duplicate cases. Matching is by
+    workbook) no longer creates duplicate cases. Matching is primarily by
     (Provider, Game Title), case-insensitively: a game already in both
     an included Provider sheet and the APPROVED sheet in the **same**
     commit collapses to one case using the APPROVED (final) version; a game
     that already exists as a Case from an **earlier** import run is skipped
     entirely. The import result now reports a `skipped` count alongside
     `created` — see `POST /api/cases/import/commit` in `server/routes.js`.
+
+    On top of that exact-title match, a second pass groups rows by
+    (Provider, Game ID) and also collapses them when their titles are close
+    enough (after stripping punctuation/case) to be confident it's the same
+    game — this is what catches real typos found in Tiffany's own workbook,
+    like "CATLA_S MONEY MACHINE" vs "CATLA'S MONEY MACHINE" (an
+    underscore-for-apostrophe typo) or "Super Niubi Fortune" vs
+    "SuperNiubiFortuneX-huge" (a shorter/longer name variant), both sharing
+    one Game ID — which a plain title match would otherwise have let through
+    as two separate cases. This check runs both within one commit AND
+    against cases already in the database from an earlier commit, so it
+    doesn't matter whether all sheets are imported together or in separate
+    batches. A Game ID shared by two titles that DON'T look related (found
+    in the same workbook: FC's "OPEN VAULT" row has a typo'd Game ID that
+    happens to collide with the unrelated "HOT POT PARTY" row) is
+    deliberately left as two separate cases rather than merged, since that's
+    most likely two real submissions colliding on a mistyped ID, not one
+    game recorded twice — these get reported back in a `gameIdConflicts`
+    array (shown in a toast + logged to the browser console) instead, so a
+    human can check the source sheet. See `titlesLikelySameGame()` and the
+    "Stage 2.5" comment in `POST /api/cases/import/commit`, `server/routes.js`.
+12. **Game ID column in Case Management.** A "Game ID" column sits right
+    after Case # in the table, showing the game's own ID from the source
+    spreadsheet (e.g. `8021`, `100001`) — separate from and without changing
+    the internal `CASE-####` numbering everything else in the system uses.
+    Shows "—" for cases with no Game ID (e.g. non-PAGCOR cases). Sortable
+    like any other column — see the `gameId` case in `sortValue()` and the
+    new `<td>`/`<th>` in `renderCases()` in `public/js/app.js`.
+13. **Case # column shows just the number, click a row for full details.**
+    To keep the Case # column narrow, the table now shows only the numeric
+    suffix (e.g. `0006` instead of `CASE-0006`) — hover it to see the full
+    number in a tooltip, and it's unchanged everywhere else (CSV export,
+    search, the underlying record, etc.). Clicking anywhere on a row (except
+    its checkbox or the action buttons) navigates to a full case/game detail
+    page at `#/cases/<id>` — Game Title, Type, ID, Version, Jackpot,
+    Provider, PAGCOR Stage, and the (checkable) PAGCOR Checklist, plus Edit
+    and Delete buttons. This was originally a modal, but with every field
+    shown at once it felt cramped in a dialog, so it's a real page instead —
+    see `renderCaseDetail()`, the `cases`-with-id branch in `route()`, and
+    the `tr[data-id]` click handler in `attachRowHandlers()`, all in
+    `public/js/app.js`.
 
 Demo data for the first six is included in `server/seed.js` (two PAGCOR-flavored
 cases — one mid-submission, one with an approaching LOA expiry — plus two
@@ -328,6 +407,7 @@ legal-genie/
 │                           just wrapped in .listen() instead.
 ├── server/
 │   ├── index.js            Thin compatibility alias -> ../server.js
+│   ├── dotenv-lite.js       Loads a local .env file, if present — see "AI smart-fill" above
 │   ├── router.js           Minimal router + JSON body parsing (no Express)
 │   ├── store.js             Supabase (Postgres) datastore — active path
 │   ├── storage.js           Supabase Storage file handling — active path
@@ -346,6 +426,7 @@ legal-genie/
 │   │   ├── bootstrap-lite.css
 │   │   └── style.css
 │   └── js/
+├── .env.example          Template for local env vars (copy to .env — see "AI smart-fill" above)
 ├── package.json          Declares @supabase/supabase-js (Vercel's build runs npm install)
 ├── render.yaml           Render Blueprint — Render fallback path only (see below)
 └── .node-version         Pins the Node version for Render specifically
@@ -390,7 +471,7 @@ Supabase (a hosted Postgres database) holds a single `records` table:
 `(collection, id, data jsonb, created_at)`, primary key `(collection, id)`
 — one row per record, keyed by which collection it belongs to (`users`,
 `roles`, `departments`, `cases`, `caseNotes`, `contracts`,
-`contractVersions`, `compliance`, `documents`, `tasks`, `approvals`,
+`contractVersions`, `documents`, `tasks`, `approvals`,
 `notifications`, `sessions`), with the record itself kept as a JSONB blob.
 This mirrors the shape the app already used in its earlier prototype and
 SQLite phases, which kept the actual business logic in `routes.js`/`auth.js`
@@ -489,7 +570,7 @@ the permission model, the seed data — is identical between both paths.
    break the UI.
 
 None of the above require rewriting the module logic (cases, contracts,
-compliance, etc.) — they are infrastructure hardening steps around the
+documents, etc.) — they are infrastructure hardening steps around the
 existing application.
 
 ## Future expansion (from the original proposal)

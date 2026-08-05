@@ -1,9 +1,9 @@
 'use strict';
 /**
  * Optional "AI smart-fill" helper — lets a user paste free text (an email,
- * a case summary, a contract excerpt, a regulation notice...) or upload a
+ * a case summary, a contract excerpt...) or upload a
  * file (PDF or image), and have Gemini extract the relevant fields for a
- * given module (cases / contracts / compliance / documents) so the form
+ * given module (cases / contracts / documents) so the form
  * shows up pre-filled instead of needing to be typed in by hand. The user
  * always sees the pre-filled form before saving, so this only ever removes
  * typing — it never submits anything on its own.
@@ -79,17 +79,6 @@ const MODULE_SCHEMAS = {
     },
     required: ['title'],
   },
-  compliance: {
-    label: 'regulatory compliance requirement',
-    properties: {
-      country: { type: 'string', description: 'Country or jurisdiction the requirement applies to.' },
-      regulation: { type: 'string', description: 'Name/citation of the regulation, law, or licensing body requirement.' },
-      requirement: { type: 'string', description: 'A clear description of what must be done to comply.' },
-      dueDate: { type: 'string', description: 'ISO date YYYY-MM-DD if a compliance deadline is mentioned. Omit if not mentioned.' },
-      status: { type: 'string', enum: ['Compliant', 'Due Soon', 'Overdue'] },
-    },
-    required: ['requirement'],
-  },
   documents: {
     label: 'document being filed into the document center',
     properties: {
@@ -102,6 +91,200 @@ const MODULE_SCHEMAS = {
     required: ['title'],
   },
 };
+
+// ---------------------------------------------------------------------------
+// PAGCOR "Notice of Approval" extraction
+// ---------------------------------------------------------------------------
+// A separate, narrower entry point from extractFields() above: this reads an
+// official PAGCOR approval-notice letter (often a scanned image with NO text
+// layer at all, so pdf-parse in pagcor-check.js can't read it) and pulls out
+// which game(s) it approves. This exists specifically because PAGCOR's own
+// public "List of EGLD-approved Electronic Games" PDFs lag behind these
+// individual notices by weeks — Tiffany gets the real approval letter from
+// PAGCOR directly, often well before the public list catches up, so relying
+// only on the public list means real approvals sit unrecognized in the
+// meantime. Letting her upload the notice itself and have AI read it closes
+// that gap instead of waiting on PAGCOR's own batch publishing schedule.
+const APPROVAL_NOTICE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    games: {
+      type: 'ARRAY',
+      description: 'Every individual game this notice approves. A single notice can cover more than one game.',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          gameTitle: { type: 'STRING', description: 'The game\'s name exactly as written in the notice.' },
+          gameId: { type: 'STRING', description: 'The Game ID / Table ID for this game, if the notice states one. Omit if not stated.' },
+          provider: { type: 'STRING', description: 'The game provider/brand this game belongs to (e.g. Omniplay, FC, JDB, Yellow Bat, Vertex Play), if identifiable. Omit if not stated.' },
+        },
+        required: ['gameTitle'],
+      },
+    },
+    approvalDate: { type: 'STRING', description: 'ISO date YYYY-MM-DD the notice is dated or the approval takes effect, if stated. Omit if not stated.' },
+    noticeReference: { type: 'STRING', description: 'The notice/document reference number, e.g. "SYS-26-07-290", if stated. Omit if not stated.' },
+  },
+  required: ['games'],
+};
+
+async function callGemini(requestBody) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
+  let response;
+  try {
+    response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify(requestBody),
+    });
+  } catch (err) {
+    throw new Error(`AI 服務連線失敗:${err.message}`);
+  }
+  if (!response.ok) {
+    let detail = '';
+    try { detail = (await response.json())?.error?.message || ''; } catch (e) { /* ignore */ }
+    throw new Error(`AI 服務回應錯誤 (${response.status})${detail ? `:${detail}` : ''}`);
+  }
+  const data = await response.json();
+  const text_ = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).filter(Boolean).join('') || '';
+  if (!text_) {
+    throw new Error('AI 沒有回傳可解析的結果,請再試一次。');
+  }
+  try {
+    return JSON.parse(text_);
+  } catch (err) {
+    throw new Error('AI 回傳的內容無法解析,請再試一次。');
+  }
+}
+
+/**
+ * @param {{fileName?: string, fileContentBase64: string}} input
+ * @returns {Promise<{games: Array<{gameTitle: string, gameId?: string, provider?: string}>, approvalDate?: string, noticeReference?: string}>}
+ */
+async function extractApprovalNotice({ fileName, fileContentBase64 }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'AI 判讀尚未設定 —— 需要先在環境變數加入 GEMINI_API_KEY(見 README 的 AI 功能設定說明，' +
+      '可以在 https://aistudio.google.com/apikey 免費申請，不需要信用卡)。'
+    );
+  }
+  if (!fileContentBase64 || !String(fileContentBase64).trim()) {
+    throw new Error('請先上傳核准通知信的檔案(PDF 或圖片)。');
+  }
+
+  const parts = [
+    {
+      text:
+        '這是一份 PAGCOR(菲律賓博彩監理機構)寄給營運商的正式「核准通知信」(Notice of Approval)，' +
+        '可能是掃描圖檔，內容可能列出一或多款已核准的電子遊戲，也可能跨越多頁。' +
+        '請仔細閱讀整份文件，擷取每一款被核准遊戲的：遊戲名稱(gameTitle)、Game ID/Table ID(gameId，' +
+        '如果信中有列出的話)、以及遊戲廠商/Provider 名稱(provider，如果有提到的話)。' +
+        '如果信中有提到核准日期或正式文號，也請一併擷取。只根據文件裡實際寫的內容擷取，' +
+        '不要憑空捏造；看不清楚或沒提到的欄位請直接省略，不要用猜的。',
+    },
+    filePart(fileName, fileContentBase64),
+  ];
+
+  const requestBody = {
+    systemInstruction: {
+      parts: [{
+        text:
+          'You are a document-extraction assistant reading an official PAGCOR game-approval notice ' +
+          'letter, which may be a scanned image with no text layer. Extract only facts explicitly ' +
+          'visible in the document. Never invent information not present in it.',
+      }],
+    },
+    contents: [{ parts }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: APPROVAL_NOTICE_SCHEMA,
+    },
+  };
+
+  const result = await callGemini(requestBody);
+  return { games: [], ...result };
+}
+
+// ---------------------------------------------------------------------------
+// AI document summary ("AI 幫我抓重點") — optional (see GEMINI_API_KEY check
+// below, same as every other AI feature in this file). Reads a document
+// already stored in Document Center (server/routes.js's
+// POST /api/documents/:id/summarize fetches its bytes from Supabase Storage
+// and passes them in here) and returns a short plain-language summary plus
+// a handful of key facts, so Tiffany doesn't have to read the whole file
+// herself just to know what's in it. Deliberately NOT a compliance/approval
+// check — it only reports what the document says, it never judges whether
+// that's correct or sufficient. See the conversation that led to this: she
+// asked for something to save her reading time, not an automated reviewer.
+// ---------------------------------------------------------------------------
+const DOCUMENT_SUMMARY_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    summary: {
+      type: 'STRING',
+      description: 'A short (2-4 sentence) plain-language summary of what this document is and what it says, written for someone who has not read it and has no other context.',
+    },
+    keyPoints: {
+      type: 'ARRAY',
+      description: 'Roughly 3-8 short, concrete key facts pulled from the document — e.g. parties, dates, amounts, game title, test result/conclusion, notable obligations or conditions — whatever is actually most important in THIS document. Each item should be a short standalone phrase or sentence, not a full paragraph.',
+      items: { type: 'STRING' },
+    },
+  },
+  required: ['summary', 'keyPoints'],
+};
+
+/**
+ * @param {{fileName?: string, fileContentBase64?: string, text?: string}} input
+ * @returns {Promise<{summary: string, keyPoints: string[]}>}
+ */
+async function summarizeDocument({ fileName, fileContentBase64, text }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      'AI 摘要尚未設定 —— 需要先在環境變數加入 GEMINI_API_KEY(見 README 的 AI 功能設定說明，' +
+      '可以在 https://aistudio.google.com/apikey 免費申請，不需要信用卡)。'
+    );
+  }
+  const hasText = text && String(text).trim().length > 0;
+  const hasFile = fileContentBase64 && String(fileContentBase64).trim().length > 0;
+  if (!hasText && !hasFile) {
+    throw new Error('這份文件沒有可讀取的內容，無法產生 AI 摘要。');
+  }
+
+  const parts = [{
+    text:
+      '請閱讀以下文件內容，用繁體中文寫一段簡短的白話摘要（2-4 句話，讓完全沒讀過原文的人也能看懂這份文件在講什麼），' +
+      '再列出 3-8 個從文件裡擷取出來的重點事實（例如當事人、日期、金額、遊戲名稱、測試結果或結論、需要注意的條款，' +
+      '依文件實際內容而定，不要每種都硬湊）。只根據文件裡實際寫的內容整理，不要憑空補充、推測或評論文件沒提到的資訊 —— ' +
+      '這只是幫忙抓重點省閱讀時間，不是在審查或判斷這份文件有沒有問題。',
+  }];
+  if (hasText) parts.push({ text: String(text) });
+  if (hasFile) parts.push(filePart(fileName, fileContentBase64));
+
+  const requestBody = {
+    systemInstruction: {
+      parts: [{
+        text:
+          'You are a document-summarization assistant embedded in an internal legal department system ' +
+          'for a gaming company. Read the provided document (which may be a contract, a PAGCOR regulatory ' +
+          'submission report, an approval letter, or another legal/business document) and produce a short, ' +
+          'accurate plain-language summary plus a handful of key facts, purely so the reader does not have ' +
+          'to read the whole document themselves to know what is in it. Only report what is actually in the ' +
+          'document — never invent facts, and never render a judgment about whether the document is correct, ' +
+          'complete, or compliant with anything; that is out of scope for this tool.',
+      }],
+    },
+    contents: [{ parts }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: DOCUMENT_SUMMARY_SCHEMA,
+    },
+  };
+
+  const result = await callGemini(requestBody);
+  return { summary: '', keyPoints: [], ...result };
+}
 
 function schemaFor(module) {
   const schema = MODULE_SCHEMAS[module];
@@ -240,4 +423,4 @@ async function extractFields({ module, text, fileName, fileContentBase64 }) {
   }
 }
 
-module.exports = { extractFields, MODULE_SCHEMAS, toGeminiResponseSchema };
+module.exports = { extractFields, extractApprovalNotice, summarizeDocument, MODULE_SCHEMAS, toGeminiResponseSchema };

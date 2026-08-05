@@ -21,6 +21,14 @@
  * which is also simpler/faster than routing those requests through this
  * function. This file only ever needs to handle /api/* requests.
  */
+// Load a project-root .env file (if any) BEFORE anything else — see
+// server/dotenv-lite.js. On a real Vercel deployment this is always a
+// no-op (no .env file is ever present there; Vercel's own real environment
+// variables are used instead), but it keeps this file consistent with
+// server.js for anyone running it locally outside of `vercel dev` (which
+// already loads .env itself via the Vercel CLI).
+require('../server/dotenv-lite').loadDotEnv();
+
 const { readBody, sendJson } = require('../server/router');
 const router = require('../server/routes');
 const { seed } = require('../server/seed');

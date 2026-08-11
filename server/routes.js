@@ -51,6 +51,79 @@ async function notifyUser(userId, type, message, relatedId = null, relatedType =
 }
 
 // ---------------------------------------------------------------------------
+// System Settings — a single row (id: 'system') holding the few things
+// Settings > Notification/Submission/Required Document Settings let an
+// Admin configure, instead of leaving them as hardcoded constants scattered
+// across routes.js/pagcor.js. Falls back to those original hardcoded values
+// (30-day follow-up, the standard PAGCOR_CHECKLIST_ITEMS, all notification
+// triggers on) the first time this is ever read, so a fresh install behaves
+// exactly like before this existed.
+async function getSystemSettings() {
+  let settings = await store.find('settings', 'system');
+  if (!settings) {
+    settings = await store.insert('settings', {
+      id: 'system',
+      followUpDays: 30,
+      requiredDocumentChecklist: pagcor.PAGCOR_CHECKLIST_ITEMS,
+      notifications: {
+        notifyOnApprovalDecision: true,
+        notifyOnTaskAssignment: true,
+        notifyOnCaseStageChange: true,
+      },
+    });
+  }
+  return settings;
+}
+
+// New cases (see crudRoutes onCreate for 'cases' below) get their PAGCOR
+// checklist from whatever's currently configured in Required Document
+// Settings — falling back to the standard PAGCOR_CHECKLIST_ITEMS the first
+// time settings are read. Deliberately only affects cases created *after*
+// a settings change; existing cases keep whatever checklist they already
+// have, same as changing a template never rewrites past records.
+async function getChecklistTemplate() {
+  const settings = await getSystemSettings();
+  const items = (settings.requiredDocumentChecklist && settings.requiredDocumentChecklist.length)
+    ? settings.requiredDocumentChecklist
+    : pagcor.PAGCOR_CHECKLIST_ITEMS;
+  return items.map((item) => ({ ...item, done: false }));
+}
+
+function notificationsEnabled(settings, key) {
+  // Missing settings.notifications (a fresh install before anyone's ever
+  // touched Notification Settings) or a missing/undefined key both mean
+  // "on" — matches getSystemSettings()'s own defaults, so a brand new
+  // system behaves exactly like it did before these toggles existed.
+  return !settings.notifications || settings.notifications[key] !== false;
+}
+
+// Notifies a case's Owner when its PAGCOR Stage actually changed this
+// request (never on a save that leaves the Stage alone), gated by Settings
+// > Notification Settings > "Notify on case status change". Skips notifying
+// someone about their own change — nobody needs a notification for an
+// action they just took themselves.
+async function notifyCaseStageChange(row, existing, actingUser) {
+  if (!row || !existing || !row.pagcorStage || existing.pagcorStage === row.pagcorStage) return;
+  if (!row.ownerId || row.ownerId === actingUser.id) return;
+  const settings = await getSystemSettings();
+  if (!notificationsEnabled(settings, 'notifyOnCaseStageChange')) return;
+  await notifyUser(row.ownerId, 'case_stage_change', `Case "${row.title}" status changed to "${row.pagcorStage}"`, row.id, 'case');
+}
+
+// Notifies a task's Assignee when they're newly assigned (a fresh task, or
+// an existing one whose Assignee just changed to them) — gated by Settings
+// > Notification Settings > "Notify on task assignment". `existing` is null
+// for a brand-new task (see crudRoutes' afterCreate).
+async function notifyTaskAssignee(row, existing, actingUser) {
+  if (!row || !row.assigneeId) return;
+  const changed = !existing || existing.assigneeId !== row.assigneeId;
+  if (!changed || row.assigneeId === actingUser.id) return;
+  const settings = await getSystemSettings();
+  if (!notificationsEnabled(settings, 'notifyOnTaskAssignment')) return;
+  await notifyUser(row.assigneeId, 'task_assigned', `You were assigned to task "${row.title}"`, row.id, 'task');
+}
+
+// ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
 router.post('/api/auth/login', async (req, res, params, body) => {
@@ -132,6 +205,29 @@ router.post('/api/ai/extract/:module', async (req, res, params, body) => {
   }
 });
 
+// "When a new case comes in, import all its documents at once and have AI
+// organize them into a Case" — the Case Management intake wizard's AI step.
+// Takes several files at once (the whole bundle a
+// Provider sends for one game) and returns proposed Case fields, same
+// permission as the "New Case" button itself. Read-only — this never
+// creates anything; the frontend shows the proposal in the normal case
+// form for the user to review/edit, and only POST /api/cases (below)
+// actually saves it. See server/ai.js's extractCaseFromDocuments.
+router.post('/api/cases/extract-from-documents', async (req, res, params, body) => {
+  const user = await requirePerm(req, res, 'cases', 'create');
+  if (!user) return;
+  try {
+    // {common, games} — `games` is always an array (usually length 1, but
+    // a single submission bundle can legitimately cover several games at
+    // once — see server/ai.js's extractCaseFromDocuments for why this
+    // isn't just one flat proposed Case).
+    const result = await ai.extractCaseFromDocuments({ documents: Array.isArray(body.documents) ? body.documents : [] });
+    sendJson(res, 200, result);
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // AI Assistant (optional — see server/assistant.js; requires
 // GEMINI_API_KEY same as AI smart-fill above). Read-only lookups
@@ -184,6 +280,26 @@ router.get('/api/dashboard/summary', async (req, res) => {
   const myTasks = tasks.filter((t) => t.assigneeId === user.id && t.status !== 'Completed');
   const allPendingTasks = tasks.filter((t) => t.status !== 'Completed');
 
+  // "Today's To-Dos" — my own not-yet-completed tasks due today or earlier
+  // (an overdue task is still very much something to do today, not
+  // something to hide from this widget until its exact due date arrives).
+  const todayStr = today.toISOString().slice(0, 10);
+  const todaysTasks = myTasks
+    .filter((t) => t.dueDate && t.dueDate <= todayStr)
+    .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+
+  // "Recently Updated Cases" — a quick "what moved lately" list, most
+  // recently touched first. Falls back to createdAt for cases that have
+  // never been edited since creation (store.update() is what stamps
+  // updatedAt — see store.js).
+  const recentlyUpdatedCases = [...cases]
+    .sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt))
+    .slice(0, 5)
+    .map((c) => ({
+      id: c.id, caseNumber: c.caseNumber, title: c.title, gameTitle: c.gameTitle,
+      pagcorStage: c.pagcorStage, updatedAt: c.updatedAt || c.createdAt,
+    }));
+
   const upcomingDeadlines = [];
   cases.forEach((c) => {
     if (c.deadline && c.status !== 'Closed' && new Date(c.deadline) <= in14) {
@@ -207,6 +323,36 @@ router.get('/api/dashboard/summary', async (req, res) => {
     }
   });
   upcomingDeadlines.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // Follow-up window comes from Settings > Submission Settings (defaults to
+  // 30 days, same as it's always been — see getSystemSettings above).
+  const settings = await getSystemSettings();
+  const followUpDays = Number.isFinite(settings.followUpDays) && settings.followUpDays > 0 ? settings.followUpDays : 30;
+
+  // Follow-up reminder — flags games that have been sitting in "Submitted to
+  // PAGCOR" or "Under PAGCOR Review" for followUpDays+ with nobody having
+  // followed up (i.e. the Stage itself hasn't changed). This came directly
+  // from legal's feedback that games silently stall at PAGCOR for weeks with
+  // no visibility until someone happens to check. Falls back to createdAt
+  // for older cases that predate the pagcorStageChangedAt field (see
+  // crudRoutes' onCreate/onUpdate for cases in this file).
+  const FOLLOW_UP_STAGES = ['Submitted to PAGCOR', 'Under PAGCOR Review'];
+  const followUpCutoff = new Date(today.getTime() - followUpDays * 86400000);
+  const followUps = cases
+    .filter((c) => FOLLOW_UP_STAGES.includes(c.pagcorStage))
+    .map((c) => ({ ...c, _stageSince: c.pagcorStageChangedAt || c.createdAt }))
+    .filter((c) => c._stageSince && new Date(c._stageSince) <= followUpCutoff)
+    .sort((a, b) => new Date(a._stageSince) - new Date(b._stageSince))
+    .map((c) => ({
+      id: c.id,
+      caseNumber: c.caseNumber,
+      title: c.title,
+      gameTitle: c.gameTitle,
+      provider: c.provider,
+      pagcorStage: c.pagcorStage,
+      stageSince: c._stageSince,
+      daysSince: Math.floor((today - new Date(c._stageSince)) / 86400000),
+    }));
 
   const myNotifications = notifications
     .filter((n) => n.userId === user.id)
@@ -243,13 +389,41 @@ router.get('/api/dashboard/summary', async (req, res) => {
     };
   });
 
+  // "Pending Documents" — PAGCOR cases whose required-document checklist
+  // (Settings > Required Document Settings) isn't fully checked off yet,
+  // still open (not LOA Approved/Rejected). Reuses the same
+  // checklistDone/checklistTotal shape the pagcorBoard sample rows already
+  // compute above, so the Dashboard widget and the PAGCOR board agree on
+  // what "incomplete" means.
+  const pendingDocuments = pagcorCases
+    .filter((c) => !['LOA Approved', 'Rejected'].includes(c.pagcorStage))
+    .map((c) => ({
+      id: c.id,
+      caseNumber: c.caseNumber,
+      title: c.title,
+      gameTitle: c.gameTitle,
+      provider: c.provider,
+      pagcorStage: c.pagcorStage,
+      checklistDone: (c.pagcorChecklist || []).filter((i) => i.done).length,
+      checklistTotal: (c.pagcorChecklist || []).length,
+    }))
+    .filter((c) => c.checklistTotal > 0 && c.checklistDone < c.checklistTotal)
+    .sort((a, b) => (a.checklistTotal - a.checklistDone) < (b.checklistTotal - b.checklistDone) ? 1 : -1);
+
   sendJson(res, 200, {
     pagcorBoard,
     pendingTasksCount: myTasks.length,
     orgPendingTasksCount: allPendingTasks.length,
+    followUpDays,
+    todaysTasks,
+    recentlyUpdatedCases,
+    pendingDocuments: pendingDocuments.slice(0, 10),
+    pendingDocumentsCount: pendingDocuments.length,
     upcomingDeadlines: upcomingDeadlines.slice(0, 10),
     recentNotifications: myNotifications,
     unreadNotificationsCount: notifications.filter((n) => n.userId === user.id && !n.isRead).length,
+    followUps: followUps.slice(0, 10),
+    followUpsCount: followUps.length,
     pendingApprovals,
     pendingApprovalsCount: pendingApprovals.length,
     counts: {
@@ -262,7 +436,7 @@ router.get('/api/dashboard/summary', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Generic list/get/create/update/delete factory
 // ---------------------------------------------------------------------------
-function crudRoutes({ base, moduleName, collection, onCreate, onUpdate }) {
+function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCreate, afterUpdate, afterDelete }) {
   router.get(base, async (req, res) => {
     const user = await requirePerm(req, res, moduleName, 'view');
     if (!user) return;
@@ -282,25 +456,97 @@ function crudRoutes({ base, moduleName, collection, onCreate, onUpdate }) {
     if (!user) return;
     const payload = onCreate ? await onCreate(body, user) : body;
     const row = await store.insert(collection, payload);
+    // Fire-and-report side effects (e.g. auto-creating a follow-up task)
+    // after the row itself is safely written — a failure here shouldn't
+    // block the actual create from succeeding/returning to the client.
+    if (afterCreate) {
+      try { await afterCreate(row, user); } catch (err) { console.error(`afterCreate(${base}) failed:`, err); }
+    }
     sendJson(res, 201, row);
   });
 
   router.put(`${base}/:id`, async (req, res, params, body) => {
     const user = await requirePerm(req, res, moduleName, 'edit');
     if (!user) return;
-    const patch = onUpdate ? await onUpdate(body, user) : body;
+    // Fetched once up front (only when actually needed) and handed to both
+    // hooks as `existing` — the pre-update row — so e.g. a case's afterUpdate
+    // can tell whether pagcorStage actually changed this request without
+    // re-querying (store.update() already overwrites the row by the time
+    // afterUpdate runs, so "before" state would otherwise be lost).
+    const existing = (onUpdate || afterUpdate) ? await store.find(collection, params.id) : null;
+    const patch = onUpdate ? await onUpdate(body, user, params.id, existing) : body;
     const row = await store.update(collection, params.id, patch);
     if (!row) return sendJson(res, 404, { error: 'Not found' });
+    if (afterUpdate) {
+      try { await afterUpdate(row, user, params.id, existing); } catch (err) { console.error(`afterUpdate(${base}) failed:`, err); }
+    }
     sendJson(res, 200, row);
   });
 
   router.delete(`${base}/:id`, async (req, res, params) => {
     const user = await requirePerm(req, res, moduleName, 'delete');
     if (!user) return;
+    const existing = afterDelete ? await store.find(collection, params.id) : null;
     const ok = await store.remove(collection, params.id);
     if (!ok) return sendJson(res, 404, { error: 'Not found' });
+    if (afterDelete && existing) {
+      try { await afterDelete(existing, user); } catch (err) { console.error(`afterDelete(${base}) failed:`, err); }
+    }
     sendJson(res, 200, { ok: true });
   });
+}
+
+// Auto-managed "follow up 30 days later" reminder task for a case's Submit Date.
+// Keeps exactly one such task per case in sync with that case's current
+// `deadline` field, so the Calendar page and Task Management always reflect
+// the latest date without Tiffany having to create/update it by hand:
+//   - no deadline (or case deleted) -> the auto task (if any) is removed
+//   - deadline set/changed          -> the task's dueDate is (re)computed as
+//                                       deadline + 30 days
+//   - task already marked Completed -> left alone even if the deadline later
+//                                       changes, so a done follow-up doesn't
+//                                       silently reopen
+// Identified via `isDeadlineFollowUp: true` (not a real Task Management
+// field the user ever sets) plus `sourceDeadline` (the deadline value it was
+// last computed from), both invisible in the normal Task form/list — this
+// is purely bookkeeping so re-syncing is idempotent instead of duplicating.
+async function syncDeadlineFollowUpTask(caseRow) {
+  if (!caseRow || !caseRow.id) return;
+  const tasks = await store.all('tasks');
+  const existing = tasks.find((t) => t.relatedCaseId === caseRow.id && t.isDeadlineFollowUp);
+
+  if (!caseRow.deadline) {
+    // Only clean up a still-pending reminder. A Completed one is a real
+    // record that someone already did the follow-up — clearing the
+    // deadline afterwards (e.g. the case got closed) shouldn't erase that
+    // history from Task Management.
+    if (existing && existing.status !== 'Completed') await store.remove('tasks', existing.id);
+    return;
+  }
+
+  const followUp = new Date(caseRow.deadline);
+  if (isNaN(followUp)) return; // malformed date — don't crash the case save over it
+  const settings = await getSystemSettings();
+  const followUpDays = Number.isFinite(settings.followUpDays) && settings.followUpDays > 0 ? settings.followUpDays : 30;
+  followUp.setDate(followUp.getDate() + followUpDays);
+  const followUpDate = followUp.toISOString().slice(0, 10);
+  const title = `Follow up: ${caseRow.title}`;
+
+  if (!existing) {
+    await store.insert('tasks', {
+      title,
+      description: `Case "${caseRow.title}" has a Submit Date of ${caseRow.deadline}. This reminder was created automatically ${followUpDays} days later to follow up on progress.`,
+      assigneeId: caseRow.ownerId || null,
+      type: 'team',
+      status: 'Not Started',
+      dueDate: followUpDate,
+      relatedCaseId: caseRow.id,
+      isDeadlineFollowUp: true,
+      sourceDeadline: caseRow.deadline,
+    });
+  } else if (existing.status !== 'Completed' && existing.sourceDeadline !== caseRow.deadline) {
+    await store.update('tasks', existing.id, { title, dueDate: followUpDate, sourceDeadline: caseRow.deadline });
+  }
 }
 
 // Cases -----------------------------------------------------------------
@@ -311,11 +557,43 @@ crudRoutes({
     // A case with a Provider set is a PAGCOR game-submission case — give it
     // the standard checklist/stage automatically so the user doesn't have to
     // set those up by hand every time. Cases without a Provider (Commercial,
-    // IP, Litigation, etc.) are untouched.
-    if (body.provider && !patch.pagcorChecklist) patch.pagcorChecklist = pagcor.defaultChecklist();
+    // IP, Litigation, etc.) are untouched. The checklist template itself
+    // comes from Settings > Required Document Settings (see
+    // getChecklistTemplate above) — falls back to the standard
+    // PAGCOR_CHECKLIST_ITEMS the first time settings are read.
+    if (body.provider && !patch.pagcorChecklist) patch.pagcorChecklist = await getChecklistTemplate();
     if (body.provider && !patch.pagcorStage) patch.pagcorStage = 'Preparing Documents';
+    // Stamp when the case entered its current PAGCOR Stage, so the Dashboard
+    // can flag games that have been sitting in "Submitted to PAGCOR" /
+    // "Under PAGCOR Review" for the configured follow-up window without
+    // anyone following up (see onUpdate below and
+    // /api/dashboard/summary's followUps). Only set if not already provided
+    // (e.g. by the Excel import path in import.js).
+    if (patch.pagcorStage && !patch.pagcorStageChangedAt) patch.pagcorStageChangedAt = new Date().toISOString();
     return patch;
   },
+  // Editing a case's Stage field directly (not via the batch action below)
+  // should reset the same "time in stage" clock used for the follow-up
+  // reminder — otherwise a game that was actually just moved forward would
+  // still look overdue until its next unrelated edit. `existing` is the
+  // pre-update row, handed in by crudRoutes' PUT handler.
+  onUpdate: async (body, user, id, existing) => {
+    const patch = { ...body };
+    if (patch.pagcorStage && existing && existing.pagcorStage !== patch.pagcorStage) {
+      patch.pagcorStageChangedAt = new Date().toISOString();
+    }
+    return patch;
+  },
+  // Keep each case's "follow up N days later" Task Management reminder in
+  // sync with its Submit Date field (see syncDeadlineFollowUpTask above),
+  // and — when the PAGCOR Stage actually changed this update — notify the
+  // case's Owner, gated by Settings > Notification Settings.
+  afterCreate: async (row) => syncDeadlineFollowUpTask(row),
+  afterUpdate: async (row, user, id, existing) => {
+    await syncDeadlineFollowUpTask(row);
+    await notifyCaseStageChange(row, existing, user);
+  },
+  afterDelete: async (row) => syncDeadlineFollowUpTask({ ...row, deadline: null }),
 });
 
 // Bulk stage update — select multiple cases in Case Management (e.g. a
@@ -330,16 +608,20 @@ router.post('/api/cases/bulk-update-stage', async (req, res, params, body) => {
   if (!user) return;
   const ids = Array.isArray(body.ids) ? body.ids : [];
   const { pagcorStage } = body;
-  if (!ids.length) return sendJson(res, 400, { error: '請至少選擇一筆案件。' });
+  if (!ids.length) return sendJson(res, 400, { error: 'Please select at least one case.' });
   if (!pagcor.PAGCOR_STAGE_OPTIONS.includes(pagcorStage)) {
-    return sendJson(res, 400, { error: `無效的 PAGCOR Stage: ${pagcorStage}` });
+    return sendJson(res, 400, { error: `Invalid PAGCOR Stage: ${pagcorStage}` });
   }
   let updated = 0;
   const errors = [];
   for (const id of ids) {
     try {
-      const row = await store.update('cases', id, { pagcorStage });
-      if (row) updated++; else errors.push(`${id}: not found`);
+      const existing = await store.find('cases', id);
+      const patch = { pagcorStage };
+      if (existing && existing.pagcorStage !== pagcorStage) patch.pagcorStageChangedAt = new Date().toISOString();
+      const row = await store.update('cases', id, patch);
+      if (row) { updated++; await notifyCaseStageChange(row, existing, user); }
+      else errors.push(`${id}: not found`);
     } catch (err) {
       errors.push(`${id}: ${err.message}`);
     }
@@ -381,7 +663,7 @@ router.get('/api/cases/:id/notes', async (req, res, params) => {
 // permission as the normal "New Case" button — this is a bulk shortcut for
 // the same action, not a separate capability.
 function decodeBase64File(fileContentBase64) {
-  if (!fileContentBase64) throw new Error('請上傳一個檔案。');
+  if (!fileContentBase64) throw new Error('Please upload a file.');
   const base64Data = fileContentBase64.includes(',') ? fileContentBase64.split(',').pop() : fileContentBase64;
   return Buffer.from(base64Data, 'base64');
 }
@@ -625,7 +907,64 @@ router.get('/api/documents/:id/download', async (req, res, params) => {
   res.end(buffer);
 });
 
-// "AI 幫我抓重點" — reads the document's already-stored file straight from
+// Version history for a document — every file it USED to have before being
+// replaced (see POST .../replace-file below). The document row itself
+// always holds the current file (same as before this existed); this list is
+// purely the "older versions" trail, newest-replaced first. Mirrors the
+// existing /api/contracts/:id/versions pattern above.
+router.get('/api/documents/:id/versions', async (req, res, params) => {
+  const user = await requirePerm(req, res, 'documents', 'view');
+  if (!user) return;
+  const versions = (await store.all('documentVersions')).filter((v) => v.documentId === params.id);
+  versions.sort((a, b) => b.versionNo - a.versionNo);
+  sendJson(res, 200, versions);
+});
+
+router.get('/api/documents/:id/versions/:versionId/download', async (req, res, params) => {
+  const user = await requirePerm(req, res, 'documents', 'view');
+  if (!user) return;
+  const version = await store.find('documentVersions', params.versionId);
+  if (!version || version.documentId !== params.id) return sendJson(res, 404, { error: 'Version not found' });
+  const buffer = await storage.readFile(version.filePath);
+  if (!buffer) return sendJson(res, 404, { error: 'File missing in storage' });
+  res.writeHead(200, {
+    'Content-Type': mimeFor(version.fileName || version.filePath),
+    'Content-Disposition': `attachment; filename="${(version.fileName || 'download').replace(/"/g, '')}"`,
+  });
+  res.end(buffer);
+});
+
+// Replace a document's file with a new upload. The file being replaced
+// isn't discarded — it's archived as a numbered entry in documentVersions
+// first (so nothing is ever silently lost), then the document row itself is
+// updated to point at the new file, same as any other edit. A document with
+// no file yet (a metadata-only record) can also use this as its first
+// upload — nothing to archive in that case.
+router.post('/api/documents/:id/replace-file', async (req, res, params, body) => {
+  const user = await requirePerm(req, res, 'documents', 'edit');
+  if (!user) return;
+  const doc = await store.find('documents', params.id);
+  if (!doc) return sendJson(res, 404, { error: 'Document not found' });
+  if (!body || !body.fileContentBase64) return sendJson(res, 400, { error: 'Please choose a file to upload.' });
+  if (doc.filePath) {
+    const existingVersions = (await store.all('documentVersions')).filter((v) => v.documentId === doc.id);
+    await store.insert('documentVersions', {
+      documentId: doc.id,
+      versionNo: existingVersions.length + 1,
+      fileName: doc.fileName || null,
+      filePath: doc.filePath,
+      uploadedBy: doc.uploadedBy || null,
+      replacedBy: user.id,
+    });
+  }
+  const filePath = await storage.saveBase64File(body.fileName, body.fileContentBase64);
+  const updated = await store.update('documents', params.id, {
+    fileName: body.fileName || doc.fileName, filePath, uploadedBy: user.id,
+  });
+  sendJson(res, 200, updated);
+});
+
+// "AI summary" — reads the document's already-stored file straight from
 // Supabase Storage (same bytes /download serves) and asks Gemini for a
 // short summary + key facts. Pure read-only convenience: this never writes
 // anything, and never judges the document as correct/complete/compliant —
@@ -636,7 +975,7 @@ router.post('/api/documents/:id/summarize', async (req, res, params) => {
   if (!user) return;
   const doc = await store.find('documents', params.id);
   if (!doc) return sendJson(res, 404, { error: 'Document not found' });
-  if (!doc.filePath) return sendJson(res, 400, { error: '這筆文件沒有附加檔案，無法產生 AI 摘要。' });
+  if (!doc.filePath) return sendJson(res, 400, { error: 'This document has no attached file, so an AI summary cannot be generated.' });
   const buffer = await storage.readFile(doc.filePath);
   if (!buffer) return sendJson(res, 404, { error: 'File missing in storage' });
   try {
@@ -659,10 +998,167 @@ router.post('/api/documents/:id/summarize', async (req, res, params) => {
   }
 });
 
+// AI cross-document parameter consistency check — for a given case, reads
+// every Document Center file linked to it (via each document's
+// relatedCaseId, set on upload — see public/js/app.js's Document Center
+// fields()) and asks Gemini to flag any key parameter (Game ID, Game
+// Manual version, Min/Max Bet, RTP%, etc.) that's stated differently across
+// them. Lives here rather than under /api/cases because it reads document
+// bytes from Supabase Storage, same as /summarize above. Read-only, and
+// (like summarizeDocument) never judges correctness/compliance — only
+// whether values agree across documents. Requires 'cases' view permission
+// since it's initiated from the case detail page, not the Document Center.
+router.post('/api/cases/:id/check-consistency', async (req, res, params) => {
+  const user = await requirePerm(req, res, 'cases', 'view');
+  if (!user) return;
+  const kase = await store.find('cases', params.id);
+  if (!kase) return sendJson(res, 404, { error: 'Case not found' });
+
+  const allDocs = await store.all('documents');
+  const relatedDocs = allDocs.filter((d) => d.relatedCaseId === params.id && d.filePath);
+  if (relatedDocs.length < 2) {
+    return sendJson(res, 400, {
+      error: 'This case needs at least 2 documents in Document Center with "Related Case" set to it (and a file attached) before an AI parameter consistency check can run.',
+    });
+  }
+
+  try {
+    const documents = [];
+    for (const doc of relatedDocs) {
+      const buffer = await storage.readFile(doc.filePath);
+      if (!buffer) continue; // file record exists but bytes missing in storage — skip rather than fail the whole check
+      const bareMimeType = mimeFor(doc.fileName || doc.filePath).split(';')[0].trim();
+      documents.push({
+        fileName: doc.title || doc.fileName,
+        fileContentBase64: `data:${bareMimeType};base64,${buffer.toString('base64')}`,
+      });
+    }
+    if (documents.length < 2) {
+      return sendJson(res, 404, { error: 'The related documents\' file content could not be found in storage, so they cannot be compared.' });
+    }
+    const result = await ai.checkDocumentConsistency({
+      caseTitle: kase.title,
+      gameTitle: kase.gameTitle,
+      gameId: kase.gameId,
+      documents,
+    });
+    sendJson(res, 200, { ...result, documentsCompared: documents.length });
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
+// Same consistency check as the Case-detail version above, but scoped to
+// whatever documents Document Center's own Provider+Game folder view has
+// on screen (documentIds, passed straight from the client) instead of
+// requiring every document to already have a Related Case set. Not every
+// game folder has a Case behind it yet — this lets Tiffany compare
+// "everything filed under this game" directly from Document Center without
+// first having to create a Case and re-link each file to it.
+router.post('/api/documents/check-consistency', async (req, res, params, body) => {
+  const user = await requirePerm(req, res, 'documents', 'view');
+  if (!user) return;
+  const ids = Array.isArray(body.documentIds) ? body.documentIds : [];
+  if (ids.length < 2) {
+    return sendJson(res, 400, { error: 'At least 2 documents with an attached file are needed before an AI parameter consistency check can run.' });
+  }
+  try {
+    const docRecords = [];
+    for (const id of ids) {
+      const doc = await store.find('documents', id);
+      if (doc && doc.filePath) docRecords.push(doc);
+    }
+    if (docRecords.length < 2) {
+      return sendJson(res, 400, { error: 'At least 2 documents with an attached file are needed before an AI parameter consistency check can run.' });
+    }
+    const documents = [];
+    for (const doc of docRecords) {
+      const buffer = await storage.readFile(doc.filePath);
+      if (!buffer) continue; // file record exists but bytes missing in storage — skip rather than fail the whole check
+      const bareMimeType = mimeFor(doc.fileName || doc.filePath).split(';')[0].trim();
+      documents.push({
+        fileName: doc.title || doc.fileName,
+        fileContentBase64: `data:${bareMimeType};base64,${buffer.toString('base64')}`,
+      });
+    }
+    if (documents.length < 2) {
+      return sendJson(res, 404, { error: 'The documents\' file content could not be found in storage, so they cannot be compared.' });
+    }
+    const result = await ai.checkDocumentConsistency({
+      gameTitle: body.gameTitle,
+      gameId: body.gameId,
+      documents,
+    });
+    sendJson(res, 200, { ...result, documentsCompared: documents.length });
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
 // Tasks -----------------------------------------------------------------
 crudRoutes({
   base: '/api/tasks', moduleName: 'tasks', collection: 'tasks',
   onCreate: async (body, user) => ({ ...body, createdBy: user.id }),
+  afterCreate: async (row, user) => notifyTaskAssignee(row, null, user),
+  afterUpdate: async (row, user, id, existing) => notifyTaskAssignee(row, existing, user),
+});
+
+// Calendar Events ---------------------------------------------------------
+// Freeform items on the Calendar that are neither a Case's Submit Date nor
+// a Task Management to-do — e.g. a meeting, a personal reminder, an office
+// closure. Deliberately NOT run through crudRoutes()/MODULES: there's no
+// "calendar" row in the roles table (same reasoning as canView('calendar')
+// on the frontend — see app.js), so this only requires being logged in to
+// view/create. Visible to everyone, same as every other calendar item, but
+// only the creator (or an Admin) may edit/delete one, enforced below.
+router.get('/api/calendar-events', async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  sendJson(res, 200, await store.all('calendarEvents'));
+});
+
+router.post('/api/calendar-events', async (req, res, params, body) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  if (!body || !String(body.title || '').trim() || !body.date) {
+    return sendJson(res, 400, { error: 'Title and Date are required.' });
+  }
+  const row = await store.insert('calendarEvents', {
+    title: body.title.trim(), date: body.date, note: body.note || '', createdBy: user.id,
+  });
+  sendJson(res, 201, row);
+});
+
+async function requireCalendarEventOwner(req, res, id) {
+  const user = await requireAuth(req, res);
+  if (!user) return null;
+  const existing = await store.find('calendarEvents', id);
+  if (!existing) { sendJson(res, 404, { error: 'Not found' }); return null; }
+  const role = await store.find('roles', user.roleId);
+  if (existing.createdBy !== user.id && !(role && role.name === 'Admin')) {
+    sendJson(res, 403, { error: 'Only the creator (or an Admin) can modify this event.' });
+    return null;
+  }
+  return existing;
+}
+
+router.put('/api/calendar-events/:id', async (req, res, params, body) => {
+  const existing = await requireCalendarEventOwner(req, res, params.id);
+  if (!existing) return;
+  if (!String(body.title || '').trim() || !body.date) {
+    return sendJson(res, 400, { error: 'Title and Date are required.' });
+  }
+  const row = await store.update('calendarEvents', params.id, {
+    title: body.title.trim(), date: body.date, note: body.note || '',
+  });
+  sendJson(res, 200, row);
+});
+
+router.delete('/api/calendar-events/:id', async (req, res, params) => {
+  const existing = await requireCalendarEventOwner(req, res, params.id);
+  if (!existing) return;
+  await store.remove('calendarEvents', params.id);
+  sendJson(res, 200, { ok: true });
 });
 
 // Approvals -------------------------------------------------------------
@@ -680,7 +1176,10 @@ router.post('/api/approvals/:id/decide', async (req, res, params, body) => {
   const comments = [...(approval.comments || [])];
   if (body.comment) comments.push({ by: user.id, text: body.comment, at: new Date().toISOString() });
   const updated = await store.update('approvals', params.id, { status: decision, comments, decidedAt: new Date().toISOString() });
-  await notifyUser(approval.requestedBy, 'approval_decision', `Your request "${approval.title}" was ${decision.toLowerCase()}`, approval.id, 'approval');
+  const settings = await getSystemSettings();
+  if (notificationsEnabled(settings, 'notifyOnApprovalDecision') && approval.requestedBy !== user.id) {
+    await notifyUser(approval.requestedBy, 'approval_decision', `Your request "${approval.title}" was ${decision.toLowerCase()}`, approval.id, 'approval');
+  }
   sendJson(res, 200, updated);
 });
 
@@ -759,5 +1258,44 @@ crudRoutes({ base: '/api/roles', moduleName: 'settings', collection: 'roles' });
 
 // Settings: Departments ------------------------------------------------
 crudRoutes({ base: '/api/departments', moduleName: 'settings', collection: 'departments' });
+
+// Settings: System Settings (Notification / Submission / Required Document
+// Settings tabs) — a single row, see getSystemSettings above. Not run
+// through crudRoutes() since there's no list/create/delete here, just one
+// row to read and edit.
+router.get('/api/settings', async (req, res) => {
+  const user = await requirePerm(req, res, 'settings', 'view');
+  if (!user) return;
+  sendJson(res, 200, await getSystemSettings());
+});
+
+router.put('/api/settings', async (req, res, params, body) => {
+  const user = await requirePerm(req, res, 'settings', 'edit');
+  if (!user) return;
+  await getSystemSettings(); // ensure the row exists before patching it
+  const patch = {};
+  if (body.followUpDays !== undefined) {
+    const days = Number(body.followUpDays);
+    if (!Number.isFinite(days) || days <= 0) return sendJson(res, 400, { error: 'Follow-up window must be a positive number of days.' });
+    patch.followUpDays = days;
+  }
+  if (body.requiredDocumentChecklist !== undefined) {
+    if (!Array.isArray(body.requiredDocumentChecklist) || body.requiredDocumentChecklist.some((i) => !i || !String(i.label || '').trim())) {
+      return sendJson(res, 400, { error: 'Each required document needs a label.' });
+    }
+    patch.requiredDocumentChecklist = body.requiredDocumentChecklist.map((i, idx) => ({
+      key: i.key || `doc${idx}`, label: String(i.label).trim(),
+    }));
+  }
+  if (body.notifications !== undefined) {
+    patch.notifications = {
+      notifyOnApprovalDecision: body.notifications.notifyOnApprovalDecision !== false,
+      notifyOnTaskAssignment: body.notifications.notifyOnTaskAssignment !== false,
+      notifyOnCaseStageChange: body.notifications.notifyOnCaseStageChange !== false,
+    };
+  }
+  const updated = await store.update('settings', 'system', patch);
+  sendJson(res, 200, updated);
+});
 
 module.exports = router;

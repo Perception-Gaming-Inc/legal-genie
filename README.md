@@ -71,13 +71,13 @@ To run on a different port locally: `PORT=8080 node server.js`.
 
 ## What's included
 
-- **Dashboard** – pending tasks, upcoming deadlines (cases/contracts), recent notifications, pending approvals.
+- **Dashboard** – pending tasks, pending approvals (with inline approve/reject, right on the Dashboard), 30-day PAGCOR follow-up reminders, upcoming deadlines (cases/contracts), PAGCOR submission pipeline overview.
 - **Case Management** – create/view/edit/close cases; owner, priority, status, deadline, notes.
 - **Contract Management** – contract records, counterparty, dates, status, and a version history log (with optional file upload per version).
-- **Document Center** – categorized documents (Templates, Policies, Agreements, Certificates, Other) with upload/download, linkable to a case or contract; optional AI-generated summary + key facts per document.
+- **Document Center** – browsed via Provider tabs (全部 + one per Provider) over a game list showing Game Title/Game ID/latest upload date, drilling into each game's own document list (built from each document's own Provider/Game Title/Game ID, no separate data model); categorized (Templates, Policies, Agreements, Certificates, Other) with upload/download, linkable to a case or contract; optional AI-generated summary + key facts per document.
 - **Task Management** – personal and team tasks with status and due dates, linkable to a case/contract.
-- **Approval Center** – submit a request, assign a reviewer, approve/reject with comments; requester is notified of the decision.
-- **Notification Center** – contract expiry, approval decisions, task assignments.
+- **Approval Center** – submit a request, assign a reviewer, approve/reject with comments; requester is notified of the decision. No longer has its own sidebar entry — day-to-day, pending approvals surface right on the Dashboard (see above); the full page (approval history, etc.) is still reachable at `#/approvals`.
+- **Notification Center** – contract expiry, approval decisions, task assignments. Same as Approval Center: no sidebar entry, reachable via the bell icon in the top bar (which also shows an unread-count badge); the full page is still at `#/notifications`.
 - **Settings** – Users, Roles & Permissions (view/create/edit/delete/approve per module), Departments.
 
 Role-based access control is enforced on both the API (server-side, so it
@@ -88,11 +88,20 @@ cannot be bypassed) and the UI (relevant buttons/nav items hidden per role).
 The "New Case" / "New Contract" / "Upload Document"
 forms each have an **"AI 智慧填寫" (AI smart-fill)** panel at the top. Paste
 in free text (an email, a case summary, a contract excerpt, a regulator's
-notice...) and/or upload a file (PDF, image, or plain text), click **"AI 幫我填"**,
-and Gemini reads it and pre-fills the matching fields below — title, type,
-priority, dates, a summary, etc. Nothing is ever submitted automatically:
-the form is just pre-filled, so the person still reviews and edits before
-saving, same as filling it by hand.
+notice...) and/or upload a file (PDF, image, plain text, or **.xlsx Excel**),
+click **"AI 幫我填"**, and Gemini reads it and pre-fills the matching fields
+below — title, type, priority, dates, a summary, etc. Nothing is ever
+submitted automatically: the form is just pre-filled, so the person still
+reviews and edits before saving, same as filling it by hand.
+
+**Excel (.xlsx) uploads** go through the same dependency-free `.xlsx` reader
+already used by Case Management's own Excel-import feature (`server/xlsx-lite.js`
+— hand-rolled because this environment has no npm registry access to
+install a spreadsheet library; see that file's header comment). Since
+Gemini has no native "spreadsheet" input type the way it does for PDF/
+images, the workbook is converted into a flat, tab-separated text table
+first (`xlsxToText()`) and sent the same way pasted-in text is. Legacy
+`.xls` (the older, pre-2007 binary format) isn't supported — only `.xlsx`.
 
 **This is entirely optional.** Every other part of the app works exactly
 the same with or without it configured — if the API key below isn't set,
@@ -212,6 +221,139 @@ background — both would require integrating a real external system
 (mailbox OAuth access, a paid legal/regulatory data feed) that isn't set up
 today. Today, a person always types the request that starts things off.
 
+## Document Center — Provider tabs + game list
+
+Document Center replaced its old flat table with a **Provider tab bar over a
+list of games**, instead of one flat table. This came directly from feedback
+that with hundreds of documents, a flat list stopped being a usable way to
+find "all the paperwork for this one game" — and that switching companies
+should just re-filter the same list rather than jump to a whole new page.
+The grouping is built from fields documents already carry (`provider` /
+`gameTitle` — set on upload, by AI smart-fill, or by the batch upload on a
+Case's own detail page below), so there's no new data model: a document
+with no Provider set falls
+into a "未分類廠商" tab, and one with a Provider but no Game Title falls
+into a "未分類遊戲" row within that Provider, rather than disappearing.
+
+The tab bar reads **全部 (All)** + one tab per Provider that actually has
+documents; clicking a tab filters the game list below it in place — "全部"
+shows every game across every Provider. Each row in that list is one game,
+showing only **Game Title / Game ID / most recent upload date** — everything
+else (Category, Report Type, individual files, who uploaded what) stays
+hidden until you click into that game. Game ID is its own field directly on
+the document (settable on upload, or by AI smart-fill reading the file's
+content) — deliberately not looked up from a matching Case, so it still
+shows even for games with no Case created yet.
+
+Clicking a game row opens that game's document list — Title / File /
+Uploaded By / Uploaded, plus the AI summarize / edit / delete actions.
+Category and Report Type are deliberately **not** shown anywhere in this
+view: Document Center's job here is just filing and finding files, not
+classifying them. Both fields still exist on the upload/edit form and are
+still used elsewhere (e.g. sorting non-PAGCOR documents like NDA templates),
+just not surfaced on this page. Uploading from inside a game's document list
+pre-fills that game's Provider/Game Title/Game ID onto the new document, so
+files naturally land back in the game you uploaded them from. See
+`renderDocuments()` and the module-level `documentsFolderNav` near the top
+of `public/js/app.js`.
+
+## Case detail — batch document upload, auto-filed, auto-compared
+
+Cases are created by hand (the plain "New" button/form, same as ever) —
+an earlier version of this feature let AI read a batch of documents and
+propose the whole Case for confirmation, but that added a second source of
+error (a wrong AI guess on a Case field) for a step that's cheap to just
+type once, so it's been dropped in favor of a plainer split: **you create
+the Case, the system takes over from there once you start uploading its
+documents.**
+
+The **"上傳文件"** button on a Case's own detail page is for the moment
+that case's documents come in — select every file for it at once (RNG
+report, Game Manual, approval notice, whatever's on hand):
+
+1. AI reads each file **individually** and proposes just that file's own
+   Title / Category / Report Type — unlike the old wizard, there's nothing
+   ambiguous left to guess about *which game or provider* a file belongs
+   to, since the Case you're already on answers that; AI's only job here is
+   classifying each file on its own. Every file gets its own editable row
+   (checked by default, individually skippable) so you can fix a wrong
+   guess or drop a file before anything is saved. If AI can't read a
+   particular file, that row just falls back to the filename as the title
+   and a default category — upload still proceeds, you just may want to
+   double-check that row's classification.
+2. Confirming uploads every checked file as a Document Center record
+   already tagged with this Case's Provider / Game Title / Game ID and
+   `relatedCaseId` — so it shows up immediately in the right Document
+   Center tab + game (see below) with no separate filing step — and, once
+   this Case has 2+ documents with files, automatically runs the AI
+   consistency check described next, so Compliant/Not appears right away
+   instead of a second click. The Case detail page also lists every
+   document already linked to it (title, uploader, date, one-click
+   download), so what's on file is visible without a trip to Document
+   Center.
+
+See `showCaseDocumentUploadModal()` and the "已上傳文件" list in
+`renderCaseDetail()`, `public/js/app.js`.
+
+### AI Submission Validation (button label still "AI 參數一致性檢查")
+
+The other half of the same idea: from a case's own detail page (or
+automatically after a batch upload there), Gemini reads every Document
+Center file linked to that case (needs 2+, each with a file attached) and
+runs a **pre-submission validation** covering three things legal actually
+cares about before a PAGCOR submission goes out:
+
+1. **Document Completeness** — does each of the 6 required submission
+   document *types* exist at all: EG Form, Game Parameters, Game Manual,
+   RNG Certification, RTP Verification, Content Provider Certification.
+   Each is reported present or not, with a one-line reason.
+2. **Parameter Validation** — does each of 5 tracked parameters (Game ID,
+   Game Version, Minimum Bet, Maximum Bet, RTP) have a value stated
+   *anywhere* among the documents. This is a presence check only.
+3. **Document Consistency** — for those same 5 parameters, do the
+   documents that state a value actually agree. Every document that
+   mentions the parameter is listed individually (`values: [{source,
+   value}]`) so it's clear exactly which document said what, then marked
+   **match** / **mismatch** / **missing**.
+
+The overall **🟢 Ready for Submission / 🔴 Not Ready for Submission**
+banner is computed in `server/ai.js` from those three arrays — not trusted
+as an AI-authored boolean — so it always follows the same fixed rule: every
+required document type present, every tracked parameter has a value
+somewhere, and no parameter disagrees across documents.
+
+Same "report, don't judge" boundary as AI document summary above: none of
+this ever says which value is "right" or whether the bundle is legally
+compliant — only what's present/missing and where documents disagree. A
+real mismatch or gap still needs a human to resolve it. Minimum Bet /
+Maximum Bet / RTP are deliberately **not** persisted as real Case fields
+(Tiffany's team doesn't track them there) — they only appear in this
+validation result, read fresh from the documents each time. See
+`REQUIRED_DOCUMENT_TYPES`, `CHECKED_PARAMETERS`, `SUBMISSION_VALIDATION_SCHEMA`,
+and `checkDocumentConsistency()` in `server/ai.js`, `POST /api/cases/:id/check-consistency`
+in `server/routes.js`, and `showConsistencyResultModal()` in `public/js/app.js`
+(shared by the case detail page's button, its batch upload's auto-run, and
+the Document Center folder button below) — the modal itself is titled "AI
+Submission Validation"; only its content changed, the surrounding page
+layout (Case detail, Document Center) is unchanged.
+
+**Also runs straight from a Document Center game folder, with no Case
+required.** Not every game folder has a Case behind it yet — documents
+filed directly through Document Center's own "New" button never gain a
+Related Case unless someone sets one by hand. Requiring a Case first would
+mean the one folder Tiffany's actually looking at (with 2+ files sitting
+right there) couldn't be compared until she went and created one. Instead,
+opening a game's document list shows the same "AI 參數一致性檢查" button
+whenever that folder has 2+ files, running the identical validation against
+exactly those documents (picked by ID, not by any Related Case link). See
+`POST /api/documents/check-consistency` in `server/routes.js` (same
+`ai.checkDocumentConsistency()` under the hood, just fed `documentIds`
+straight from the folder instead of a Case's linked documents) and the
+`#btnCheckFolderConsistency` handler in `renderDocuments()`,
+`public/js/app.js`.
+
+Shares the same `GEMINI_API_KEY` setup as AI smart-fill above.
+
 ## PAGCOR game-submission features
 
 A set of small, additive features for the specific workflow of helping
@@ -237,6 +379,21 @@ Center, and the AI Assistant/AI smart-fill you already have.
    Model Report / RNG Test Report / Game Rules & Paytable / Submission
    Letter / LOA / Other) straight from the uploaded file or pasted text — see
    the `documents` entry in `server/ai.js`'s `MODULE_SCHEMAS`.
+
+   **Multi-game bundle files.** Some uploads (most commonly a combined
+   front-end testing screenshot report) genuinely cover several different
+   games in one file, each with its own mini result table — there's no
+   single correct `provider`/`gameTitle`/`gameId` to fill in for those. When
+   the AI recognizes this (via the schema's optional `detectedGames` array —
+   only populated when 2+ distinct games are actually found, see
+   `toGeminiResponseSchema()`'s new array/items support in `server/ai.js`),
+   the Upload Document form shows a checklist of every detected game instead
+   of guessing one; whichever games are checked at Upload time each become
+   their own document record (same uploaded file content in every one, just
+   different provider/gameTitle/gameId), so the same file shows up filed
+   under every relevant Document Center game folder rather than only one.
+   See the `detectedGames`-handling block in `showFormModal()`,
+   `public/js/app.js`.
 3. **LOA expiry/renewal tracking.** Set a case's `loaExpiryDate` once its LOA
    is approved, and it shows up in the Dashboard's "Upcoming Deadlines"
    widget (labeled "LOA Expiry") the same way case deadlines and contract
@@ -290,7 +447,7 @@ Center, and the AI Assistant/AI smart-fill you already have.
    per-case Edit button — see `POST /api/cases/bulk-update-stage` in
    `server/routes.js`.
 10. **Sortable Case Management columns.** Click any column header (Case #,
-    Title, Type, Provider, PAGCOR Stage, Owner, Priority, Status, Deadline)
+    Title, Type, Provider, PAGCOR Stage, Owner, Priority, Status, Submit Date)
     to sort by it; click again to reverse. PAGCOR Stage sorts by pipeline
     order (Not Started → ... → Rejected), not alphabetically, and Priority
     sorts High → Medium → Low — see `sortValue()`/`sortComparator()` in
@@ -346,6 +503,42 @@ Center, and the AI Assistant/AI smart-fill you already have.
     see `renderCaseDetail()`, the `cases`-with-id branch in `route()`, and
     the `tr[data-id]` click handler in `attachRowHandlers()`, all in
     `public/js/app.js`.
+14. **30-day PAGCOR follow-up reminder.** A game that's been sitting in
+    "Submitted to PAGCOR" or "Under PAGCOR Review" for 30+ days with no
+    Stage change is easy to lose track of once it's buried in a spreadsheet
+    — this surfaces it right on the Dashboard instead, as both a stat card
+    ("PAGCOR Follow-ups Due") and a list of the specific games affected,
+    each linking straight to that case. The clock resets whenever the
+    Stage actually changes (via the stepper, the Edit form, or a batch
+    update) — see `pagcorStageChangedAt` in `server/routes.js`'s cases
+    `onCreate`/`onUpdate` and `/api/dashboard/summary`'s `followUps`, and
+    `followUpsWidgetHtml()` in `public/js/app.js`.
+15. **AI Submission Validation (optional) + batch document upload.**
+    On a PAGCOR case's detail page, "AI 參數一致性檢查" opens the "AI
+    Submission Validation" modal: Document Completeness (are the 6 required
+    submission document types present), Parameter Validation (does Game ID
+    / Game Version / Minimum Bet / Maximum Bet / RTP have a value anywhere),
+    and Document Consistency (do the documents that state a value agree,
+    shown per source document) across that case's related documents, with
+    an overall Ready/Not Ready for Submission banner; the "上傳文件" button
+    on that same page runs this automatically right after a batch upload
+    once the case has 2+ documents on file. See the dedicated "Case detail
+    — batch document upload, auto-filed, auto-compared" section and the "AI
+    Submission Validation" section above for the full writeup.
+16. **LOA-approval notification draft.** Once a case's PAGCOR Stage is "LOA
+    Approved," a "核准通知草稿" button on its detail page assembles a
+    ready-to-copy message (game title, Game ID, Provider, approval date,
+    LOA expiry) from that case's own fields, with a one-click "複製文字"
+    button. This does **not** send anything anywhere — it only prepares
+    text for you to paste into Telegram (or wherever) and send yourself,
+    same as every other "draft, don't send" feature in this app. See
+    `loaNotificationDraftText()` and the `#btnLoaNotice` handler in
+    `renderCaseDetail()`, `public/js/app.js`.
+17. **Document Center Provider tabs + game list.** Document Center is
+    organized as Provider tabs filtering a game list (Game Title/Game
+    ID/latest upload date), drilling into each game's own document list —
+    instead of one flat table. See the dedicated "Document Center — Provider
+    tabs + game list" section above for the full writeup.
 
 Demo data for the first six is included in `server/seed.js` (two PAGCOR-flavored
 cases — one mid-submission, one with an approaching LOA expiry — plus two
@@ -391,6 +584,39 @@ this was built). The actual column-mapping/normalization logic lives in
 `server/import.js`; the two endpoints are `POST /api/cases/import/preview`
 and `POST /api/cases/import/commit` in `server/routes.js`, both gated behind
 the same "cases: create" permission the normal "New Case" button uses.
+
+## Calendar
+
+A month-grid Calendar page (sidebar, styled after the iOS/Google Calendar
+apps) that plots four kinds of events together, each with its own color:
+
+- **Submit Date (繳交日期)** — every open Case's `deadline` field (red).
+  Read-only here — Submit Dates are only ever set in Case Management.
+- **Task Management due dates** — including the auto-generated "追進度"
+  follow-up task `syncDeadlineFollowUpTask()` in `server/routes.js` keeps in
+  sync 30 days after each Case's Submit Date (amber), and everything else
+  in Task Management (blue). See that function's comment for exactly how
+  the follow-up task is created/resynced/cleaned up as a Case's Submit Date
+  changes. Also read-only here — Tasks are only ever created in Task
+  Management.
+- **行程 (calendar events)** (purple) — freeform items that are neither a
+  Case nor a Task, e.g. a meeting or a personal reminder. These ARE created
+  directly from the Calendar page's own "+ 新增行程" button, backed by their
+  own `/api/calendar-events` collection (`server/routes.js`) rather than
+  `cases`/`tasks`. Visible to everyone, but only the creator (or an Admin)
+  gets the inline edit/delete icons on one.
+- **Philippine public holidays** (green; the one special *working* day,
+  EDSA anniversary, is shown in neutral gray instead, since it's not a day
+  off) — hardcoded in `public/js/app.js`'s `PH_HOLIDAYS_2026`, sourced from
+  Malacañang's official 2026 holiday proclamation plus the separate Eid'l
+  Fitr / Eid'l Adha proclamations (those follow the Islamic calendar and
+  are announced closer to the date each year). This list is year-specific —
+  add a matching `PH_HOLIDAYS_<year>` array (and register it in
+  `PH_HOLIDAYS_BY_YEAR`) for any other year the page gets browsed into.
+
+Above the big grid: a "近 7 天待辦事項" panel (always the next 7 days,
+regardless of what's selected in the grid) and a single selected day's
+agenda (defaults to today; clicking a grid cell switches it to that day).
 
 ## Architecture
 

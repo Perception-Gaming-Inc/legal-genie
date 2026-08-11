@@ -25,6 +25,11 @@ const ICON_PATHS = {
   x: '<line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/>',
   scale: '<path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7l-3 6a3 3 0 0 0 6 0Z"/><path d="M19 7l-3 6a3 3 0 0 0 6 0Z"/>',
   sparkle: '<path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/>',
+  calendar: '<rect x="3" y="4.5" width="18" height="16.5" rx="2.2"/><line x1="16" y1="2.5" x2="16" y2="6.5"/><line x1="8" y1="2.5" x2="8" y2="6.5"/><line x1="3" y1="9.5" x2="21" y2="9.5"/>',
+  chevronLeft: '<polyline points="15 18 9 12 15 6"/>',
+  chevronRight: '<polyline points="9 18 15 12 9 6"/>',
+  eye: '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 9 8 9"/><polyline points="12 7 12 12 16 14"/>',
 };
 function Icon(name, cls) {
   const d = ICON_PATHS[name] || '';
@@ -64,20 +69,156 @@ const Api = {
   del(p) { return this.req('DELETE', p); },
 };
 
+// A plain <a href="/api/...">, which browsers navigate to directly, never
+// carries the app's Authorization header (that's only ever attached by
+// Api.req's own fetch() calls) — every protected download route responds
+// "Not authenticated" to a bare link click. This does the same
+// fetch-with-header dance as Api.req, but for a binary response: fetches
+// the file as a Blob with the token attached, then triggers the save via a
+// throwaway object URL (same trick exportCasesCsv already uses for its
+// client-built CSV, just fed a server response instead of a local Blob).
+async function downloadAuthedFile(url, fileName) {
+  const headers = {};
+  if (Api.token) headers['Authorization'] = `Bearer ${Api.token}`;
+  let resp;
+  try {
+    resp = await fetch(url, { headers });
+  } catch (err) {
+    toast('Download failed: ' + err.message, 'danger');
+    return;
+  }
+  if (resp.status === 401) {
+    Api.setToken(null);
+    State.user = null;
+    renderLogin('Your session expired. Please log in again.');
+    return;
+  }
+  if (!resp.ok) {
+    let message = `Download failed (${resp.status})`;
+    try { const data = await resp.json(); if (data && data.error) message = data.error; } catch (e) { /* non-JSON error body */ }
+    toast(message, 'danger');
+    return;
+  }
+  const blob = await resp.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = fileName || 'download';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(blobUrl);
+}
+
+// Same authenticated fetch-as-Blob trick as downloadAuthedFile above, but
+// opens the result in a new tab instead of forcing a save — a Blob's own
+// `type` (taken from the response's real Content-Type) is what the browser
+// uses to decide whether to render it inline (PDF/image) or fall back to a
+// download prompt for anything it can't display; the server's
+// Content-Disposition: attachment header on /download only affects a direct
+// navigation, not a Blob built from a fetch() response, so no separate
+// "preview" backend route is needed. The tab is opened synchronously (before
+// the await) so browsers don't treat it as an unrequested popup — its
+// location is only pointed at the real blob URL once the fetch resolves.
+async function previewAuthedFile(url) {
+  const win = window.open('', '_blank');
+  const headers = {};
+  if (Api.token) headers['Authorization'] = `Bearer ${Api.token}`;
+  let resp;
+  try {
+    resp = await fetch(url, { headers });
+  } catch (err) {
+    if (win) win.close();
+    toast('Preview failed: ' + err.message, 'danger');
+    return;
+  }
+  if (resp.status === 401) {
+    if (win) win.close();
+    Api.setToken(null);
+    State.user = null;
+    renderLogin('Your session expired. Please log in again.');
+    return;
+  }
+  if (!resp.ok) {
+    if (win) win.close();
+    let message = `Preview failed (${resp.status})`;
+    try { const data = await resp.json(); if (data && data.error) message = data.error; } catch (e) { /* non-JSON error body */ }
+    toast(message, 'danger');
+    return;
+  }
+  if (!win) {
+    toast('Please allow pop-ups for this site to preview files.', 'warning');
+    return;
+  }
+  const blob = await resp.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  win.location = blobUrl;
+}
+
 // ---------------------------------------------------------------------------
 // Global state
 // ---------------------------------------------------------------------------
 const State = { user: null, role: null, lookups: null, assistant: { turns: [] } };
 
+// Document Center folder-browser position (Provider -> Game -> Documents —
+// see renderDocuments()). Deliberately module-level (not local to
+// renderDocuments) so it survives the re-render a delete/edit/upload
+// triggers via route() — otherwise deleting one file from inside a game's
+// folder would bounce you all the way back out to the provider list.
+// UNCATEGORIZED_* are display-only sentinel labels for documents missing a
+// provider/gameTitle; they're never written back as real field values.
+const UNCATEGORIZED_PROVIDER = 'Uncategorized Provider';
+const UNCATEGORIZED_GAME = 'Uncategorized Game';
+let documentsFolderNav = { provider: null, gameTitle: null };
+
+// Task Management's status stat tiles (see renderTasks) act as a toggleable
+// filter over the table below them — module-level for the same reason as
+// documentsFolderNav above: it needs to survive the re-render a create/
+// edit/delete triggers via route(), so filtering by "Overdue" and then
+// editing one of those tasks doesn't silently reset back to showing
+// everything.
+let taskStatusFilter = null; // null = show all; else 'Not Started' | 'In Progress' | 'Completed' | 'Overdue'
+
+// Some Providers show only a short in-game watermark on their own screens
+// rather than their full company name — confirmed directly by Tiffany:
+// "OP" is Omniplay's own watermark, not a separate company. AI-extracted
+// documents can end up tagged with either form depending on what a given
+// file actually shows, so Document Center groups/displays these under the
+// SAME provider tab rather than fracturing into two — same idea as the
+// case/whitespace-insensitive grouping in renderDocuments() below, just for
+// an abbreviation instead of a casing difference. Unlike that casing case
+// (where whichever exact spelling appeared most often wins the display
+// label), an aliased provider always displays under its full name, since
+// the short form is just a watermark, never really "a name" on its own.
+// Add more entries here as they turn up in real testing.
+const PROVIDER_NAME_ALIASES = { op: 'Omniplay' };
+
+// Calendar page (renderCalendar()) — which month is currently shown, and
+// which single day the "Daily Agenda" panel beneath the grid is showing.
+// Module-level (not local to renderCalendar) for the same reason as
+// documentsFolderNav above: survives re-renders (e.g. after "Today") without
+// losing the user's place. Both start null and are lazily set to the real
+// current date on first render, since "today" can't be computed at module
+// load time in every environment this file might be evaluated in.
+let calendarNav = { year: null, month: null };
+let calendarSelectedDate = null;
+
+// "Approval Center" and "Notifications" deliberately have no entry here —
+// they're still real, fully working pages (routes untouched below), just
+// not permanent sidebar items anymore. Notifications is already one click
+// away via the bell icon in the topbar (see renderShell); Approval Center
+// now has its pending items surfaced directly as a Dashboard widget (see
+// renderDashboard), with a link out to the full page for anyone who wants
+// it. Removed to cut sidebar clutter — most days neither needs its own
+// permanent slot in the nav.
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { key: 'assistant', label: 'AI Assistant', icon: 'sparkle' },
+  { key: 'calendar', label: 'Calendar', icon: 'calendar' },
   { key: 'cases', label: 'Case Management', icon: 'briefcase' },
   { key: 'contracts', label: 'Contract Management', icon: 'file' },
   { key: 'documents', label: 'Document Center', icon: 'folder' },
   { key: 'tasks', label: 'Task Management', icon: 'checklist' },
-  { key: 'approvals', label: 'Approval Center', icon: 'checkSquare' },
-  { key: 'notifications', label: 'Notifications', icon: 'bell' },
   { key: 'settings', label: 'Settings', icon: 'gear' },
 ];
 
@@ -126,7 +267,7 @@ function pagcorStageStepperHtml(stage, canEdit) {
         const connector = i > 0 ? `<div class="pagcor-step-connector ${i <= idx ? 'done' : ''}"></div>` : '';
         const clickable = canEdit && i !== idx;
         return `${connector}
-        <div class="pagcor-step pagcor-step-${state}${clickable ? ' pagcor-step-clickable' : ''}" ${clickable ? `data-stage="${escapeHtml(s)}"` : ''} title="${clickable ? `點擊設為「${escapeHtml(s)}」` : escapeHtml(s)}">
+        <div class="pagcor-step pagcor-step-${state}${clickable ? ' pagcor-step-clickable' : ''}" ${clickable ? `data-stage="${escapeHtml(s)}"` : ''} title="${clickable ? `Click to set to "${escapeHtml(s)}"` : escapeHtml(s)}"
           <div class="pagcor-step-dot">${state === 'done' ? Icon('check') : (i + 1)}</div>
           <div class="pagcor-step-label">${escapeHtml(s)}</div>
         </div>`;
@@ -153,6 +294,13 @@ function canView(moduleKey) {
   // permission-checked server-side against the real module, same as the
   // normal forms — this bypass only affects whether the nav link shows up.
   if (moduleKey === 'assistant') return true;
+  // Same reasoning as 'assistant' above — the Calendar page has no data of
+  // its own, it just reads Case deadlines and Task due dates, each of which
+  // is already permission-checked at its own /api/cases and /api/tasks
+  // fetch (renderCalendar only requests either list when canView('cases')/
+  // canView('tasks') is true, so a viewer without Case access simply never
+  // sees deadlines on the calendar, without needing its own roles-table row).
+  if (moduleKey === 'calendar') return true;
   if (!State.role) return false;
   if (State.role.name === 'Admin') return true;
   const p = (State.role.permissions || {})[moduleKey];
@@ -255,17 +403,29 @@ function fileToBase64(file) {
   });
 }
 
-function aiAssistHtml() {
+// `reuseFileField` is the name of this form's own real file-upload field
+// (e.g. Document Center's `fileName`), if it has one. When it does, AI
+// smart-fill reads whatever file is already selected there instead of
+// showing a second, separate file picker of its own — previously this box
+// always had its own independent "Choose File" input, which was easy to
+// confuse with the real attachment field further down the same form (a
+// user could pick a file here, see the AI read it, and still have nothing
+// actually attached to the record). Forms with no file field of their own
+// (cases, contracts) keep the standalone picker, since there's nothing to
+// reuse there.
+function aiAssistHtml(reuseFileField) {
   return `
     <div class="ai-assist border rounded p-3 mb-3 bg-light">
       <div class="d-flex align-items-center justify-content-between mb-2">
-        <strong class="d-flex align-items-center gap-1">${sparkleMark()} AI 智慧填寫</strong>
-        <span class="small text-secondary">選填 — 可貼文字，也可上傳檔案</span>
+        <strong class="d-flex align-items-center gap-1">${sparkleMark()} AI Smart-Fill</strong>
+        <span class="small text-secondary">Optional — paste text${reuseFileField ? '' : ', or upload a file'}</span>
       </div>
-      <textarea class="form-control form-control-sm mb-2" id="aiAssistText" rows="3" placeholder="貼上 email、案件說明、合約內容…（選填）"></textarea>
+      <textarea class="form-control form-control-sm mb-2" id="aiAssistText" rows="3" placeholder="Paste an email, case description, contract excerpt… (optional)"></textarea>
       <div class="d-flex align-items-center gap-2">
-        <input type="file" class="form-control form-control-sm" id="aiAssistFile" accept=".pdf,image/*,.txt">
-        <button type="button" class="btn btn-sm btn-outline-primary text-nowrap" id="aiAssistBtn">AI 幫我填</button>
+        ${reuseFileField
+          ? `<span class="small text-secondary">Will automatically read the file selected in "File Upload" below</span>`
+          : `<input type="file" class="form-control form-control-sm" id="aiAssistFile" accept=".pdf,image/*,.txt">`}
+        <button type="button" class="btn btn-sm btn-outline-primary text-nowrap ms-auto" id="aiAssistBtn">AI Smart-Fill</button>
       </div>
       <div id="aiAssistMsg" class="small mt-2"></div>
     </div>`;
@@ -279,6 +439,23 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
   modalEl.id = modalId;
   modalEl.className = 'modal fade';
   modalEl.tabIndex = -1;
+
+  // Progressive disclosure: a field with `section: 'x'` starts hidden and
+  // is only shown once the field with `controlsSection: 'x'` (a checkbox,
+  // rendered as its own toggle row rather than the usual label+input) is
+  // checked. Lets a form default to just its common fields and only show
+  // the rarer/specialized ones (e.g. PAGCOR game details on a case that
+  // isn't a PAGCOR submission) once asked for — see caseFormFields()/
+  // documents' fields() for the sections this is actually used on. A
+  // section starts pre-expanded when editing a record that already has
+  // data in it, so existing values are never hidden from view.
+  const sectionsToExpand = new Set(
+    fields.filter((f) => f.section && initial[f.name] !== undefined && initial[f.name] !== null && initial[f.name] !== '')
+      .map((f) => f.section)
+  );
+  // This form's own real file-upload field, if it has one — see aiAssistHtml().
+  const reuseFileField = fields.find((f) => f.type === 'file');
+
   modalEl.innerHTML = `
     <div class="modal-dialog">
       <div class="modal-content">
@@ -288,12 +465,24 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
         </div>
         <form id="modalForm">
           <div class="modal-body">
-            ${aiAssist ? aiAssistHtml() : ''}
-            ${fields.map((f) => `
-              <div class="mb-3">
+            ${aiAssist ? aiAssistHtml(reuseFileField ? reuseFileField.name : null) : ''}
+            ${aiAssist ? '<div id="multiGameFillBlock"></div>' : ''}
+            ${fields.map((f) => {
+              if (f.controlsSection) {
+                const checked = sectionsToExpand.has(f.controlsSection);
+                return `
+                  <div class="form-check mb-3">
+                    <input type="checkbox" class="form-check-input" id="toggle_${f.name}" name="${f.name}" ${checked ? 'checked' : ''}>
+                    <label class="form-check-label" for="toggle_${f.name}">${escapeHtml(f.label)}</label>
+                  </div>`;
+              }
+              const hidden = f.section && !sectionsToExpand.has(f.section);
+              return `
+              <div class="mb-3" ${f.section ? `data-section="${escapeHtml(f.section)}"` : ''} style="${hidden ? 'display:none' : ''}">
                 <label class="form-label">${escapeHtml(f.label)}</label>
                 ${fieldInputHtml(f, initial[f.name])}
-              </div>`).join('')}
+              </div>`;
+            }).join('')}
             <div id="modalError" class="text-danger small"></div>
           </div>
           <div class="modal-footer">
@@ -307,45 +496,156 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
   const modal = new bootstrap.Modal(modalEl);
   modal.show();
 
-  if (aiAssist) {
-    modalEl.querySelector('#aiAssistBtn').addEventListener('click', async () => {
-      const btn = modalEl.querySelector('#aiAssistBtn');
-      const msgEl = modalEl.querySelector('#aiAssistMsg');
-      const textVal = modalEl.querySelector('#aiAssistText').value;
-      const fileEl = modalEl.querySelector('#aiAssistFile');
-      const payload = { text: textVal };
-      if (fileEl.files && fileEl.files[0]) {
-        payload.fileName = fileEl.files[0].name;
-        payload.fileContentBase64 = await fileToBase64(fileEl.files[0]);
+  // Shows/hides a section's fields, and keeps its toggle checkbox in sync
+  // with that (needed for the AI-fill path below, which expands a section
+  // programmatically rather than via the user clicking the checkbox).
+  const setSectionExpanded = (section, expanded) => {
+    modalEl.querySelectorAll(`[data-section="${section}"]`).forEach((el) => { el.style.display = expanded ? '' : 'none'; });
+    const controllerField = fields.find((f) => f.controlsSection === section);
+    if (controllerField) {
+      const toggleEl = modalEl.querySelector(`#toggle_${controllerField.name}`);
+      if (toggleEl) toggleEl.checked = expanded;
+    }
+  };
+  fields.filter((f) => f.controlsSection).forEach((f) => {
+    const toggleEl = modalEl.querySelector(`#toggle_${f.name}`);
+    if (!toggleEl) return;
+    toggleEl.addEventListener('change', () => setSectionExpanded(f.controlsSection, toggleEl.checked));
+  });
+
+  // Set by runAiAssist below when the AI decides one uploaded file actually
+  // covers 2+ distinct games at once (see server/ai.js's `detectedGames` on
+  // the documents module schema) — read again by the submit handler further
+  // down to decide whether to create one document per checked game instead
+  // of the usual single record. Stays null for every other form (cases,
+  // contracts, ...) since only the documents schema ever returns this.
+  let detectedGames = null;
+
+  // Shared by both the "AI Smart-Fill" button (manual) and the file picker's
+  // own change handler below (automatic — see reuseFileField block).
+  // `auto` just changes the "reading…" message shown while it's running;
+  // an auto-run failing (e.g. no GEMINI_API_KEY configured) is expected to
+  // happen silently often enough that it shouldn't feel like an error the
+  // way a manual click's failure should.
+  const runAiAssist = async (auto) => {
+    const btn = modalEl.querySelector('#aiAssistBtn');
+    const msgEl = modalEl.querySelector('#aiAssistMsg');
+    const textEl = modalEl.querySelector('#aiAssistText');
+    const textVal = textEl ? textEl.value : '';
+    // Reuse the form's own real file field if this form has one (see
+    // aiAssistHtml's reuseFileField param) — otherwise fall back to the
+    // AI box's own standalone file picker.
+    const fileEl = reuseFileField
+      ? modalEl.querySelector('#modalForm').elements[reuseFileField.name]
+      : modalEl.querySelector('#aiAssistFile');
+    const payload = { text: textVal };
+    if (fileEl && fileEl.files && fileEl.files[0]) {
+      payload.fileName = fileEl.files[0].name;
+      payload.fileContentBase64 = await fileToBase64(fileEl.files[0]);
+    }
+    if (btn) btn.disabled = true;
+    const originalLabel = btn ? btn.textContent : null;
+    if (btn) btn.textContent = 'Processing…';
+    if (msgEl) { msgEl.className = 'small mt-2 text-secondary'; msgEl.textContent = auto ? 'AI reading file…' : ''; }
+    try {
+      const { fields: extracted } = await Api.post(`/api/ai/extract/${aiAssist.module}`, payload);
+      const form = modalEl.querySelector('#modalForm');
+      let filledCount = 0;
+      for (const f of fields) {
+        if (f.controlsSection || extracted[f.name] === undefined || extracted[f.name] === null || extracted[f.name] === '') continue;
+        const el = form.elements[f.name];
+        if (!el) continue;
+        el.value = extracted[f.name];
+        filledCount++;
+        // AI just filled a field that lives in a collapsed section (e.g.
+        // it recognized this as a PAGCOR game document and filled
+        // `provider`) — expand that section so the filled value is
+        // actually visible, instead of silently populating a hidden field.
+        if (f.section) setSectionExpanded(f.section, true);
       }
-      btn.disabled = true;
-      const originalLabel = btn.textContent;
-      btn.textContent = '處理中…';
-      msgEl.className = 'small mt-2 text-secondary';
-      msgEl.textContent = '';
-      try {
-        const { fields: extracted } = await Api.post(`/api/ai/extract/${aiAssist.module}`, payload);
-        const form = modalEl.querySelector('#modalForm');
-        let filledCount = 0;
-        for (const f of fields) {
-          if (extracted[f.name] === undefined || extracted[f.name] === null || extracted[f.name] === '') continue;
-          const el = form.elements[f.name];
-          if (!el) continue;
-          el.value = extracted[f.name];
-          filledCount++;
+      // Multi-game bundle detection (Document Center only — see
+      // MODULE_SCHEMAS.documents' `detectedGames` in server/ai.js): when one
+      // uploaded file actually covers several different games at once (e.g.
+      // a combined front-end testing screenshot report), there's no single
+      // correct provider/gameTitle/gameId to fill in above. Show a
+      // checklist instead so the user picks which game folders this same
+      // file should be filed into — the submit handler further down reads
+      // the checked boxes and creates one document per selected game.
+      const multiBlock = modalEl.querySelector('#multiGameFillBlock');
+      if (multiBlock) {
+        if (Array.isArray(extracted.detectedGames) && extracted.detectedGames.length > 1) {
+          detectedGames = extracted.detectedGames;
+          multiBlock.innerHTML = `
+            <div class="border rounded p-3 mb-3 bg-light">
+              <div class="fw-semibold mb-2">${sparkleMark()} This document looks like it covers ${detectedGames.length} different games — check which ones to file it under:</div>
+              ${detectedGames.map((g, i) => `
+                <div class="form-check">
+                  <input type="checkbox" class="form-check-input" id="multiGame_${i}" data-idx="${i}" checked>
+                  <label class="form-check-label" for="multiGame_${i}">${escapeHtml(g.gameTitle || '(Unnamed game)')}${g.provider ? ` — ${escapeHtml(g.provider)}` : ''}${g.gameId ? ` (Game ID: ${escapeHtml(g.gameId)})` : ''}</label>
+                </div>`).join('')}
+              <div class="small text-secondary mt-2">Each checked game will get its own document record (same file content); unchecked games will not be filed.</div>
+            </div>`;
+          if (fields.some((f) => f.section === 'pagcor')) setSectionExpanded('pagcor', true);
+        } else {
+          detectedGames = null;
+          multiBlock.innerHTML = '';
         }
-        msgEl.className = 'small mt-2 text-success';
-        msgEl.textContent = filledCount > 0
-          ? `已由 AI 自動填入 ${filledCount} 個欄位，請檢查無誤後再送出。`
-          : 'AI 沒有從這份內容抓到可以填入的欄位，請確認貼上的內容或改用貼上文字/上傳檔案。';
-      } catch (err) {
-        msgEl.className = 'small mt-2 text-danger';
-        msgEl.textContent = err.message;
-      } finally {
-        btn.disabled = false;
-        btn.textContent = originalLabel;
       }
-    });
+      if (msgEl) {
+        msgEl.className = 'small mt-2 text-success';
+        msgEl.textContent = detectedGames
+          ? `AI detected ${detectedGames.length} games in this document — check which ones to file it under above.`
+          : filledCount > 0
+            ? `AI auto-filled ${filledCount} field(s) — please check them before submitting.`
+            : 'AI could not find any fields to fill from this content. Please check the pasted content, or try pasting text/uploading a file instead.';
+      }
+    } catch (err) {
+      // An auto-run that fails because there's simply no file/text yet, or
+      // no GEMINI_API_KEY configured, shouldn't read as a scary error the
+      // moment someone picks a file — it just quietly clears the "reading…"
+      // status back out (fields are still fine to fill in by hand). A
+      // manual button click still surfaces the real error message.
+      if (msgEl) {
+        if (auto) { msgEl.className = 'small mt-2'; msgEl.textContent = ''; }
+        else { msgEl.className = 'small mt-2 text-danger'; msgEl.textContent = err.message; }
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
+    }
+  };
+
+  if (aiAssist) {
+    modalEl.querySelector('#aiAssistBtn').addEventListener('click', () => runAiAssist(false));
+  }
+
+  // Title is a required field on every form that has one (so every record
+  // has a real searchable label), but a form with its own file field
+  // shouldn't force typing a title just to name-copy the file you're
+  // already uploading — picking a file fills Title from the filename
+  // (extension stripped) as an instant fallback while AI (below) may
+  // overwrite it with something better once it's read the actual content.
+  if (reuseFileField) {
+    const fileInputEl = modalEl.querySelector('#modalForm').elements[reuseFileField.name];
+    const hasTitleField = fields.some((f) => f.name === 'title');
+    if (fileInputEl) {
+      fileInputEl.addEventListener('change', () => {
+        if (hasTitleField) {
+          const titleEl = modalEl.querySelector('#modalForm').elements['title'];
+          if (titleEl && !titleEl.value.trim() && fileInputEl.files && fileInputEl.files[0]) {
+            titleEl.value = fileInputEl.files[0].name.replace(/\.[^./\\]+$/, '');
+          }
+        }
+        // Auto-run AI extraction the moment a file is picked, instead of
+        // requiring a separate "AI Smart-Fill" click — this is the actual fix
+        // for the repeated report that Provider/Game Title (and other
+        // PAGCOR fields) were coming out blank: they were never wrong, AI
+        // just never got asked because clicking the button is an easy step
+        // to forget. Still fully editable/overridable afterward, and the
+        // button stays for re-running by hand (e.g. after pasting extra
+        // context text).
+        if (aiAssist && fileInputEl.files && fileInputEl.files[0]) runAiAssist(true);
+      });
+    }
   }
 
   modalEl.querySelector('#modalForm').addEventListener('submit', async (e) => {
@@ -353,6 +653,7 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
     const form = e.target;
     const data = {};
     for (const f of fields) {
+      if (f.controlsSection) continue; // UI-only section toggle, not a real record field
       const el = form.elements[f.name];
       if (!el) continue;
       if (f.type === 'checkbox') data[f.name] = el.checked;
@@ -364,8 +665,28 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
       } else if (f.type === 'number') data[f.name] = el.value === '' ? null : Number(el.value);
       else data[f.name] = el.value;
     }
+    // Multi-game bundle: if a checklist is showing (see runAiAssist above)
+    // and at least one game is checked, this one uploaded file becomes N
+    // separate document records — one per checked game, each reusing the
+    // same fileContentBase64/title/category/etc, only provider/gameTitle/
+    // gameId swapped in per game — instead of the usual single record. If
+    // every box got unchecked, fall through to the normal single-record
+    // path below using whatever's in the provider/gameTitle/gameId fields.
+    const checkedGames = detectedGames
+      ? Array.from(modalEl.querySelectorAll('#multiGameFillBlock input[type=checkbox]:checked'))
+          .map((cb) => detectedGames[Number(cb.dataset.idx)])
+      : [];
     try {
-      await onSubmit(data);
+      if (checkedGames.length > 0) {
+        await Promise.all(checkedGames.map((g) => onSubmit({
+          ...data,
+          provider: g.provider || '',
+          gameTitle: g.gameTitle || '',
+          gameId: g.gameId || '',
+        })));
+      } else {
+        await onSubmit(data);
+      }
       modal.hide();
     } catch (err) {
       modalEl.querySelector('#modalError').textContent = err.message;
@@ -379,10 +700,10 @@ function confirmDialog(message) {
 }
 
 // Generic read-only info modal (title + arbitrary body HTML, just a Close
-// button) — used by the Document Center's "AI 幫我抓重點" summary result,
+// button) — used by the Document Center's "AI Summary" result,
 // and reusable for any other simple "show some content" popup later instead
 // of every caller building its own one-off modal markup.
-function showInfoModal({ title, bodyHtml }) {
+function showInfoModal({ title, bodyHtml, size }) {
   const modalId = 'infoModal';
   let modalEl = document.getElementById(modalId);
   if (modalEl) modalEl.remove();
@@ -391,7 +712,7 @@ function showInfoModal({ title, bodyHtml }) {
   modalEl.className = 'modal fade';
   modalEl.tabIndex = -1;
   modalEl.innerHTML = `
-    <div class="modal-dialog">
+    <div class="modal-dialog${size ? ` ${size}` : ''}">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title">${escapeHtml(title)}</h5>
@@ -463,6 +784,7 @@ async function refreshNotifBadge() {
 const ROUTES = {
   dashboard: renderDashboard,
   assistant: renderAssistant,
+  calendar: renderCalendar,
   cases: renderCases,
   contracts: renderContracts,
   documents: renderDocuments,
@@ -568,6 +890,311 @@ async function doLogout() {
 }
 
 // ---------------------------------------------------------------------------
+// Page: Calendar
+// ---------------------------------------------------------------------------
+// Month-grid view (styled after the iOS/Google Calendar apps) that plots
+// every case's Submit Date alongside Task Management due dates —
+// including the auto-generated "follow up 30 days later" task
+// server/routes.js's syncDeadlineFollowUpTask() keeps in sync with each
+// Submit Date (see there for why that task exists instead of this page
+// inventing its own separate reminder mechanism), user-created calendar
+// events (see calendarEventFormFields() below), and Philippine public
+// holidays (see PH_HOLIDAYS_2026 below), since a PAGCOR submission deadline
+// that lands on a Philippine holiday matters for planning. Reuses
+// /api/cases and /api/tasks directly rather than /api/lookups, since
+// lookups intentionally strips fields like deadline/dueDate down to just
+// id/title for the nav-wide autocomplete use case.
+//
+// Two panels above the grid answer "what's coming up" at different zoom
+// levels — "Next 7 Days" and the selected day's own agenda — while the big
+// grid itself is the "at a glance" view (each cell shows its own event
+// chips, not just dots). Clicking a grid cell updates the selected-day
+// panel instead of scrolling to a row in a longer list.
+function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function addDaysToKey(dateKey, n) {
+  const d = new Date(`${dateKey}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return ymd(d);
+}
+// Philippine 2026 regular holidays + special (non-working) days, straight
+// from Malacañang's official proclamations (incl. the separate Eid'l Fitr /
+// Eid'l Adha proclamations, which follow the Islamic calendar and are
+// announced closer to the date each year) — see README.md for sources.
+// `working: true` marks the one "special working day" (EDSA anniversary),
+// which is NOT a day off, just an observance, so it's shown in a distinct
+// (neutral, not green) color to avoid implying offices are closed.
+// This list is 2026-specific and will need a matching PH_HOLIDAYS_<year>
+// array added for any other year the Calendar page is browsed into — it
+// intentionally does NOT try to compute movable dates itself.
+const PH_HOLIDAYS_2026 = [
+  { date: '2026-01-01', name: "New Year's Day" },
+  { date: '2026-02-17', name: 'Chinese New Year' },
+  { date: '2026-02-25', name: 'EDSA People Power Anniversary', working: true },
+  { date: '2026-03-20', name: "Eid'l Fitr" },
+  { date: '2026-04-02', name: 'Maundy Thursday' },
+  { date: '2026-04-03', name: 'Good Friday' },
+  { date: '2026-04-04', name: 'Black Saturday' },
+  { date: '2026-04-09', name: 'Araw ng Kagitingan' },
+  { date: '2026-05-01', name: 'Labor Day' },
+  { date: '2026-05-27', name: "Eid'l Adha" },
+  { date: '2026-06-12', name: 'Independence Day' },
+  { date: '2026-08-21', name: 'Ninoy Aquino Day' },
+  { date: '2026-08-31', name: 'National Heroes Day' },
+  { date: '2026-11-01', name: "All Saints' Day" },
+  { date: '2026-11-02', name: "All Souls' Day" },
+  { date: '2026-11-30', name: 'Bonifacio Day' },
+  { date: '2026-12-08', name: 'Feast of the Immaculate Conception' },
+  { date: '2026-12-24', name: 'Christmas Eve' },
+  { date: '2026-12-25', name: 'Christmas Day' },
+  { date: '2026-12-30', name: 'Rizal Day' },
+  { date: '2026-12-31', name: "New Year's Eve" },
+];
+const PH_HOLIDAYS_BY_YEAR = { 2026: PH_HOLIDAYS_2026 };
+// Single source of truth for how each event type is labeled/colored,
+// shared by the grid-cell chips, the day-by-day list, and the 7-day panel.
+function calendarEventMeta(ev) {
+  if (ev.type === 'holiday') return ev.working ? { label: 'Special Working Day', tone: 'neutral' } : { label: 'PH Holiday', tone: 'success' };
+  return {
+    deadline: { label: 'Submit Date', tone: 'danger' },
+    followup: { label: 'Follow-up', tone: 'warning' },
+    task: { label: 'Task', tone: 'info' },
+    event: { label: 'Event', tone: 'purple' },
+  }[ev.type] || { label: 'Task', tone: 'info' };
+}
+function calendarEventBadgeHtml(ev) {
+  const meta = calendarEventMeta(ev);
+  return `<span class="badge badge-soft-${meta.tone} text-nowrap">${meta.label}</span>`;
+}
+function calendarAgendaListHtml(events, emptyText) {
+  if (!events.length) return `<div class="text-secondary small py-2">${escapeHtml(emptyText)}</div>`;
+  return `<div class="list-group list-group-flush">
+    ${events.map((ev) => {
+      const badge = calendarEventBadgeHtml(ev);
+      // User-created events (type 'event') aren't a link into another module
+      // like a Case/Task/holiday row — instead, whoever created one (or an
+      // Admin) gets inline edit/delete icons right here, wired up by
+      // wireCalEventButtons() in renderCalendar. Everyone else just sees it.
+      if (ev.type === 'event') {
+        const editable = ev.createdBy === State.user.id || (State.role && State.role.name === 'Admin');
+        return `<div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center gap-2">
+          <span class="small text-truncate" ${ev.note ? `title="${escapeHtml(ev.note)}"` : ''}>${escapeHtml(ev.title)}</span>
+          <span class="d-flex align-items-center gap-1 flex-shrink-0">
+            ${badge}
+            ${editable ? `
+              <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 btn-cal-event-edit" data-id="${ev.id}" title="Edit">${Icon('edit')}</button>
+              <button type="button" class="btn btn-sm btn-outline-danger py-0 px-1 btn-cal-event-del" data-id="${ev.id}" title="Delete">${Icon('trash')}</button>
+            ` : ''}
+          </span>
+        </div>`;
+      }
+      const inner = `<span class="small text-truncate">${escapeHtml(ev.title)}</span>${badge}`;
+      return ev.href
+        ? `<a href="${ev.href}" class="list-group-item list-group-item-action px-0 py-2 d-flex justify-content-between align-items-center gap-2">${inner}</a>`
+        : `<div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center gap-2">${inner}</div>`;
+    }).join('')}
+  </div>`;
+}
+// Chips rendered directly inside each (now much bigger) grid cell — up to 3
+// event titles, truncated, colored by type, plus a "+N" overflow marker.
+function calendarCellChipsHtml(events) {
+  const MAX = 3;
+  const shown = events.slice(0, MAX);
+  const rest = events.length - shown.length;
+  if (!shown.length) return '';
+  return `<div class="ios-cal-chips">
+    ${shown.map((e) => `<span class="ios-cal-chip tone-${calendarEventMeta(e).tone}" title="${escapeHtml(e.title)}">${escapeHtml(e.title)}</span>`).join('')}
+    ${rest > 0 ? `<span class="ios-cal-more-chip">+${rest} more</span>` : ''}
+  </div>`;
+}
+// The bottom "Daily Agenda" panel — just ONE day's events at a time
+// (defaults to today; clicking a grid cell switches it to that day instead
+// of scrolling through a whole-month list — see renderCalendar's click
+// handler). Tiffany tried the full "every day this month" list first, then
+// asked to simplify it back down to a single day.
+function calendarDayAgendaHtml(dateKey, eventsByDate, todayKey) {
+  const events = eventsByDate[dateKey] || [];
+  const label = new Date(`${dateKey}T00:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', weekday: 'long' });
+  return `
+    <div class="fw-semibold mb-2">${escapeHtml(label)}${dateKey === todayKey ? ' <span class="badge badge-soft-info">Today</span>' : ''}</div>
+    ${calendarAgendaListHtml(events, 'No Submit Dates, tasks, events, or holidays on this day.')}`;
+}
+async function renderCalendar(content) {
+  const canSeeCases = canView('cases');
+  const canSeeTasks = canView('tasks');
+  const [cases, tasks, calEvents] = await Promise.all([
+    canSeeCases ? Api.get('/api/cases') : Promise.resolve([]),
+    canSeeTasks ? Api.get('/api/tasks') : Promise.resolve([]),
+    Api.get('/api/calendar-events'),
+  ]);
+
+  const today = new Date();
+  const todayKey = ymd(today);
+  if (calendarNav.year == null) { calendarNav.year = today.getFullYear(); calendarNav.month = today.getMonth(); }
+  if (!calendarSelectedDate) calendarSelectedDate = todayKey;
+
+  const eventsByDate = {};
+  const addEvent = (dateStr, ev) => {
+    if (!dateStr) return;
+    const key = String(dateStr).slice(0, 10);
+    if (isNaN(new Date(`${key}T00:00:00`))) return;
+    (eventsByDate[key] = eventsByDate[key] || []).push({ ...ev, date: key });
+  };
+  cases.forEach((c) => {
+    if (c.deadline && c.status !== 'Closed') {
+      addEvent(c.deadline, { type: 'deadline', title: `Submit: ${c.title}`, href: `#/cases/${c.id}` });
+    }
+  });
+  tasks.forEach((t) => {
+    if (t.dueDate && t.status !== 'Completed') {
+      addEvent(t.dueDate, { type: t.isDeadlineFollowUp ? 'followup' : 'task', title: t.title, href: '#/tasks' });
+    }
+  });
+  // Calendar events — freeform items created straight from this page
+  // (meetings, personal reminders, office closures…), backed by their own
+  // /api/calendar-events collection, not Task Management. href is null
+  // (there's no other module page for these to link to); calendarAgendaListHtml
+  // instead renders inline edit/delete icons for whoever created one.
+  calEvents.forEach((e) => {
+    if (e.date) addEvent(e.date, { type: 'event', title: e.title, href: null, id: e.id, note: e.note, createdBy: e.createdBy });
+  });
+  const { year, month } = calendarNav;
+  // Pull in whichever years' Philippine holidays are actually visible in
+  // this + the adjacent months (a month view can show a few days of the
+  // previous/next month too) — see PH_HOLIDAYS_BY_YEAR above.
+  [year, year - 1, year + 1].forEach((y) => {
+    (PH_HOLIDAYS_BY_YEAR[y] || []).forEach((h) => {
+      addEvent(h.date, { type: 'holiday', working: !!h.working, title: `${h.working ? '⚠️' : '🇵🇭'} ${h.name}`, href: null });
+    });
+  });
+
+  const firstOfMonth = new Date(year, month, 1);
+  const startWeekday = firstOfMonth.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, month, 0).getDate();
+  const totalCells = Math.ceil((startWeekday + daysInMonth) / 7) * 7;
+  const cells = [];
+  for (let i = 0; i < totalCells; i++) {
+    const dayNum = i - startWeekday + 1;
+    let cellDate, inMonth;
+    if (dayNum < 1) { cellDate = new Date(year, month - 1, daysInPrevMonth + dayNum); inMonth = false; }
+    else if (dayNum > daysInMonth) { cellDate = new Date(year, month + 1, dayNum - daysInMonth); inMonth = false; }
+    else { cellDate = new Date(year, month, dayNum); inMonth = true; }
+    const key = ymd(cellDate);
+    cells.push({ key, dayLabel: cellDate.getDate(), inMonth, isToday: key === todayKey, events: eventsByDate[key] || [] });
+  }
+  const monthLabel = firstOfMonth.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+  const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const upcoming7 = [];
+  for (let i = 0; i < 7; i++) upcoming7.push(...(eventsByDate[addDaysToKey(todayKey, i)] || []));
+  upcoming7.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  // The Calendar reflects Case Management (Submit Dates) and Task
+  // Management (to-dos, incl. the auto "follow up 30 days later" reminder —
+  // see server/routes.js's syncDeadlineFollowUpTask()) read-only — a Case or
+  // Task made in its own module already shows up here automatically via
+  // the /api/cases + /api/tasks reads above, so there's no separate way to
+  // create one from this page. The one thing this page DOES create
+  // directly is a calendar event — something that isn't a Case or a Task at
+  // all, e.g. a meeting or a personal reminder — via its own
+  // /api/calendar-events collection (see calendarEventFormFields() above).
+  content.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h5 class="mb-0">Calendar</h5>
+      <button class="btn btn-primary btn-sm" id="btnCalNew">${Icon('plus', 'me-1')}New Event</button>
+    </div>
+    <div class="row g-3 mb-3">
+      <div class="col-lg-6">
+        <div class="card stat-card p-3 h-100">
+          <div class="fw-semibold mb-2 d-flex align-items-center gap-2">${Icon('checklist')} Next 7 Days</div>
+          ${calendarAgendaListHtml(upcoming7, 'No Submit Dates, tasks, events, or holidays in the next 7 days.')}
+          ${!canSeeCases || !canSeeTasks ? `
+          <div class="small text-secondary mt-2">
+            ${!canSeeCases ? '(Your role cannot view Case Submit Dates)' : ''}${!canSeeCases && !canSeeTasks ? ' ' : ''}${!canSeeTasks ? '(Your role cannot view Tasks)' : ''}
+          </div>` : ''}
+        </div>
+      </div>
+      <div class="col-lg-6">
+        <div class="card stat-card p-3 h-100" id="calDayAgendaCard">
+          ${calendarDayAgendaHtml(calendarSelectedDate, eventsByDate, todayKey)}
+        </div>
+      </div>
+    </div>
+    <div class="card stat-card p-3 cal-big">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex align-items-center gap-1">
+          <button class="btn btn-sm btn-outline-secondary" id="calPrev">${Icon('chevronLeft')}</button>
+          <div class="fw-bold px-2 fs-5" style="min-width:150px;text-align:center;">${escapeHtml(monthLabel)}</div>
+          <button class="btn btn-sm btn-outline-secondary" id="calNext">${Icon('chevronRight')}</button>
+        </div>
+        <button class="btn btn-sm btn-outline-primary" id="calToday">Today</button>
+      </div>
+      <div class="ios-cal-weekdays">${weekdayLabels.map((w) => `<div>${w}</div>`).join('')}</div>
+      <div class="ios-cal-grid ios-cal-grid-big">
+        ${cells.map((c) => `
+          <div class="ios-cal-cell ${c.inMonth ? '' : 'is-outside'} ${c.isToday ? 'is-today' : ''} ${c.key === calendarSelectedDate ? 'is-selected' : ''}" data-date="${c.key}">
+            <div class="ios-cal-daynum">${c.dayLabel}</div>
+            ${calendarCellChipsHtml(c.events)}
+          </div>`).join('')}
+      </div>
+    </div>`;
+
+  content.querySelector('#calPrev').addEventListener('click', () => {
+    calendarNav.month--; if (calendarNav.month < 0) { calendarNav.month = 11; calendarNav.year--; }
+    renderCalendar(content);
+  });
+  content.querySelector('#calNext').addEventListener('click', () => {
+    calendarNav.month++; if (calendarNav.month > 11) { calendarNav.month = 0; calendarNav.year++; }
+    renderCalendar(content);
+  });
+  content.querySelector('#calToday').addEventListener('click', () => {
+    calendarNav.year = today.getFullYear(); calendarNav.month = today.getMonth(); calendarSelectedDate = todayKey;
+    renderCalendar(content);
+  });
+  content.querySelectorAll('.ios-cal-cell').forEach((cell) => cell.addEventListener('click', () => {
+    calendarSelectedDate = cell.dataset.date;
+    content.querySelector('#calDayAgendaCard').innerHTML = calendarDayAgendaHtml(calendarSelectedDate, eventsByDate, todayKey);
+    content.querySelectorAll('.ios-cal-cell').forEach((c) => c.classList.toggle('is-selected', c.dataset.date === calendarSelectedDate));
+    // The day-agenda card's own edit/delete icons were just replaced along
+    // with the rest of its innerHTML above — rewire them (the 7-day panel's
+    // copies, built once at full render, are untouched by this).
+    wireCalEventButtons(content.querySelector('#calDayAgendaCard'), calEvents);
+  }));
+
+  const openNewEventModal = () => showFormModal({
+    title: 'New Event', fields: calendarEventFormFields(), initial: { date: calendarSelectedDate },
+    onSubmit: async (data) => { await Api.post('/api/calendar-events', data); toast('Event created'); route(); },
+  });
+  content.querySelector('#btnCalNew').addEventListener('click', () => openNewEventModal());
+  wireCalEventButtons(content, calEvents);
+}
+
+// Wires up the inline edit/delete icons calendarAgendaListHtml renders for
+// each calendar event the current user is allowed to touch. Called once for
+// the whole page at full render, and again just for the day-agenda card
+// after its own innerHTML is replaced on grid-cell click (see
+// renderCalendar) — same reason every other Calendar sub-render re-binds
+// its own listeners rather than relying on ones from an earlier render that
+// no longer exist.
+function wireCalEventButtons(container, calEvents) {
+  container.querySelectorAll('.btn-cal-event-edit').forEach((btn) => btn.addEventListener('click', () => {
+    const item = calEvents.find((ev) => ev.id === btn.dataset.id);
+    if (!item) return;
+    showFormModal({
+      title: 'Edit Event', fields: calendarEventFormFields(), initial: item,
+      onSubmit: async (data) => { await Api.put(`/api/calendar-events/${item.id}`, data); toast('Event updated'); route(); },
+    });
+  }));
+  container.querySelectorAll('.btn-cal-event-del').forEach((btn) => btn.addEventListener('click', async () => {
+    if (!(await confirmDialog('Delete this event?'))) return;
+    await Api.del(`/api/calendar-events/${btn.dataset.id}`);
+    toast('Event deleted'); route();
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Page: Dashboard
 // ---------------------------------------------------------------------------
 async function renderDashboard(content) {
@@ -585,12 +1212,170 @@ async function renderDashboard(content) {
         <div class="stat-label">Pending Approvals (mine to review)</div>
       </div></div></div>
       <div class="col-md-4"><div class="card stat-card"><div class="card-body">
-        <div class="stat-icon tone-rose">${Icon('bell')}</div>
-        <div class="stat-value">${s.unreadNotificationsCount}</div>
-        <div class="stat-label">Unread Notifications</div>
+        <div class="stat-icon tone-rose">${Icon('clock')}</div>
+        <div class="stat-value">${s.followUpsCount}</div>
+        <div class="stat-label">PAGCOR Follow-ups Due (${s.followUpDays || 30}+ days)</div>
       </div></div></div>
     </div>
+    <div class="row g-3">
+      <div class="col-lg-6">
+        ${todaysTasksWidgetHtml(s.todaysTasks)}
+        ${pendingDocumentsWidgetHtml(s.pendingDocuments, s.pendingDocumentsCount)}
+      </div>
+      <div class="col-lg-6">
+        ${recentlyUpdatedCasesWidgetHtml(s.recentlyUpdatedCases)}
+        ${pendingApprovalsWidgetHtml(s.pendingApprovals)}
+        ${followUpsWidgetHtml(s.followUps)}
+      </div>
+    </div>
     ${pagcorBoardHtml(s.pagcorBoard)}`;
+
+  const canApprove = canDo('approvals', 'approve');
+  if (canApprove) {
+    content.querySelectorAll('.btn-dash-approve').forEach((btn) => btn.addEventListener('click', async () => {
+      await Api.post(`/api/approvals/${btn.dataset.id}/decide`, { decision: 'approve' });
+      toast('Approved'); route();
+    }));
+    content.querySelectorAll('.btn-dash-reject').forEach((btn) => btn.addEventListener('click', async () => {
+      const comment = window.prompt('Reason for rejection (optional):') || '';
+      await Api.post(`/api/approvals/${btn.dataset.id}/decide`, { decision: 'reject', comment });
+      toast('Rejected'); route();
+    }));
+  }
+}
+
+// "Today's To-Dos" — my own not-yet-completed tasks due today or already
+// overdue (see /api/dashboard/summary's todaysTasks), so the day can start
+// with "what do I actually need to do" instead of opening Task Management
+// and filtering by hand. Each row links straight into Task Management.
+function todaysTasksWidgetHtml(todaysTasks) {
+  if (!todaysTasks || !todaysTasks.length) return '';
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Today's To-Dos</h6>
+        <a href="#/tasks" class="small text-decoration-none">View all &rarr;</a>
+      </div>
+      <div class="card stat-card"><div class="list-group list-group-flush">
+        ${todaysTasks.map((t) => `
+          <a href="#/tasks" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;">
+            <div>
+              <div class="fw-semibold">${escapeHtml(t.title)}</div>
+              <div class="small text-secondary">${escapeHtml(t.status)}</div>
+            </div>
+            <span class="badge ${t.dueDate < todayStr ? 'badge-soft-danger' : 'badge-soft-warning'}">${t.dueDate < todayStr ? 'Overdue' : 'Due Today'}</span>
+          </a>`).join('')}
+      </div></div>
+    </div>`;
+}
+
+// "Recently Updated Cases" — the most recently touched cases across the
+// whole team, most recent first (see /api/dashboard/summary's
+// recentlyUpdatedCases), so anyone can see "what's moved lately" without
+// hunting through Case Management.
+function recentlyUpdatedCasesWidgetHtml(recentlyUpdatedCases) {
+  if (!recentlyUpdatedCases || !recentlyUpdatedCases.length) return '';
+  return `
+    <div class="mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Recently Updated Cases</h6>
+        <a href="#/cases" class="small text-decoration-none">View all &rarr;</a>
+      </div>
+      <div class="card stat-card"><div class="list-group list-group-flush">
+        ${recentlyUpdatedCases.map((c) => `
+          <a href="#/cases/${c.id}" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;">
+            <div>
+              <div class="fw-semibold">${escapeHtml(c.gameTitle || c.title)}</div>
+              <div class="small text-secondary">${c.pagcorStage ? escapeHtml(c.pagcorStage) + ' · ' : ''}${fmtDate(c.updatedAt)}</div>
+            </div>
+          </a>`).join('')}
+      </div></div>
+    </div>`;
+}
+
+// "Pending Documents" — PAGCOR cases whose required-document checklist
+// isn't fully checked off yet (see /api/dashboard/summary's
+// pendingDocuments), so it's obvious at a glance which games still need
+// paperwork chased down before they can move forward.
+function pendingDocumentsWidgetHtml(pendingDocuments, pendingDocumentsCount) {
+  if (!pendingDocuments || !pendingDocuments.length) return '';
+  return `
+    <div class="mb-4">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Pending Documents</h6>
+        ${pendingDocumentsCount > pendingDocuments.length ? `<span class="small text-secondary">${pendingDocumentsCount} total</span>` : ''}
+      </div>
+      <div class="card stat-card"><div class="list-group list-group-flush">
+        ${pendingDocuments.map((c) => `
+          <a href="#/cases/${c.id}" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;">
+            <div>
+              <div class="fw-semibold">${escapeHtml(c.gameTitle || c.title)}${c.provider ? ` <span class="text-secondary fw-normal">· ${escapeHtml(c.provider)}</span>` : ''}</div>
+              <div class="small text-secondary">${escapeHtml(c.pagcorStage || '')}</div>
+            </div>
+            <span class="badge badge-soft-warning">${c.checklistDone}/${c.checklistTotal} docs</span>
+          </a>`).join('')}
+      </div></div>
+    </div>`;
+}
+
+// Approval Center no longer has its own permanent sidebar slot (see NAV) —
+// this is where its pending items actually surface day-to-day now. Same
+// approve/reject actions as the full Approval Center page (server does the
+// same permission check either way), just without needing a whole separate
+// page visit for the common case of "I have 1-2 things to decide on right
+// now." "View all →" still links to the full page (#/approvals — the route
+// itself was never removed, only its sidebar entry) for approval history
+// or anything beyond what's pending for this person.
+function pendingApprovalsWidgetHtml(pendingApprovals) {
+  if (!pendingApprovals || !pendingApprovals.length) return '';
+  const canApprove = canDo('approvals', 'approve');
+  return `
+    <div class="mt-4">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Pending Approvals (mine to review)</h6>
+        <a href="#/approvals" class="small text-decoration-none">View all &rarr;</a>
+      </div>
+      <div class="card stat-card"><div class="list-group list-group-flush">
+        ${pendingApprovals.map((a) => `
+          <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+              <div class="fw-semibold">${escapeHtml(a.title)}</div>
+              <div class="small text-secondary text-capitalize">${escapeHtml(a.type)} · requested by ${escapeHtml(userName(a.requestedBy))}</div>
+            </div>
+            ${canApprove ? `
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-success btn-dash-approve" data-id="${a.id}">${Icon('check')} Approve</button>
+                <button class="btn btn-sm btn-outline-danger btn-dash-reject" data-id="${a.id}">${Icon('x')} Reject</button>
+              </div>` : `<a href="#/approvals" class="btn btn-sm btn-outline-secondary">View</a>`}
+          </div>`).join('')}
+      </div></div>
+    </div>`;
+}
+
+// 30-day PAGCOR follow-up reminder — a game sitting in "Submitted to
+// PAGCOR" or "Under PAGCOR Review" for 30+ days with no Stage change is
+// easy to lose track of when it's buried in a spreadsheet; this surfaces
+// it right on the Dashboard instead. Each row links straight to that
+// case's detail page (not a filtered list — these are specific games that
+// need a specific person to go check on them, see server/routes.js's
+// /api/dashboard/summary for how "stuck" is computed).
+function followUpsWidgetHtml(followUps) {
+  if (!followUps || !followUps.length) return '';
+  return `
+    <div class="mt-4">
+      <h6 class="mb-2">PAGCOR Follow-ups Due (30+ days in stage)</h6>
+      <div class="card stat-card"><div class="list-group list-group-flush">
+        ${followUps.map((c) => `
+          <a href="#/cases/${c.id}" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;">
+            <div>
+              <div class="fw-semibold">${escapeHtml(c.gameTitle || c.title)}${c.provider ? ` <span class="text-secondary fw-normal">· ${escapeHtml(c.provider)}</span>` : ''}</div>
+              <div class="small text-secondary">${escapeHtml(c.pagcorStage)} · not updated in ${c.daysSince} days</div>
+            </div>
+            <span class="badge badge-soft-danger">${c.daysSince}d</span>
+          </a>`).join('')}
+      </div></div>
+    </div>`;
 }
 
 // PAGCOR submission pipeline overview — one horizontal bar per PAGCOR Stage,
@@ -649,21 +1434,21 @@ function listToolbar({ title, canCreate, onCreate, extraButtonsHtml }) {
 // (search) answer directly; anything that would create a record comes back
 // as a "pending action" card the user must confirm before it's written.
 const ASSISTANT_EXAMPLES = [
-  '幫我建立一個日本客戶的 NDA',
-  '幫我找去年所有菲律賓客戶的授權合約',
-  '幫我開一個高優先度的商務案件，負責人是我自己',
-  '幫我起草一封 PAGCOR 送審公文，Provider 是 FC，遊戲是 Fortune Dragon',
+  'Create an NDA for a Japanese client',
+  'Find every licensing contract from Philippine clients last year',
+  'Open a high-priority commercial case, owned by me',
+  'Draft a PAGCOR submission letter, Provider is FC, game is Fortune Dragon',
 ];
 
 function assistantActionCardHtml(turnIdx, actionIdx, action, state) {
   const stateHtml = {
     pending: `
-      <button class="btn btn-sm btn-success btn-confirm-action" data-turn="${turnIdx}" data-action="${actionIdx}">確認執行</button>
-      <button class="btn btn-sm btn-outline-secondary btn-cancel-action" data-turn="${turnIdx}" data-action="${actionIdx}">取消</button>`,
-    confirming: `<span class="small text-secondary"><span class="spinner-border spinner-border-sm me-1"></span>執行中…</span>`,
-    confirmed: `<span class="small text-success">${Icon('check', 'me-1')}已建立</span>`,
-    cancelled: `<span class="small text-secondary">已取消</span>`,
-    error: `<span class="small text-danger">執行失敗，請重試</span>`,
+      <button class="btn btn-sm btn-success btn-confirm-action" data-turn="${turnIdx}" data-action="${actionIdx}">Confirm</button>
+      <button class="btn btn-sm btn-outline-secondary btn-cancel-action" data-turn="${turnIdx}" data-action="${actionIdx}">Cancel</button>`,
+    confirming: `<span class="small text-secondary"><span class="spinner-border spinner-border-sm me-1"></span>Running…</span>`,
+    confirmed: `<span class="small text-success">${Icon('check', 'me-1')}Created</span>`,
+    cancelled: `<span class="small text-secondary">Cancelled</span>`,
+    error: `<span class="small text-danger">Failed — please try again</span>`,
   }[state] || '';
   return `
     <div class="border rounded p-2 mb-2 bg-light" style="max-width:520px;">
@@ -679,8 +1464,8 @@ function renderAssistantLog() {
   if (turns.length === 0) {
     log.innerHTML = `
       <div class="text-secondary">
-        <p>你好，我是 Legal Genie 的 AI 助理。你可以請我幫忙搜尋現有的案件/合約/文件，或請我建立新的案件、合約、待辦事項。</p>
-        <p class="mb-1">可以試試看：</p>
+        <p>Hi, I'm Legal Genie's AI Assistant. I can search existing cases/contracts/documents for you, or create new cases, contracts, and tasks.</p>
+        <p class="mb-1">Try asking:</p>
         <ul>${ASSISTANT_EXAMPLES.map((ex) => `<li><a href="#" class="assistant-example">${escapeHtml(ex)}</a></li>`).join('')}</ul>
       </div>`;
     log.querySelectorAll('.assistant-example').forEach((a) => a.addEventListener('click', (e) => {
@@ -716,7 +1501,7 @@ function assistantHistoryForApi() {
   // tool-call details are deliberately not threaded across turns.
   return State.assistant.turns.map((t) => ({
     role: t.role,
-    text: t.text || (t.pendingActions && t.pendingActions.length ? '（建議了一個動作）' : ''),
+    text: t.text || (t.pendingActions && t.pendingActions.length ? '(proposed an action)' : ''),
   }));
 }
 
@@ -733,7 +1518,7 @@ async function sendAssistantMessage(text) {
       actionStates: (resp.pendingActions || []).map(() => 'pending'),
     });
   } catch (err) {
-    State.assistant.turns.push({ role: 'assistant', text: `發生錯誤：${err.message}` });
+    State.assistant.turns.push({ role: 'assistant', text: `An error occurred: ${err.message}` });
   }
   renderAssistantLog();
 }
@@ -746,7 +1531,7 @@ async function confirmAssistantAction(turnIdx, actionIdx) {
   try {
     await Api.post('/api/assistant/confirm', { type: action.type, input: action.input });
     turn.actionStates[actionIdx] = 'confirmed';
-    toast('已建立');
+    toast('Created');
   } catch (err) {
     turn.actionStates[actionIdx] = 'error';
     toast(err.message, 'danger');
@@ -766,8 +1551,8 @@ async function renderAssistant(content) {
       <div class="flex-grow-1 overflow-auto p-3" id="assistantLog"></div>
       <form id="assistantForm" class="d-flex gap-2 p-3 border-top">
         <input type="text" class="form-control" id="assistantInput" autocomplete="off"
-          placeholder="用一般文字描述你要做的事，例如：幫我找去年所有菲律賓客戶的授權合約">
-        <button type="submit" class="btn btn-primary text-nowrap">送出</button>
+          placeholder="Describe what you'd like to do, e.g. 'Find every licensing contract from Philippine clients last year'">
+        <button type="submit" class="btn btn-primary text-nowrap">Send</button>
       </form>
     </div>`;
   renderAssistantLog();
@@ -854,35 +1639,35 @@ function showPagcorChecklistModal(item) {
 // Import Excel/CSV -> bulk-create Cases (see server/import.js). Two-step:
 // pick a file -> server parses + shows a per-sheet preview/settings -> user
 // reviews/adjusts Provider & PAGCOR Stage per sheet -> confirm actually
-// creates the records. Nothing is written until "確認匯入" is clicked.
+// creates the records. Nothing is written until "Confirm Import" is clicked.
 // ---------------------------------------------------------------------------
 function importSheetSettingsHtml(sheet) {
   const needsProvider = !sheet.hasProviderColumn;
   const needsStage = !sheet.hasStatusColumn;
-  const sampleNames = sheet.sampleRows.map((r) => escapeHtml(r.title)).join('、');
+  const sampleNames = sheet.sampleRows.map((r) => escapeHtml(r.title)).join(', ');
   return `
     <div class="border rounded p-2 mb-2 import-sheet-row" data-sheet="${escapeHtml(sheet.name)}">
       <div class="d-flex align-items-start gap-2">
         <input type="checkbox" class="form-check-input mt-1 sheet-include" ${sheet.rowCount > 0 ? 'checked' : ''} ${sheet.rowCount === 0 ? 'disabled' : ''}>
         <div class="flex-grow-1">
           <div class="d-flex justify-content-between align-items-center">
-            <strong>${escapeHtml(sheet.name.trim() || '(未命名工作表)')}</strong>
-            <span class="badge text-bg-light border">${sheet.rowCount} 筆</span>
+            <strong>${escapeHtml(sheet.name.trim() || '(Unnamed sheet)')}</strong>
+            <span class="badge text-bg-light border">${sheet.rowCount} rows</span>
           </div>
-          <div class="small text-secondary mt-1">${sampleNames ? `例如：${sampleNames}${sheet.rowCount > sheet.sampleRows.length ? '…' : ''}` : '(沒有偵測到可匯入的資料列)'}</div>
+          <div class="small text-secondary mt-1">${sampleNames ? `e.g. ${sampleNames}${sheet.rowCount > sheet.sampleRows.length ? '…' : ''}` : '(No importable rows detected)'}</div>
           <div class="d-flex flex-wrap gap-3 mt-2 align-items-end">
             ${needsProvider ? `
               <div>
                 <label class="form-label small mb-1">Provider</label>
                 <input type="text" class="form-control form-control-sm sheet-provider" value="${escapeHtml(sheet.suggestedProvider || '')}" style="width:160px;">
-              </div>` : `<div class="small text-secondary">已偵測到 Provider 欄位，會使用每列各自的值。</div>`}
+              </div>` : `<div class="small text-secondary">Provider column detected — will use each row's own value.</div>`}
             ${needsStage ? `
               <div>
                 <label class="form-label small mb-1">PAGCOR Stage</label>
                 <select class="form-select form-select-sm sheet-stage" style="width:200px;">
                   ${PAGCOR_STAGE_OPTIONS.map((s) => `<option value="${escapeHtml(s)}" ${s === 'Preparing Documents' ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
                 </select>
-              </div>` : `<div class="small text-secondary">已偵測到 Status 欄位，會依每列自動判斷階段。</div>`}
+              </div>` : `<div class="small text-secondary">Status column detected — stage will be inferred per row.</div>`}
           </div>
         </div>
       </div>
@@ -901,20 +1686,20 @@ async function showImportCasesModal() {
     <div class="modal-dialog modal-lg">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">匯入 Excel / CSV</h5>
+          <h5 class="modal-title">Import Excel / CSV</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
           <div class="mb-3">
-            <label class="form-label">選擇檔案（.xlsx 或 .csv）—— 每個工作表(分頁)會分開偵測</label>
+            <label class="form-label">Choose a file (.xlsx or .csv) — each sheet/tab is detected separately</label>
             <input type="file" class="form-control" id="importFile" accept=".xlsx,.csv">
           </div>
           <div id="importAnalyzeMsg" class="small text-secondary mb-2"></div>
           <div id="importSheets"></div>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-          <button type="button" class="btn btn-primary" id="importConfirmBtn" style="display:none;">確認匯入</button>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="importConfirmBtn" style="display:none;">Confirm Import</button>
         </div>
       </div>
     </div>`;
@@ -933,7 +1718,7 @@ async function showImportCasesModal() {
     const msgEl = modalEl.querySelector('#importAnalyzeMsg');
     const sheetsEl = modalEl.querySelector('#importSheets');
     const confirmBtn = modalEl.querySelector('#importConfirmBtn');
-    msgEl.textContent = '分析中…';
+    msgEl.textContent = 'Analyzing…';
     sheetsEl.innerHTML = '';
     confirmBtn.style.display = 'none';
     try {
@@ -941,8 +1726,8 @@ async function showImportCasesModal() {
       const sheets = resp.sheets || [];
       const totalRows = sheets.reduce((sum, s) => sum + s.rowCount, 0);
       msgEl.textContent = totalRows > 0
-        ? `偵測到 ${sheets.length} 個工作表，共 ${totalRows} 筆資料。請確認下面每個工作表的設定後再匯入。`
-        : '沒有偵測到任何資料列，請確認檔案內容。';
+        ? `Detected ${sheets.length} sheet(s) with ${totalRows} total row(s). Review each sheet's settings below before importing.`
+        : 'No data rows detected — please check the file content.';
       sheetsEl.innerHTML = sheets.map((s) => importSheetSettingsHtml(s)).join('');
       confirmBtn.style.display = totalRows > 0 ? '' : 'none';
     } catch (err) {
@@ -966,15 +1751,15 @@ async function showImportCasesModal() {
     });
     btn.disabled = true;
     const originalLabel = btn.textContent;
-    btn.textContent = '匯入中…';
+    btn.textContent = 'Importing…';
     try {
       const result = await Api.post('/api/cases/import/commit', { fileName, fileContentBase64, sheets });
       modal.hide();
-      const skippedMsg = result.skipped ? `，${result.skipped} 筆已存在（Provider + 遊戲名稱相同）故跳過` : '';
-      const errorMsg = result.errors && result.errors.length ? `，${result.errors.length} 筆發生錯誤（請查看瀏覽器 console）` : '';
+      const skippedMsg = result.skipped ? `, ${result.skipped} already existed (same Provider + game name) and were skipped` : '';
+      const errorMsg = result.errors && result.errors.length ? `, ${result.errors.length} error(s) (see the browser console)` : '';
       const conflictMsg = result.gameIdConflicts && result.gameIdConflicts.length
-        ? `；⚠️ ${result.gameIdConflicts.length} 組 Game ID 相同但名稱看起來是不同遊戲，未自動合併，請查看瀏覽器 console` : '';
-      toast(`已建立 ${result.created} 筆案件${skippedMsg}${errorMsg}${conflictMsg}`);
+        ? `; ⚠️ ${result.gameIdConflicts.length} Game ID group(s) share an ID but look like different games and were not auto-merged — see the browser console` : '';
+      toast(`Created ${result.created} case(s)${skippedMsg}${errorMsg}${conflictMsg}`);
       if (result.errors && result.errors.length) console.warn('Import errors:', result.errors);
       if (result.gameIdConflicts && result.gameIdConflicts.length) console.warn('Game ID conflicts (not auto-merged):', result.gameIdConflicts);
       route();
@@ -991,6 +1776,12 @@ async function showImportCasesModal() {
 // Shared between renderCases()'s "New"/"Edit" form modal and the case
 // detail page's own "Edit" button (renderCaseDetail()) — kept as one
 // top-level function so both call sites stay in sync automatically.
+// PAGCOR game-detail fields (section: 'pagcor') stay collapsed behind the
+// "This is a PAGCOR game submission case" toggle until checked — most cases aren't a
+// PAGCOR game submission, so showing 8 game-specific fields on every single
+// case form was pure clutter for them. The section auto-expands instead
+// when editing a case that already has any of these fields set, or when AI
+// smart-fill fills one of them in (see showFormModal's setSectionExpanded).
 function caseFormFields() {
   return [
     { name: 'title', label: 'Title', required: true },
@@ -998,17 +1789,164 @@ function caseFormFields() {
     { name: 'ownerId', label: 'Owner', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
     { name: 'priority', label: 'Priority', type: 'select', options: ['High', 'Medium', 'Low'].map((v) => ({ value: v, label: v })), required: true },
     { name: 'status', label: 'Status', type: 'select', options: ['Open', 'In Progress', 'Closed'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'deadline', label: 'Deadline', type: 'date' },
-    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP' },
-    { name: 'gameTitle', label: 'Game Title (optional)' },
-    { name: 'gameType', label: 'Game Type (optional)', type: 'select', allowEmpty: true, options: GAME_TYPE_OPTIONS.map((v) => ({ value: v, label: v })) },
-    { name: 'gameId', label: 'Game ID (optional)' },
-    { name: 'gameVersion', label: 'Game Version (optional)' },
-    { name: 'withJackpot', label: 'With Jackpot? (optional)', type: 'select', allowEmpty: true, options: YES_NO_OPTIONS.map((v) => ({ value: v, label: v })) },
-    { name: 'pagcorStage', label: 'PAGCOR Stage (optional)', type: 'select', allowEmpty: true, options: PAGCOR_STAGE_OPTIONS.map((v) => ({ value: v, label: v })) },
-    { name: 'loaExpiryDate', label: 'LOA Expiry Date (optional)', type: 'date' },
+    // Label shown as "Submit Date" per Tiffany's request — this is the
+    // date documents get submitted/are due, which the Calendar page's
+    // 30-day follow-up reminder is computed from (see server/routes.js's
+    // syncDeadlineFollowUpTask). The underlying field name stays `deadline`
+    // everywhere else (form data, API, sorting, CSV export column key,
+    // etc.) — only changed the label users actually see, so no data
+    // migration or renamed logic is needed.
+    { name: 'deadline', label: 'Submit Date', type: 'date' },
+    { name: 'isPagcorCase', label: 'This is a PAGCOR game submission case (check to show game-related fields)', type: 'checkbox', controlsSection: 'pagcor' },
+    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP', section: 'pagcor' },
+    { name: 'gameTitle', label: 'Game Title (optional)', section: 'pagcor' },
+    { name: 'gameType', label: 'Game Type (optional)', type: 'select', allowEmpty: true, options: GAME_TYPE_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
+    { name: 'gameId', label: 'Game ID (optional)', section: 'pagcor' },
+    { name: 'gameVersion', label: 'Game Version (optional)', section: 'pagcor' },
+    { name: 'withJackpot', label: 'With Jackpot? (optional)', type: 'select', allowEmpty: true, options: YES_NO_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
+    { name: 'pagcorStage', label: 'PAGCOR Stage (optional)', type: 'select', allowEmpty: true, options: PAGCOR_STAGE_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
+    { name: 'loaExpiryDate', label: 'LOA Expiry Date (optional)', type: 'date', section: 'pagcor' },
     { name: 'description', label: 'Description', type: 'textarea' },
   ];
+}
+
+// Shared by Task Management's own "New"/"Edit" form modal, same pattern as
+// caseFormFields() above. (Tasks are only ever created in Task Management
+// itself — the Calendar just reflects them; see renderCalendar's doc
+// comment.)
+function taskFormFields() {
+  return [
+    { name: 'title', label: 'Title', required: true },
+    { name: 'description', label: 'Description', type: 'textarea' },
+    { name: 'assigneeId', label: 'Assignee', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
+    { name: 'type', label: 'Type', type: 'select', options: [{ value: 'personal', label: 'Personal' }, { value: 'team', label: 'Team' }], required: true },
+    { name: 'status', label: 'Status', type: 'select', options: ['Not Started', 'In Progress', 'Completed'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'dueDate', label: 'Due Date', type: 'date' },
+    { name: 'relatedCaseId', label: 'Related Case (optional)', type: 'select', allowEmpty: true, options: State.lookups.cases.map((c) => ({ value: c.id, label: c.caseNumber + ' - ' + c.title })) },
+    { name: 'relatedContractId', label: 'Related Contract (optional)', type: 'select', allowEmpty: true, options: State.lookups.contracts.map((c) => ({ value: c.id, label: c.contractNumber + ' - ' + c.title })) },
+  ];
+}
+
+// The Calendar page's own "+ New Event" button (renderCalendar) creates a
+// lightweight item that's neither a Case nor a Task — a meeting, a personal
+// reminder, an office closure, anything that doesn't belong in Case
+// Management or Task Management. Backed by its own /api/calendar-events
+// collection (server/routes.js), not tasks/cases.
+function calendarEventFormFields() {
+  return [
+    { name: 'title', label: 'Title', required: true },
+    { name: 'date', label: 'Date', type: 'date', required: true },
+    { name: 'note', label: 'Note (optional)', type: 'textarea' },
+  ];
+}
+
+// Builds the copyable "game just got its LOA" notification text from a
+// case's own fields — see renderCaseDetail's #btnLoaNotice handler. Uses
+// pagcorStageChangedAt (stamped whenever pagcorStage actually changes — see
+// server/routes.js's cases onCreate/onUpdate) as the approval date, since
+// that's precisely the moment the case last became "LOA Approved"; falls
+// back to today if that's somehow missing (e.g. a very old record).
+function loaNotificationDraftText(item) {
+  const lines = [
+    '✅ PAGCOR LOA Approved',
+    `Game: ${item.gameTitle || item.title}`,
+    item.gameId ? `Game ID: ${item.gameId}` : null,
+    item.provider ? `Provider: ${item.provider}` : null,
+    item.gameVersion ? `Version: ${item.gameVersion}` : null,
+    `Approval Date: ${fmtDate(item.pagcorStageChangedAt || new Date().toISOString())}`,
+    item.loaExpiryDate ? `LOA Expiry: ${fmtDate(item.loaExpiryDate)}` : null,
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
+// Renders the "AI Submission Validation" result — see server/ai.js's
+// checkDocumentConsistency() for the three sections this covers:
+// documentCompleteness (do the required PAGCOR submission document TYPES
+// exist at all), parameterValidation (does each tracked parameter have a
+// value stated anywhere), and documentConsistency (for parameters that do
+// have values, do all the documents that mention it agree — shown per
+// source document). overallStatus ('ready'/'not_ready') drives the banner.
+// Shared by every place this check can be triggered: the case detail
+// page's "AI Parameter Consistency Check" button, the batch document
+// upload's auto-run-after-upload, the (UI-unreachable, code-still-present)
+// old intake wizard's auto-run, and Document Center's per-folder
+// "AI Parameter Consistency Check" button. Only this modal's own content
+// changes for the "AI Submission Validation" redesign — none of those four
+// call sites' surrounding page layout is touched.
+function presenceMeta(present) {
+  return present
+    ? { icon: '✅', label: 'Present' }
+    : { icon: '❌', label: 'Missing' };
+}
+function consistencyStatusMeta(status) {
+  if (status === 'match') return { icon: '✅', label: 'Match' };
+  if (status === 'mismatch') return { icon: '⚠️', label: 'Mismatch Detected' };
+  return { icon: '❔', label: 'Not Mentioned' }; // 'missing'
+}
+function showConsistencyResultModal(context, result) {
+  const ready = result.overallStatus === 'ready';
+  const documentCompleteness = result.documentCompleteness || [];
+  const parameterValidation = result.parameterValidation || [];
+  const documentConsistency = result.documentConsistency || [];
+
+  const checklistSection = (label, items, getIconMeta, getName) => `
+    <div class="mb-3">
+      <div class="fw-semibold small text-uppercase text-secondary mb-1">${escapeHtml(label)}</div>
+      <div class="list-group">
+        ${items.map((it) => {
+          const meta = getIconMeta(it);
+          return `
+          <div class="list-group-item py-2">
+            <div class="d-flex justify-content-between align-items-center gap-2">
+              <span class="fw-semibold">${meta.icon} ${escapeHtml(getName(it))}</span>
+              <span class="small text-secondary text-nowrap">${escapeHtml(meta.label)}</span>
+            </div>
+            ${it.detail ? `<div class="small text-secondary mt-1">${escapeHtml(it.detail)}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+
+  const consistencySection = `
+    <div class="mb-2">
+      <div class="fw-semibold small text-uppercase text-secondary mb-1">Document Consistency</div>
+      ${documentConsistency.map((c) => {
+        const meta = consistencyStatusMeta(c.status);
+        const values = c.values || [];
+        const isMismatch = c.status === 'mismatch';
+        return `
+        <div class="card mb-2 ${isMismatch ? 'border-danger' : ''}">
+          <div class="card-body py-2 px-3">
+            <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+              <span class="fw-semibold">${escapeHtml(c.parameter)}</span>
+              <span class="badge ${isMismatch ? 'bg-danger' : c.status === 'match' ? 'bg-success' : 'bg-secondary'}">${meta.icon} ${escapeHtml(meta.label)}</span>
+            </div>
+            ${values.length ? `
+              <ul class="list-unstyled small mb-1 ${isMismatch ? 'bg-warning-subtle rounded p-2' : ''}">
+                ${values.map((v) => `<li><span class="text-secondary">${escapeHtml(v.source)}:</span> <span class="fw-semibold">${escapeHtml(v.value)}</span></li>`).join('')}
+              </ul>
+            ` : ''}
+            ${c.detail ? `<div class="small text-secondary">${escapeHtml(c.detail)}</div>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  showInfoModal({
+    title: `AI Submission Validation${context ? ` – ${context}` : ''}`,
+    size: 'modal-lg',
+    bodyHtml: `
+      <div class="small text-secondary mb-1">Validation Result</div>
+      <div class="alert ${ready ? 'alert-success' : 'alert-danger'} py-2 px-3 mb-3">
+        ${ready ? '🟢 Ready for Submission' : '🔴 Not Ready for Submission'}
+      </div>
+      ${checklistSection('Document Completeness', documentCompleteness, (d) => presenceMeta(d.present), (d) => d.documentType)}
+      ${checklistSection('Parameter Validation', parameterValidation, (p) => presenceMeta(p.present), (p) => p.parameter)}
+      ${consistencySection}
+      ${result.summary ? `<p class="small text-secondary mb-2">${escapeHtml(result.summary)}</p>` : ''}
+      <p class="small text-secondary mb-0">Compared ${result.documentsCompared || 0} document(s). This is an AI-generated pre-submission check based on document content, for reference only — it is not an official compliance determination; the original documents remain authoritative.</p>
+    `,
+  });
 }
 
 // Full-page, read/write case + game detail view — reached by clicking a row
@@ -1028,6 +1966,13 @@ async function renderCaseDetail(content, id) {
   }
   const canEdit = canDo('cases', 'edit');
   const canDelete = canDo('cases', 'delete');
+  const canUploadDocs = canDo('documents', 'create');
+  // No server-side "documents for this case" filter exists (same as
+  // check-consistency's own lookup below) — fetch everything and filter
+  // client-side by relatedCaseId. Fine at this app's scale; see
+  // /api/cases/:id/check-consistency in server/routes.js for the same
+  // pattern server-side.
+  const relatedDocs = canDo('documents', 'view') ? (await Api.get('/api/documents')).filter((d) => d.relatedCaseId === item.id) : [];
   const field = (label, value) => `
     <div class="col-6 col-md-3 mb-3">
       <div class="small text-secondary">${escapeHtml(label)}</div>
@@ -1041,12 +1986,15 @@ async function renderCaseDetail(content, id) {
         <div class="text-secondary">${escapeHtml(item.title)}</div>
       </div>
       <div class="d-flex gap-2">
+        ${canUploadDocs ? `<button class="btn btn-outline-secondary btn-sm" id="btnUploadCaseDocs">${Icon('upload', 'me-1')}Upload Documents</button>` : ''}
+        ${item.provider ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
+        ${item.pagcorStage === 'LOA Approved' ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
         ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnEditCase">${Icon('edit', 'me-1')}Edit</button>` : ''}
         ${canDelete ? `<button class="btn btn-outline-danger btn-sm" id="btnDeleteCase">${Icon('trash', 'me-1')}Delete</button>` : ''}
       </div>
     </div>
     <div class="card mb-3"><div class="card-body">
-      <div class="small text-secondary mb-2">PAGCOR Review Progress${canEdit && item.pagcorStage !== 'Rejected' ? ' — 點擊階段可直接切換' : ''}</div>
+      <div class="small text-secondary mb-2">PAGCOR Review Progress${canEdit && item.pagcorStage !== 'Rejected' ? ' — click a stage to switch to it directly' : ''}</div>
       ${pagcorStageStepperHtml(item.pagcorStage, canEdit)}
     </div></div>
     <div class="card mb-3"><div class="card-body">
@@ -1061,7 +2009,7 @@ async function renderCaseDetail(content, id) {
         ${field('Owner', userName(item.ownerId))}
         ${field('Priority', item.priority)}
         ${field('Status', item.status)}
-        ${field('Deadline', fmtDate(item.deadline))}
+        ${field('Submit Date', fmtDate(item.deadline))}
         ${field('LOA Expiry Date', fmtDate(item.loaExpiryDate))}
       </div>
       ${item.description ? `<div class="mt-2"><div class="small text-secondary">Description</div><div>${escapeHtml(item.description)}</div></div>` : ''}
@@ -1079,7 +2027,36 @@ async function renderCaseDetail(content, id) {
         }).join('')}
       </div>
       ${!canEdit ? '<div class="small text-secondary mt-2">You do not have permission to edit cases, so this checklist is read-only.</div>' : ''}
-    </div></div>`;
+    </div></div>
+    ${canDo('documents', 'view') ? `
+    <div class="card mt-3"><div class="card-body">
+      <h6 class="mb-2">Uploaded Documents${relatedDocs.length ? ` <span class="badge text-bg-light border">${relatedDocs.length}</span>` : ''}</h6>
+      ${relatedDocs.length ? `
+      <div class="list-group list-group-flush">
+        ${relatedDocs.map((d) => `
+          <div class="list-group-item d-flex justify-content-between align-items-center px-0">
+            <div>
+              <div>${escapeHtml(d.title)}</div>
+              <div class="small text-secondary">${escapeHtml(userName(d.uploadedBy))} · ${fmtDate(d.createdAt)}</div>
+            </div>
+            ${d.filePath ? `
+              <div class="btn-group">
+                <button type="button" class="btn btn-sm btn-outline-secondary btn-preview-doc" data-id="${d.id}" title="Preview">${Icon('eye')}</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary btn-download-doc" data-id="${d.id}" data-filename="${escapeHtml(d.fileName || 'file')}" title="Download">${Icon('download')}</button>
+              </div>` : ''}
+          </div>`).join('')}
+      </div>` : `<div class="small text-secondary">No documents linked to this case yet${canUploadDocs ? ' — click "Upload Documents" above to get started.' : '.'}</div>`}
+    </div></div>` : ''}`;
+
+  content.querySelectorAll('.btn-download-doc').forEach((btn) => btn.addEventListener('click', () => {
+    downloadAuthedFile(`/api/documents/${btn.dataset.id}/download`, btn.dataset.filename);
+  }));
+  content.querySelectorAll('.btn-preview-doc').forEach((btn) => btn.addEventListener('click', () => {
+    previewAuthedFile(`/api/documents/${btn.dataset.id}/download`);
+  }));
+
+  const uploadDocsBtn = content.querySelector('#btnUploadCaseDocs');
+  if (uploadDocsBtn) uploadDocsBtn.addEventListener('click', () => showCaseDocumentUploadModal(item, relatedDocs.length));
 
   content.querySelectorAll('.chk-item').forEach((chk) => chk.addEventListener('change', async () => {
     const updatedChecklist = Array.from(content.querySelectorAll('.chk-item')).map((el) => ({ key: el.dataset.key, done: el.checked }));
@@ -1102,12 +2079,67 @@ async function renderCaseDetail(content, id) {
     const newStage = stepEl.dataset.stage;
     try {
       await Api.put(`/api/cases/${item.id}`, { pagcorStage: newStage });
-      toast(`PAGCOR Stage 已更新為「${newStage}」`);
+      toast(`PAGCOR Stage updated to "${newStage}"`);
       await renderCaseDetail(content, id);
     } catch (err) {
       toast(err.message, 'danger');
     }
   }));
+
+  // AI cross-document parameter consistency check — checks a fixed 5-item
+  // checklist (Game ID / Game Manual / Game Version / Minimum Bet / Maximum
+  // Bet) across every Document Center file whose "Related Case" points to
+  // this case. See server/ai.js's checkDocumentConsistency and
+  // showConsistencyResultModal() below (shared with the Case intake
+  // wizard's auto-run version in renderCases()).
+  const consistencyBtn = content.querySelector('#btnCheckConsistency');
+  if (consistencyBtn) consistencyBtn.addEventListener('click', async () => {
+    const originalHtml = consistencyBtn.innerHTML;
+    consistencyBtn.disabled = true;
+    consistencyBtn.innerHTML = '…';
+    try {
+      const result = await Api.post(`/api/cases/${item.id}/check-consistency`, {});
+      showConsistencyResultModal(item.title, result);
+    } catch (err) {
+      toast(err.message, 'danger');
+    } finally {
+      consistencyBtn.disabled = false;
+      consistencyBtn.innerHTML = originalHtml;
+    }
+  });
+
+  // LOA-approval notification draft — legal's real pain point here was
+  // manually re-typing (game title, Game ID, approval date, etc.) into a
+  // Telegram message every time a game gets its LOA, which is slow and
+  // error-prone. This just assembles that same text from the case's own
+  // fields so it can be copied straight into whatever chat app they use.
+  // Deliberately does NOT send anything itself (see loaNotificationDraftText
+  // below / the safety-protocol boundary on sending messages on someone's
+  // behalf) — it only prepares text for the person to paste and send
+  // themselves.
+  const loaNoticeBtn = content.querySelector('#btnLoaNotice');
+  if (loaNoticeBtn) loaNoticeBtn.addEventListener('click', () => {
+    const text = loaNotificationDraftText(item);
+    showInfoModal({
+      title: 'Approval Notice Draft',
+      bodyHtml: `
+        <p class="small text-secondary mb-2">Copy this and paste it into Telegram or another channel yourself — the system does not send it automatically.</p>
+        <textarea class="form-control" id="loaNoticeText" rows="7" readonly>${escapeHtml(text)}</textarea>
+        <button type="button" class="btn btn-primary btn-sm mt-2" id="btnCopyLoaNotice">${Icon('check', 'me-1')}Copy Text</button>
+      `,
+    });
+    const copyBtn = document.getElementById('btnCopyLoaNotice');
+    if (copyBtn) copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Copied to clipboard');
+      } catch (err) {
+        const ta = document.getElementById('loaNoticeText');
+        if (ta) { ta.focus(); ta.select(); }
+        toast('Could not copy automatically — the text has been selected for you, press Cmd/Ctrl+C to copy', 'danger');
+      }
+    });
+  });
 
   const editBtn = content.querySelector('#btnEditCase');
   if (editBtn) editBtn.addEventListener('click', () => {
@@ -1125,6 +2157,153 @@ async function renderCaseDetail(content, id) {
   });
 }
 
+// Batch document upload from a case's own detail page — reduces the
+// repetitive "upload one, fill in fields, upload the next" work of adding documents to a
+// case one at a time. Select multiple files at once; since this case
+// already has a known Provider/Game Title/Game ID, there's nothing
+// ambiguous about *where* each file belongs (unlike the old AI-creates-
+// the-case flow this replaces) — AI only has to guess each file's own
+// Title/Category/Report Type, which is shown in an editable row per file
+// for review before anything is saved. Uploaded files are tagged with this
+// case's relatedCaseId/provider/gameTitle/gameId, so they land in the
+// right Document Center tab+game automatically — no separate filing step.
+// Once this case has 2+ documents with files, the same AI consistency
+// check as the case detail page's own button auto-runs afterward.
+function showCaseDocumentUploadModal(item, existingDocCount) {
+  const modalId = 'caseUploadModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  modalEl.innerHTML = `
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">${sparkleMark('me-1')} Upload Documents — ${escapeHtml(item.gameTitle || item.title)}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">You can select multiple files at once. Provider / Game Title / Game ID are filled in automatically from this case — AI only needs to guess each file's Title / Category / Report Type, which you can edit before saving.</p>
+          <input type="file" class="form-control mb-3" id="caseUploadFiles" multiple>
+          <div id="caseUploadRows"></div>
+          <div id="caseUploadMsg" class="small text-danger"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btnCaseUploadAll" disabled>Upload Selected Documents</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+
+  let filesData = []; // [{ file, base64, proposed: {title,category,reportType}, aiFailed }]
+  const rowsEl = modalEl.querySelector('#caseUploadRows');
+  const uploadBtn = modalEl.querySelector('#btnCaseUploadAll');
+
+  const renderRows = () => {
+    rowsEl.innerHTML = filesData.map((f, i) => `
+      <div class="card mb-2 upload-file-row" data-index="${i}">
+        <div class="card-body py-2">
+          <div class="d-flex align-items-start gap-2">
+            <input type="checkbox" class="form-check-input mt-2 upload-file-include" checked>
+            <div class="flex-grow-1 row g-2">
+              <div class="col-md-5">
+                <label class="small text-secondary">Title</label>
+                <input class="form-control form-control-sm upload-file-title" value="${escapeHtml(f.proposed.title || f.file.name)}">
+              </div>
+              <div class="col-md-3">
+                <label class="small text-secondary">Category</label>
+                <select class="form-select form-select-sm upload-file-category">
+                  ${['Templates', 'Policies', 'Agreements', 'Certificates', 'Other'].map((v) => `<option value="${v}" ${v === (f.proposed.category || 'Certificates') ? 'selected' : ''}>${v}</option>`).join('')}
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="small text-secondary">Report Type</label>
+                <select class="form-select form-select-sm upload-file-reportType">
+                  <option value="">—</option>
+                  ${REPORT_TYPE_OPTIONS.map((v) => `<option value="${v}" ${v === f.proposed.reportType ? 'selected' : ''}>${v}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="small text-secondary mt-1 ms-4">${escapeHtml(f.file.name)}${f.aiFailed ? ' — AI could not read this file\'s content, please double-check the category yourself' : ''}</div>
+        </div>
+      </div>`).join('');
+    uploadBtn.disabled = filesData.length === 0;
+  };
+
+  modalEl.querySelector('#caseUploadFiles').addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    uploadBtn.disabled = true;
+    rowsEl.innerHTML = `<div class="small text-secondary">AI reading ${files.length} document(s)…</div>`;
+    filesData = await Promise.all(files.map(async (file) => {
+      const base64 = await fileToBase64(file);
+      let proposed = {};
+      let aiFailed = false;
+      try {
+        const { fields: extracted } = await Api.post('/api/ai/extract/documents', { fileName: file.name, fileContentBase64: base64 });
+        proposed = extracted || {};
+      } catch (err) {
+        aiFailed = true;
+      }
+      return { file, base64, proposed, aiFailed };
+    }));
+    renderRows();
+  });
+
+  uploadBtn.addEventListener('click', async () => {
+    const msgEl = modalEl.querySelector('#caseUploadMsg');
+    msgEl.textContent = '';
+    const rows = Array.from(modalEl.querySelectorAll('.upload-file-row'))
+      .filter((row) => row.querySelector('.upload-file-include').checked)
+      .map((row) => {
+        const i = Number(row.dataset.index);
+        return {
+          file: filesData[i].file, base64: filesData[i].base64,
+          title: row.querySelector('.upload-file-title').value.trim(),
+          category: row.querySelector('.upload-file-category').value,
+          reportType: row.querySelector('.upload-file-reportType').value || undefined,
+        };
+      });
+    if (!rows.length) { msgEl.textContent = 'Please select at least one document.'; return; }
+
+    uploadBtn.disabled = true;
+    let uploadedCount = 0;
+    for (let i = 0; i < rows.length; i++) {
+      uploadBtn.innerHTML = `Uploading… (${i + 1}/${rows.length})`;
+      try {
+        await Api.post('/api/documents', {
+          title: rows[i].title || rows[i].file.name, category: rows[i].category, reportType: rows[i].reportType,
+          provider: item.provider, gameTitle: item.gameTitle, gameId: item.gameId,
+          relatedCaseId: item.id,
+          fileName: rows[i].file.name, fileContentBase64: rows[i].base64,
+        });
+        uploadedCount++;
+      } catch (err) {
+        toast(`Failed to upload "${rows[i].file.name}": ${err.message}`, 'danger');
+      }
+    }
+    modal.hide();
+    if (!uploadedCount) return;
+    toast(`Uploaded ${uploadedCount}/${rows.length} document(s)`);
+    if (existingDocCount + uploadedCount >= 2) {
+      try {
+        const result = await Api.post(`/api/cases/${item.id}/check-consistency`, {});
+        showConsistencyResultModal(item.title, result);
+      } catch (err) {
+        toast(`Automatic consistency check failed: ${err.message}`, 'danger');
+      }
+    }
+    route();
+  });
+}
+
 async function renderCases(content) {
   const cases = await Api.get('/api/cases');
   const canCreate = canDo('cases', 'create');
@@ -1136,8 +2315,7 @@ async function renderCases(content) {
     title: 'Case Management', canCreate,
     extraButtonsHtml: `
       <button class="btn btn-outline-secondary btn-sm" id="btnExportCases">${Icon('download', 'me-1')}Export CSV</button>
-      ${canCreate ? `<button class="btn btn-outline-secondary btn-sm" id="btnImportCases">${Icon('download', 'me-1')}Import Excel/CSV</button>` : ''}
-      ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnImportApprovalNotice">${Icon('upload', 'me-1')}上傳核准通知信</button>` : ''}`,
+      ${canCreate ? `<button class="btn btn-outline-secondary btn-sm" id="btnImportCases">${Icon('download', 'me-1')}Import Excel/CSV</button>` : ''}`,
   }) + `
     <div class="d-flex flex-wrap gap-2 mb-3">
       <input type="search" class="form-control form-control-sm" id="filterSearch" style="min-width:240px; max-width:320px;" placeholder="Search Game ID / Title / Game Title…">
@@ -1166,7 +2344,7 @@ async function renderCases(content) {
             <th class="sortable-th" data-sort="owner">Owner <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="priority">Priority <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="status">Status <span class="sort-indicator"></span></th>
-            <th class="sortable-th" data-sort="deadline">Deadline <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="deadline">Submit Date <span class="sort-indicator"></span></th>
             <th></th>
           </tr></thead>
           <tbody id="casesTbody"></tbody>
@@ -1266,9 +2444,9 @@ async function renderCases(content) {
     bar.classList.remove('d-none');
     bar.classList.add('d-flex');
     bar.innerHTML = `
-      <span class="fw-semibold small">已選取 ${selectedIds.size} 筆</span>
-      ${canEdit ? `<button class="btn btn-sm btn-primary" id="btnBulkStage">${Icon('checkSquare', 'me-1')}批次更新 PAGCOR Stage</button>` : ''}
-      <button class="btn btn-sm btn-outline-secondary" id="btnBulkClear">清除選取</button>`;
+      <span class="fw-semibold small">${selectedIds.size} selected</span>
+      ${canEdit ? `<button class="btn btn-sm btn-primary" id="btnBulkStage">${Icon('checkSquare', 'me-1')}Bulk Update PAGCOR Stage</button>` : ''}
+      <button class="btn btn-sm btn-outline-secondary" id="btnBulkClear">Clear Selection</button>`;
     const stageBtn = bar.querySelector('#btnBulkStage');
     if (stageBtn) stageBtn.addEventListener('click', showBulkStageModal);
     bar.querySelector('#btnBulkClear').addEventListener('click', () => { selectedIds.clear(); renderPage(); });
@@ -1286,18 +2464,18 @@ async function renderCases(content) {
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title">批次更新 PAGCOR Stage（${selectedIds.size} 筆案件）</h5>
+            <h5 class="modal-title">Bulk Update PAGCOR Stage (${selectedIds.size} case(s))</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body">
-            <label class="form-label">將選取的案件全部設定為：</label>
+            <label class="form-label">Set all selected cases to:</label>
             <select class="form-select" id="bulkStageSelect">
               ${PAGCOR_STAGE_OPTIONS.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
             </select>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-            <button type="button" class="btn btn-primary" id="bulkStageConfirmBtn">確認更新</button>
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" class="btn btn-primary" id="bulkStageConfirmBtn">Confirm Update</button>
           </div>
         </div>
       </div>`;
@@ -1310,11 +2488,11 @@ async function renderCases(content) {
       const pagcorStage = modalEl.querySelector('#bulkStageSelect').value;
       btn.disabled = true;
       const originalLabel = btn.textContent;
-      btn.textContent = '更新中…';
+      btn.textContent = 'Updating…';
       try {
         const result = await Api.post('/api/cases/bulk-update-stage', { ids: Array.from(selectedIds), pagcorStage });
         modal.hide();
-        toast(`已更新 ${result.updated} 筆案件的 PAGCOR Stage${result.errors && result.errors.length ? `，${result.errors.length} 筆發生錯誤` : ''}`);
+        toast(`Updated PAGCOR Stage for ${result.updated} case(s)${result.errors && result.errors.length ? `, ${result.errors.length} error(s)` : ''}`);
         selectedIds.clear();
         route();
       } catch (err) {
@@ -1367,7 +2545,7 @@ async function renderCases(content) {
   // fine in Excel; mirrors the same field set the Import feature reads.
   function exportCasesCsv() {
     const header = ['Case #', 'Title', 'Type', 'Provider', 'Game Title', 'Game Type', 'Game ID', 'Game Version', 'With Jackpot',
-      'PAGCOR Stage', 'Game Manual', 'Parameter', 'RTP Certification', 'Owner', 'Priority', 'Status', 'Deadline', 'LOA Expiry Date', 'Description'];
+      'PAGCOR Stage', 'Game Manual', 'Parameter', 'RTP Certification', 'Owner', 'Priority', 'Status', 'Submit Date', 'LOA Expiry Date', 'Description'];
     const lines = [header.map(csvEscape).join(',')];
     sortedFilteredCases().forEach((c) => {
       const cl = Object.fromEntries((c.pagcorChecklist || []).map((i) => [i.key, i.done ? 'Yes' : 'No']));
@@ -1443,7 +2621,7 @@ async function renderCases(content) {
     content.querySelector('#filterProvider').addEventListener('change', applyFilters);
     content.querySelector('#filterStage').addEventListener('change', applyFilters);
     // Deep-link support for "#/cases?stage=Under%20PAGCOR%20Review" (used by
-    // the Dashboard's PAGCOR Submission Pipeline board's "還有 N 筆 →" links)
+    // the Dashboard's PAGCOR Submission Pipeline board's "N more →" links)
     // — pre-select the Stage filter from the URL's query string, if present.
     const stageParam = new URLSearchParams(location.hash.split('?')[1] || '').get('stage');
     if (stageParam && PAGCOR_STAGE_OPTIONS.includes(stageParam)) {
@@ -1468,9 +2646,6 @@ async function renderCases(content) {
 
   content.querySelector('#btnExportCases').addEventListener('click', exportCasesCsv);
 
-  const importNoticeBtn = content.querySelector('#btnImportApprovalNotice');
-  if (importNoticeBtn) importNoticeBtn.addEventListener('click', showImportApprovalNoticeModal);
-
   applyFilters();
 
   if (canCreate) {
@@ -1485,9 +2660,291 @@ async function renderCases(content) {
   }
 }
 
+// AI Case intake wizard — "when a new case comes in, upload every document
+// at once and let AI organize it into a Case and auto-check consistency"
+// (the workflow legal actually described). Two steps in one flow:
+//   1. Pick every document for this game submission at once (RNG report,
+//      Game Manual, approval notice...) and let AI read all of them
+//      together to propose the new Case's fields (server/ai.js's
+//      extractCaseFromDocuments) — reusing the same case form
+//      (caseFormFields()) the plain "New Case" button uses, so the user
+//      reviews/edits exactly like normal before anything is saved.
+//   2. On confirm: create the Case, upload every one of the originally
+//      selected files as Document Center records already linked to it
+//      (relatedCaseId + matching provider/gameTitle, so they show up
+//      immediately in that game's Document Center folder — see
+//      renderDocuments()'s folder view), then automatically run the same
+//      AI consistency check the case detail page's button runs, so the
+//      Compliant/mismatch result appears right away without a second click.
+function showCaseIntakeWizard() {
+  const modalId = 'caseIntakeModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  modalEl.innerHTML = `
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">${sparkleMark('me-1')} Create Case from Documents (AI)</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">Upload all related documents for the same game at once (RNG report, Game Manual, approval notice, etc.).
+            AI will read these documents and organize the case fields for you to review; once the case is created, it will automatically compare these documents on Game ID, Game Manual,
+            Game Version, Minimum Bet, and Maximum Bet for consistency.</p>
+          <input type="file" class="form-control" id="caseIntakeFiles" multiple accept=".pdf,image/*,.txt">
+          <div id="caseIntakeMsg" class="small mt-2 text-danger"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btnCaseIntakeNext">Read with AI &amp; Continue</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+
+  modalEl.querySelector('#btnCaseIntakeNext').addEventListener('click', async () => {
+    const fileInput = modalEl.querySelector('#caseIntakeFiles');
+    const msgEl = modalEl.querySelector('#caseIntakeMsg');
+    const files = Array.from(fileInput.files || []);
+    if (!files.length) { msgEl.textContent = 'Please select at least one document first.'; return; }
+    const nextBtn = modalEl.querySelector('#btnCaseIntakeNext');
+    const originalHtml = nextBtn.innerHTML;
+    nextBtn.disabled = true;
+    nextBtn.innerHTML = 'AI reading…';
+    msgEl.textContent = '';
+    try {
+      const documents = await Promise.all(files.map(async (f) => ({
+        fileName: f.name, fileContentBase64: await fileToBase64(f),
+      })));
+      const { common, games } = await Api.post('/api/cases/extract-from-documents', { documents });
+      modal.hide();
+      if (!games || !games.length) {
+        toast('AI could not read any game information from these documents. Please check the uploaded files, or use "New" to create the case manually.', 'danger');
+        return;
+      }
+      if (games.length === 1) {
+        showCaseIntakeSingleReview(documents, { status: 'Open', priority: 'Medium', ...common, ...games[0] });
+      } else {
+        showCaseIntakeMultiGameReview(documents, common || {}, games);
+      }
+    } catch (err) {
+      msgEl.textContent = err.message;
+      nextBtn.disabled = false;
+      nextBtn.innerHTML = originalHtml;
+    }
+  });
+}
+
+// Creates a single Case, uploads `documents` (already {fileName,
+// fileContentBase64} pairs) as Document Center records linked to it, and
+// (if 2+ uploaded successfully) auto-runs the AI consistency check —
+// shared by both the single-game intake review below and each row of the
+// multi-game review, so "what happens after a case is confirmed" only
+// exists in one place.
+async function createCaseFromIntake(caseData, documents) {
+  const newCase = await Api.post('/api/cases', caseData);
+  let uploadedCount = 0;
+  for (const doc of documents) {
+    try {
+      await Api.post('/api/documents', {
+        title: doc.fileName, category: 'Certificates',
+        provider: caseData.provider, gameTitle: caseData.gameTitle, gameId: caseData.gameId,
+        relatedCaseId: newCase.id,
+        fileName: doc.fileName, fileContentBase64: doc.fileContentBase64,
+      });
+      uploadedCount++;
+    } catch (err) {
+      toast(`Failed to upload "${doc.fileName}": ${err.message}`, 'danger');
+    }
+  }
+  let consistency = null;
+  if (uploadedCount >= 2) {
+    try { consistency = await Api.post(`/api/cases/${newCase.id}/check-consistency`, {}); }
+    catch (err) { toast(`Automatic consistency check for "${newCase.title}" failed: ${err.message}`, 'danger'); }
+  }
+  return { case: newCase, uploadedCount, consistency };
+}
+
+// The common case — AI found exactly 1 game in the uploaded documents.
+// Reuses the normal case form (caseFormFields()) so review/edit works
+// exactly like every other form in the app.
+function showCaseIntakeSingleReview(documents, initial) {
+  showFormModal({
+    title: `Confirm Case Details (${documents.length} document(s) read)`,
+    fields: caseFormFields(),
+    initial,
+    submitLabel: 'Create Case & Check Documents',
+    onSubmit: async (data) => {
+      const { case: newCase, uploadedCount, consistency } = await createCaseFromIntake(data, documents);
+      toast(`Case created — ${uploadedCount}/${documents.length} document(s) uploaded successfully`);
+      if (consistency) showConsistencyResultModal(newCase.title, consistency);
+      else if (uploadedCount < 2) toast('Fewer than 2 documents uploaded successfully, so the automatic consistency check was skipped — you can run it manually from the case detail page later.', 'danger');
+      location.hash = `#/cases/${newCase.id}`;
+    },
+  });
+}
+
+// The case that prompted this: a single PAGCOR submission bundle (most
+// often one Notice of Approval letter) can cover several DIFFERENT games
+// at once via an "Annex A"-style table. Forcing that into one flat case
+// form left the most important field (which game?) blank, since there
+// was never one correct single answer. Instead: show every detected game
+// as its own editable, checkable row, apply the shared `common` fields
+// (Provider/Type/Priority/Status/Deadline/Description) to whichever rows
+// stay checked, and create one Case per checked row — all of them getting
+// copies of the same uploaded documents (the one approval letter really
+// does apply to all of them), each auto-running its own consistency check.
+function showCaseIntakeMultiGameReview(documents, common, games) {
+  const modalId = 'caseIntakeMultiModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  const gameTypeOptions = (selected) => `<option value="">—</option>${GAME_TYPE_OPTIONS.map((v) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${v}</option>`).join('')}`;
+  modalEl.innerHTML = `
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">${sparkleMark('me-1')} ${games.length} Game(s) Detected in These Documents</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="small text-secondary">AI determined that this batch of documents (often the case when one approval notice covers several games at once) spans ${games.length} different game(s),
+            each organized into a row below. Uncheck a row to skip creating that case; every other field can be edited directly.
+            These ${documents.length} document(s) will be copied and linked to every case you check and create.</p>
+          <div class="border rounded p-3 mb-3 bg-light">
+            <div class="small fw-semibold mb-2">Shared Fields (applied to every checked case below)</div>
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="small text-secondary">Provider</label>
+                <input class="form-control form-control-sm" id="intakeCommonProvider" value="${escapeHtml(common.provider || '')}">
+              </div>
+              <div class="col-md-4">
+                <label class="small text-secondary">Type</label>
+                <select class="form-select form-select-sm" id="intakeCommonType">
+                  ${['Regulatory', 'Commercial', 'IP', 'Litigation', 'Employment', 'Other'].map((v) => `<option value="${v}" ${v === (common.type || 'Regulatory') ? 'selected' : ''}>${v}</option>`).join('')}
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="small text-secondary">Priority</label>
+                <select class="form-select form-select-sm" id="intakeCommonPriority">
+                  ${['High', 'Medium', 'Low'].map((v) => `<option value="${v}" ${v === (common.priority || 'Medium') ? 'selected' : ''}>${v}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div id="intakeGamesRows">
+            ${games.map((g, i) => `
+              <div class="card mb-2 intake-game-row" data-index="${i}">
+                <div class="card-body py-2">
+                  <div class="d-flex align-items-start gap-2">
+                    <input type="checkbox" class="form-check-input mt-2 intake-game-include" checked>
+                    <div class="flex-grow-1 row g-2">
+                      <div class="col-md-6">
+                        <label class="small text-secondary">Case Title</label>
+                        <input class="form-control form-control-sm intake-game-title" value="${escapeHtml(g.title || `PAGCOR game submission - ${g.gameTitle || ''}`)}">
+                      </div>
+                      <div class="col-md-6">
+                        <label class="small text-secondary">Game Title</label>
+                        <input class="form-control form-control-sm intake-game-gameTitle" value="${escapeHtml(g.gameTitle || '')}">
+                      </div>
+                      <div class="col-md-4">
+                        <label class="small text-secondary">Game ID</label>
+                        <input class="form-control form-control-sm intake-game-gameId" value="${escapeHtml(g.gameId || '')}">
+                      </div>
+                      <div class="col-md-4">
+                        <label class="small text-secondary">Game Type</label>
+                        <select class="form-select form-select-sm intake-game-gameType">${gameTypeOptions(g.gameType)}</select>
+                      </div>
+                      <div class="col-md-4">
+                        <label class="small text-secondary">Game Version</label>
+                        <input class="form-control form-control-sm intake-game-gameVersion" value="${escapeHtml(g.gameVersion || '')}">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>`).join('')}
+          </div>
+          <div id="intakeMultiMsg" class="small text-danger"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btnIntakeCreateAll">Create Selected Cases & Check Documents</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+
+  modalEl.querySelector('#btnIntakeCreateAll').addEventListener('click', async () => {
+    const msgEl = modalEl.querySelector('#intakeMultiMsg');
+    msgEl.textContent = '';
+    const commonData = {
+      provider: modalEl.querySelector('#intakeCommonProvider').value.trim() || undefined,
+      type: modalEl.querySelector('#intakeCommonType').value,
+      priority: modalEl.querySelector('#intakeCommonPriority').value,
+      status: 'Open',
+    };
+    const rows = Array.from(modalEl.querySelectorAll('.intake-game-row'))
+      .filter((row) => row.querySelector('.intake-game-include').checked)
+      .map((row) => ({
+        title: row.querySelector('.intake-game-title').value.trim(),
+        gameTitle: row.querySelector('.intake-game-gameTitle').value.trim(),
+        gameId: row.querySelector('.intake-game-gameId').value.trim() || undefined,
+        gameType: row.querySelector('.intake-game-gameType').value || undefined,
+        gameVersion: row.querySelector('.intake-game-gameVersion').value.trim() || undefined,
+      }));
+    if (!rows.length) { msgEl.textContent = 'Please check at least one game.'; return; }
+    if (rows.some((r) => !r.gameTitle)) { msgEl.textContent = 'Every checked game needs a Game Title.'; return; }
+
+    const createBtn = modalEl.querySelector('#btnIntakeCreateAll');
+    createBtn.disabled = true;
+    const results = [];
+    for (let i = 0; i < rows.length; i++) {
+      createBtn.innerHTML = `Creating… (${i + 1}/${rows.length})`;
+      try {
+        const caseData = { ...commonData, title: rows[i].title || `PAGCOR game submission - ${rows[i].gameTitle}`, gameTitle: rows[i].gameTitle, gameId: rows[i].gameId, gameType: rows[i].gameType, gameVersion: rows[i].gameVersion };
+        const result = await createCaseFromIntake(caseData, documents);
+        results.push(result);
+      } catch (err) {
+        toast(`Failed to create "${rows[i].gameTitle}": ${err.message}`, 'danger');
+      }
+    }
+    modal.hide();
+    if (!results.length) { toast('No cases were created successfully.', 'danger'); return; }
+    showInfoModal({
+      title: `${results.length} Case(s) Created`,
+      bodyHtml: `
+        <div class="list-group">
+          ${results.map((r) => `
+            <a href="#/cases/${r.case.id}" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;" data-bs-dismiss="modal">
+              <div>
+                <div class="fw-semibold">${escapeHtml(r.case.gameTitle || r.case.title)}</div>
+                <div class="small text-secondary">${r.uploadedCount}/${documents.length} document(s) uploaded${r.consistency ? ` · ${r.consistency.compliant ? '✅ Compliant' : '⚠️ Discrepancy needs review'}` : ' · Consistency check not run'}</div>
+              </div>
+              <span class="small text-secondary">View &rarr;</span>
+            </a>`).join('')}
+        </div>
+        <p class="small text-secondary mt-3 mb-0">Click any row to view that case's full comparison results and details.</p>
+      `,
+    });
+  });
+}
+
 // Upload a real PAGCOR "Notice of Approval" letter (often a scanned image
-// with no text layer — pdf-parse can't read those, which is why "檢查
-// PAGCOR 核准清單" alone isn't enough for approvals PAGCOR hasn't folded
+// with no text layer — pdf-parse can't read those, which is why "check the
+// PAGCOR approval list" alone isn't enough for approvals PAGCOR hasn't folded
 // into its public list yet) and have Gemini read it directly. Deliberately
 // conservative: the backend only auto-approves a game when it can match it
 // to exactly one case (by Game ID, or by exact title as a fallback) —
@@ -1505,21 +2962,21 @@ function showImportApprovalNoticeModal() {
     <div class="modal-dialog">
       <div class="modal-content">
         <div class="modal-header">
-          <h5 class="modal-title">上傳核准通知信</h5>
+          <h5 class="modal-title">Upload Approval Notice</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body" id="approvalNoticeModalBody">
           <div class="small text-secondary mb-2">
-            上傳 PAGCOR 寄給你的核准通知信（PDF 或圖片皆可，掃描檔也沒問題）。
-            AI 會讀取內容、找出信裡核准的遊戲，並自動比對你系統裡對應的案件，
-            把符合的案件改成「LOA Approved」。如果比對不到、或同時符合多筆案件，
-            會列出來讓你自己確認，不會用猜的。
+            Upload the approval notice PAGCOR sent you (PDF or image, scanned files are fine too).
+            AI will read the content, find the games approved in the letter, and automatically match them against the corresponding cases in your system,
+            changing matched cases to "LOA Approved". If no match is found, or multiple cases match,
+            they'll be listed here for you to confirm manually — nothing is guessed.
           </div>
           <input type="file" class="form-control" id="approvalNoticeFile" accept="application/pdf,image/*">
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-          <button type="button" class="btn btn-primary" id="approvalNoticeSubmitBtn">上傳並比對</button>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="approvalNoticeSubmitBtn">Upload & Check</button>
         </div>
       </div>
     </div>`;
@@ -1536,11 +2993,11 @@ function showImportApprovalNoticeModal() {
   modalEl.querySelector('#approvalNoticeSubmitBtn').addEventListener('click', async () => {
     const fileInput = modalEl.querySelector('#approvalNoticeFile');
     const file = fileInput.files && fileInput.files[0];
-    if (!file) { toast('請先選擇一個檔案', 'danger'); return; }
+    if (!file) { toast('Please select a file first', 'danger'); return; }
     const btn = modalEl.querySelector('#approvalNoticeSubmitBtn');
     btn.disabled = true;
     const originalLabel = btn.textContent;
-    btn.textContent = 'AI 判讀中…';
+    btn.textContent = 'AI reading…';
     try {
       const fileContentBase64 = await fileToBase64(file);
       const result = await Api.post('/api/cases/import-approval-notice', { fileName: file.name, fileContentBase64 });
@@ -1550,15 +3007,15 @@ function showImportApprovalNoticeModal() {
         ? `<div class="mb-3"><div class="fw-semibold small mb-1">${escapeHtml(title)}</div><ul class="small mb-0">${items.map(renderItem).join('')}</ul></div>`
         : '';
       body.innerHTML = `
-        ${result.noticeReference || result.approvalDate ? `<div class="small text-secondary mb-2">${result.noticeReference ? `文號：${escapeHtml(result.noticeReference)}　` : ''}${result.approvalDate ? `日期：${escapeHtml(result.approvalDate)}` : ''}</div>` : ''}
-        ${section('已自動核准', result.updatedCases, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}（${escapeHtml(c.oldStage)} → LOA Approved）</li>`)}
-        ${section('本來就已經是 LOA Approved', result.alreadyApproved, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
-        ${section('案件狀態是 Rejected，未自動變更', result.skippedRejected, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
-        ${section('⚠️ 找不到對應的案件（需要手動確認）', result.unmatched, (g) => `<li>${escapeHtml(g.gameTitle || '(未命名)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''}${g.provider ? ` — ${escapeHtml(g.provider)}` : ''}</li>`)}
-        ${section('⚠️ 同時符合多筆案件，未自動變更（需要手動確認）', result.ambiguous, (g) => `<li>${escapeHtml(g.gameTitle || '(未命名)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''} — 符合：${g.matchedCaseNumbers.map(escapeHtml).join('、')}</li>`)}
-        ${!result.updatedCases.length && !result.alreadyApproved.length && !result.skippedRejected.length && !result.unmatched.length && !result.ambiguous.length ? '<div class="small text-secondary">AI 沒有從這份文件裡讀到任何遊戲資訊。</div>' : ''}`;
-      modalEl.querySelector('.modal-footer').innerHTML = `<button type="button" class="btn btn-primary" data-bs-dismiss="modal">完成</button>`;
-      toast(`已自動核准 ${result.updatedCases.length} 筆案件`, (result.unmatched.length || result.ambiguous.length) ? 'warning' : 'success');
+        ${result.noticeReference || result.approvalDate ? `<div class="small text-secondary mb-2">${result.noticeReference ? `Reference No.: ${escapeHtml(result.noticeReference)}　` : ''}${result.approvalDate ? `Date: ${escapeHtml(result.approvalDate)}` : ''}</div>` : ''}
+        ${section('Automatically Approved', result.updatedCases, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)} (${escapeHtml(c.oldStage)} → LOA Approved)</li>`)}
+        ${section('Already LOA Approved', result.alreadyApproved, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
+        ${section('Case Status is Rejected — Not Automatically Changed', result.skippedRejected, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
+        ${section('⚠️ No Matching Case Found (needs manual confirmation)', result.unmatched, (g) => `<li>${escapeHtml(g.gameTitle || '(unnamed)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''}${g.provider ? ` — ${escapeHtml(g.provider)}` : ''}</li>`)}
+        ${section('⚠️ Matches Multiple Cases — Not Automatically Changed (needs manual confirmation)', result.ambiguous, (g) => `<li>${escapeHtml(g.gameTitle || '(unnamed)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''} — Matches: ${g.matchedCaseNumbers.map(escapeHtml).join(', ')}</li>`)}
+        ${!result.updatedCases.length && !result.alreadyApproved.length && !result.skippedRejected.length && !result.unmatched.length && !result.ambiguous.length ? '<div class="small text-secondary">AI could not read any game information from this document.</div>' : ''}`;
+      modalEl.querySelector('.modal-footer').innerHTML = `<button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>`;
+      toast(`${result.updatedCases.length} case(s) automatically approved`, (result.unmatched.length || result.ambiguous.length) ? 'warning' : 'success');
     } catch (err) {
       toast(err.message, 'danger');
       btn.disabled = false;
@@ -1664,131 +3121,442 @@ async function renderContracts(content) {
 // ---------------------------------------------------------------------------
 // Page: Document Center
 // ---------------------------------------------------------------------------
+// Document Center — a Provider filter bar (tabs, not page navigation) over a
+// list of games, drilling into a per-game document list on click. Came
+// directly from feedback that with hundreds of documents a flat list wasn't
+// a usable way to find "all of this game's paperwork," and that switching
+// providers should just re-filter the same list rather than jump to a whole
+// new page. Games are grouped from fields documents already carry
+// (provider/gameTitle, set on upload or by AI smart-fill); a document
+// missing either falls into an "Uncategorized" bucket rather than disappearing.
+// Category/Report Type are deliberately NOT shown anywhere in this view —
+// Document Center's job here is just filing/finding files, not classifying
+// them; those fields still exist and are still set on the upload/edit form
+// (used elsewhere, e.g. non-PAGCOR documents) but this page doesn't surface
+// them. Position is tracked in the module-level `documentsFolderNav` so it
+// survives a delete/edit/upload's route() re-render — see its declaration
+// near the top of this file for why that has to live outside this function.
 async function renderDocuments(content) {
   const docs = await Api.get('/api/documents');
   const canCreate = canDo('documents', 'create');
   const canEdit = canDo('documents', 'edit');
   const canDelete = canDo('documents', 'delete');
-  content.innerHTML = listToolbar({ title: 'Document Center', canCreate }) + `
+
+  // fileName comes right after Title — deliberately near the top, right
+  // below the AI Smart-Fill box, so the natural flow is "pick the file, then
+  // (optionally) click AI Smart-Fill to read that same file" rather than
+  // needing to scroll all the way down before AI smart-fill has anything
+  // to read. See showFormModal's reuseFileField.
+  const fields = () => ([
+    { name: 'title', label: 'Title', required: true },
+    { name: 'fileName', label: 'File Upload', type: 'file' },
+    { name: 'category', label: 'Category', type: 'select', options: ['Templates', 'Policies', 'Agreements', 'Certificates', 'Other'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'isPagcorDoc', label: 'This is a PAGCOR game-related document (check to show game-related fields)', type: 'checkbox', controlsSection: 'pagcor' },
+    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP', section: 'pagcor' },
+    { name: 'gameTitle', label: 'Game Title (optional)', section: 'pagcor' },
+    { name: 'gameId', label: 'Game ID (optional)', section: 'pagcor' },
+    { name: 'reportType', label: 'Report Type (optional)', type: 'select', allowEmpty: true, options: REPORT_TYPE_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
+    { name: 'relatedCaseId', label: 'Related Case (optional)', type: 'select', allowEmpty: true, options: State.lookups.cases.map((c) => ({ value: c.id, label: c.caseNumber + ' - ' + c.title })) },
+    { name: 'relatedContractId', label: 'Related Contract (optional)', type: 'select', allowEmpty: true, options: State.lookups.contracts.map((c) => ({ value: c.id, label: c.contractNumber + ' - ' + c.title })) },
+  ]);
+
+  // Upload/Edit/Summarize/Delete handlers are identical at both views, so
+  // they're wired up once here and called from whichever one actually
+  // renders a #btnCreate / row buttons this pass.
+  const wireUpload = (prefill) => {
+    const btn = content.querySelector('#btnCreate');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      showFormModal({
+        title: 'Upload Document', fields: fields(), initial: prefill || {}, submitLabel: 'Upload',
+        aiAssist: { module: 'documents' },
+        onSubmit: async (data) => { await Api.post('/api/documents', data); toast('Document uploaded'); route(); },
+      });
+    });
+  };
+  const wireRowActions = (rowDocs) => {
+    content.querySelectorAll('.btn-download-doc').forEach((btn) => btn.addEventListener('click', () => {
+      downloadAuthedFile(`/api/documents/${btn.dataset.id}/download`, btn.dataset.filename);
+    }));
+    content.querySelectorAll('.btn-preview-doc').forEach((btn) => btn.addEventListener('click', () => {
+      previewAuthedFile(`/api/documents/${btn.dataset.id}/download`);
+    }));
+    content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
+      const item = rowDocs.find((d) => d.id === btn.dataset.id);
+      showFormModal({ title: 'Edit Document', fields: fields().filter((f) => f.name !== 'fileName'), initial: item,
+        onSubmit: async (data) => { await Api.put(`/api/documents/${item.id}`, data); toast('Updated'); route(); } });
+    }));
+    content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async () => {
+      if (!(await confirmDialog('Delete this document?'))) return;
+      await Api.del(`/api/documents/${btn.dataset.id}`);
+      toast('Deleted'); route();
+    }));
+    // Replace File — uploads a new file for an existing document record.
+    // The file it replaces isn't discarded; the server archives it as a
+    // numbered entry in that document's version history first (see
+    // POST /api/documents/:id/replace-file), viewable via the History button.
+    content.querySelectorAll('.btn-replace-doc').forEach((btn) => btn.addEventListener('click', () => {
+      const item = rowDocs.find((d) => d.id === btn.dataset.id);
+      showFormModal({
+        title: `Replace File — ${item.title}`,
+        fields: [{ name: 'newFile', label: 'New File', type: 'file', required: true }],
+        submitLabel: 'Replace',
+        onSubmit: async (data) => {
+          await Api.post(`/api/documents/${item.id}/replace-file`, data);
+          toast('File replaced — previous version saved to history');
+          route();
+        },
+      });
+    }));
+    // Version History — lists every file this document used to have before
+    // being replaced (see the Replace button above), most recently replaced
+    // first, each downloadable on its own.
+    content.querySelectorAll('.btn-doc-history').forEach((btn) => btn.addEventListener('click', async () => {
+      const item = rowDocs.find((d) => d.id === btn.dataset.id);
+      let versions = [];
+      try { versions = await Api.get(`/api/documents/${item.id}/versions`); } catch (err) { toast(err.message, 'danger'); return; }
+      showInfoModal({
+        title: `Version History — ${item.title}`,
+        bodyHtml: `
+          <div class="list-group list-group-flush">
+            <div class="list-group-item d-flex justify-content-between align-items-center px-0">
+              <div>
+                <div class="fw-semibold">${escapeHtml(item.fileName || 'file')} <span class="badge text-bg-light border">Current</span></div>
+                <div class="small text-secondary">${escapeHtml(userName(item.uploadedBy))} · ${fmtDate(item.createdAt)}</div>
+              </div>
+              <button type="button" class="btn btn-sm btn-outline-secondary btn-download-doc" data-id="${item.id}" data-filename="${escapeHtml(item.fileName || 'file')}">${Icon('download')}</button>
+            </div>
+            ${versions.map((v) => `
+              <div class="list-group-item d-flex justify-content-between align-items-center px-0">
+                <div>
+                  <div class="fw-semibold">${escapeHtml(v.fileName || 'file')} <span class="text-secondary fw-normal">v${v.versionNo}</span></div>
+                  <div class="small text-secondary">${escapeHtml(userName(v.uploadedBy))} · ${fmtDate(v.createdAt)} · replaced by ${escapeHtml(userName(v.replacedBy))}</div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-secondary btn-download-version" data-doc-id="${item.id}" data-version-id="${v.id}" data-filename="${escapeHtml(v.fileName || 'file')}">${Icon('download')}</button>
+              </div>`).join('')}
+            ${!versions.length ? '<div class="small text-secondary px-0 pt-2">No earlier versions — this file has not been replaced yet.</div>' : ''}
+          </div>`,
+      });
+      // Scoped to the info modal itself (not `content`) — its own fixed
+      // #infoModal id, distinct from the underlying table's own
+      // .btn-download-doc buttons, which already have their own listener
+      // from wireRowActions above and must not be re-bound.
+      const historyModalEl = document.getElementById('infoModal');
+      historyModalEl.querySelectorAll('.btn-download-doc').forEach((b) => b.addEventListener('click', () => {
+        downloadAuthedFile(`/api/documents/${b.dataset.id}/download`, b.dataset.filename);
+      }));
+      historyModalEl.querySelectorAll('.btn-download-version').forEach((b) => b.addEventListener('click', () => {
+        downloadAuthedFile(`/api/documents/${b.dataset.docId}/versions/${b.dataset.versionId}/download`, b.dataset.filename);
+      }));
+    }));
+    content.querySelectorAll('.btn-summarize').forEach((btn) => btn.addEventListener('click', async () => {
+      const item = rowDocs.find((d) => d.id === btn.dataset.id);
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '…';
+      try {
+        const result = await Api.post(`/api/documents/${item.id}/summarize`, {});
+        showInfoModal({
+          title: `AI Summary – ${item.title}`,
+          bodyHtml: `
+            <p>${escapeHtml(result.summary || '')}</p>
+            ${(result.keyPoints || []).length
+              ? `<ul class="mb-0">${result.keyPoints.map((k) => `<li>${escapeHtml(k)}</li>`).join('')}</ul>`
+              : ''}
+            <p class="small text-secondary mt-3 mb-0">This is an AI-generated summary based on the document content, for quick reference only — the original document remains the source of truth.</p>
+          `,
+        });
+      } catch (err) {
+        toast(err.message, 'danger');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }));
+  };
+
+  // Provider/Game Title text doesn't always come out byte-identical —
+  // manual typing and AI extraction (especially across different uploads
+  // of the same real game) can disagree on casing/spacing ("JDB" vs "jdb",
+  // "PARA PO" vs "Para Po"). All grouping/filtering below normalizes
+  // (trims, lowercases) before comparing so those don't fracture into
+  // separate tabs/rows; a label actually shown on screen is always
+  // whichever exact casing appeared most often, never an invented
+  // "canonical" spelling.
+  const normKey = (v) => String(v || '').trim().toLowerCase();
+  // Provider-only variant of normKey() that also folds known abbreviation
+  // aliases (see PROVIDER_NAME_ALIASES above, e.g. "OP" -> "Omniplay") onto
+  // the same key as their full name, so they group into one tab instead of
+  // two. Only used for the provider dimension — gameTitle grouping still
+  // uses plain normKey(), since it has no equivalent alias table.
+  const normProviderKey = (v) => {
+    const k = normKey(v);
+    return PROVIDER_NAME_ALIASES[k] ? normKey(PROVIDER_NAME_ALIASES[k]) : k;
+  };
+
+  // ---- Game list view: Provider tabs (filter, not navigation) + games ----
+  if (!documentsFolderNav.gameTitle) {
+    const pickRepresentative = (values) => {
+      const counts = {};
+      values.forEach((v) => { counts[v] = (counts[v] || 0) + 1; });
+      return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+    };
+    // Like pickRepresentative() above, but for the provider dimension: if
+    // this group's key is a known alias's target (e.g. everything that
+    // normalizes to "omniplay", whether the raw value was "OP" or
+    // "Omniplay"), always display the full canonical name — never let a
+    // short watermark form "win" just because it happened to appear on
+    // more documents than the spelled-out name did.
+    const pickProviderRepresentative = (key, values) => {
+      const aliasTarget = Object.values(PROVIDER_NAME_ALIASES).find((full) => normKey(full) === key);
+      return aliasTarget || pickRepresentative(values);
+    };
+    const providerVariantsByKey = {};
+    docs.forEach((d) => {
+      if (!d.provider) return;
+      const k = normProviderKey(d.provider);
+      (providerVariantsByKey[k] = providerVariantsByKey[k] || []).push(d.provider);
+    });
+    const providers = Object.entries(providerVariantsByKey)
+      .map(([k, values]) => pickProviderRepresentative(k, values))
+      .sort((a, b) => a.localeCompare(b));
+    const hasUncategorized = docs.some((d) => !d.provider);
+    const selectedProvider = documentsFolderNav.provider; // null = "All"
+    const selectedProviderKey = selectedProvider ? normProviderKey(selectedProvider) : null;
+    const filteredDocs = !selectedProvider ? docs
+      : selectedProvider === UNCATEGORIZED_PROVIDER ? docs.filter((d) => !d.provider)
+      : docs.filter((d) => normProviderKey(d.provider) === selectedProviderKey);
+
+    // Group by normalized provider+gameTitle (not gameTitle alone) so the
+    // same game name under two different providers never gets merged
+    // together when "All" is selected.
+    const gameGroups = {};
+    filteredDocs.forEach((d) => {
+      const gProvider = d.provider || UNCATEGORIZED_PROVIDER;
+      const gTitle = d.gameTitle || UNCATEGORIZED_GAME;
+      const key = normProviderKey(gProvider) + '\0' + normKey(gTitle);
+      if (!gameGroups[key]) gameGroups[key] = { providerVariants: [], gameTitleVariants: [], docs: [] };
+      gameGroups[key].providerVariants.push(gProvider);
+      gameGroups[key].gameTitleVariants.push(gTitle);
+      gameGroups[key].docs.push(d);
+    });
+    const gameRows = Object.values(gameGroups).map((g) => ({
+      provider: pickProviderRepresentative(normProviderKey(g.providerVariants[0]), g.providerVariants),
+      gameTitle: pickRepresentative(g.gameTitleVariants),
+      docs: g.docs,
+    })).sort((a, b) => {
+      if (a.gameTitle === UNCATEGORIZED_GAME) return 1;
+      if (b.gameTitle === UNCATEGORIZED_GAME) return -1;
+      return a.gameTitle.localeCompare(b.gameTitle);
+    });
+
+    const tabKeyAttr = (key) => `data-key="${escapeHtml(key)}"`;
+    const tabsHtml = `
+      <ul class="nav nav-pills mb-3 flex-wrap gap-1">
+        <li class="nav-item"><button type="button" class="btn btn-sm ${!selectedProvider ? 'btn-primary' : 'btn-outline-secondary'} btn-provider-tab" data-key="">All</button></li>
+        ${providers.map((p) => `<li class="nav-item"><button type="button" class="btn btn-sm ${selectedProvider === p ? 'btn-primary' : 'btn-outline-secondary'} btn-provider-tab" ${tabKeyAttr(p)}>${escapeHtml(p)}</button></li>`).join('')}
+        ${hasUncategorized ? `<li class="nav-item"><button type="button" class="btn btn-sm ${selectedProvider === UNCATEGORIZED_PROVIDER ? 'btn-primary' : 'btn-outline-secondary'} btn-provider-tab" ${tabKeyAttr(UNCATEGORIZED_PROVIDER)}>${UNCATEGORIZED_PROVIDER}</button></li>` : ''}
+      </ul>`;
+
+    content.innerHTML = listToolbar({ title: 'Document Center', canCreate }) + tabsHtml + (
+      gameRows.length
+        ? `<div class="card stat-card">
+            <div class="table-responsive">
+              <table class="table table-hover mb-0">
+                <thead class="table-light"><tr><th>Game Title</th><th>Game ID</th><th>Provider</th><th>Latest Upload</th><th class="text-end">Doc Count</th></tr></thead>
+                <tbody>
+                  ${gameRows.map((g) => {
+                    const latestDate = g.docs.reduce((max, d) => (d.createdAt && (!max || d.createdAt > max)) ? d.createdAt : max, null);
+                    const gameId = g.docs.map((d) => d.gameId).find((v) => v);
+                    return `
+                    <tr class="btn-game-row" style="cursor:pointer" data-provider="${escapeHtml(g.provider)}" data-game="${escapeHtml(g.gameTitle)}">
+                      <td>${escapeHtml(g.gameTitle)}</td>
+                      <td>${gameId ? escapeHtml(gameId) : '<span class="text-secondary">—</span>'}</td>
+                      <td>${escapeHtml(g.provider)}</td>
+                      <td class="text-nowrap">${fmtDate(latestDate)}</td>
+                      <td class="text-end text-secondary">${g.docs.length}</td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>`
+        : `<div class="card stat-card"><div class="card-body text-center text-secondary py-4">${docs.length ? 'No documents under this provider yet.' : 'No documents yet.'}</div></div>`
+    );
+
+    content.querySelectorAll('.btn-provider-tab').forEach((btn) => btn.addEventListener('click', () => {
+      documentsFolderNav = { provider: btn.dataset.key || null, gameTitle: null };
+      renderDocuments(content);
+    }));
+    content.querySelectorAll('.btn-game-row').forEach((row) => row.addEventListener('click', () => {
+      documentsFolderNav = { provider: row.dataset.provider, gameTitle: row.dataset.game };
+      renderDocuments(content);
+    }));
+    // Note: no need to also set isPagcorDoc here — showFormModal auto-expands
+    // the "pagcor" section whenever any section-tagged field (provider here)
+    // already has a real value in `initial`, regardless of the checkbox's
+    // own initial value (see showFormModal's sectionsToExpand).
+    if (canCreate) wireUpload(selectedProvider && selectedProvider !== UNCATEGORIZED_PROVIDER ? { provider: selectedProvider } : {});
+    return;
+  }
+
+  // ---- Documents within one Provider + Game (drill-down) -----------------
+  const gameDocs = docs.filter((d) => normProviderKey(d.provider || UNCATEGORIZED_PROVIDER) === normProviderKey(documentsFolderNav.provider) && normKey(d.gameTitle || UNCATEGORIZED_GAME) === normKey(documentsFolderNav.gameTitle));
+  // Comparable straight from this folder — no Case required. The Case
+  // detail page's own "AI Parameter Consistency Check" only ever sees documents whose
+  // Related Case already points at that Case; plenty of games get filed
+  // here before (or without) a Case existing for them at all, so this
+  // folder-scoped version compares whatever's actually sitting in this
+  // Provider+Game folder instead of requiring that extra linking step
+  // first.
+  const gameDocsWithFile = gameDocs.filter((d) => d.filePath);
+  const canCheckConsistency = gameDocsWithFile.length >= 2;
+  content.innerHTML = listToolbar({
+    title: `Document Center — ${documentsFolderNav.provider} / ${documentsFolderNav.gameTitle}`, canCreate,
+    extraButtonsHtml: canCheckConsistency ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckFolderConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : '',
+  }) + `
+    <div class="mb-3"><a href="#" id="btnBackToList" class="small text-decoration-none">&larr; All Documents</a></div>
     <div class="card stat-card">
       <div class="table-responsive">
         <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>Title</th><th>Category</th><th>Provider</th><th>Game</th><th>Report Type</th><th>File</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
+          <thead class="table-light"><tr><th>Title</th><th>File</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
           <tbody>
-            ${docs.map((d) => `
+            ${gameDocs.map((d) => `
               <tr>
                 <td>${escapeHtml(d.title)}</td>
-                <td><span class="badge text-bg-light border">${escapeHtml(d.category)}</span></td>
-                <td>${escapeHtml(d.provider || '—')}</td>
-                <td>${escapeHtml(d.gameTitle || '—')}</td>
-                <td>${d.reportType ? `<span class="badge text-bg-light border">${escapeHtml(d.reportType)}</span>` : '<span class="text-secondary">—</span>'}</td>
-                <td>${d.filePath ? `<a href="/api/documents/${d.id}/download" class="text-decoration-none">${Icon('download', 'me-1')}${escapeHtml(d.fileName || 'file')}</a>` : `<span class="text-secondary">${escapeHtml(d.fileName || '—')}</span>`}</td>
+                <td>${d.filePath ? `<button type="button" class="btn btn-link btn-sm p-0 text-decoration-none btn-download-doc" data-id="${d.id}" data-filename="${escapeHtml(d.fileName || 'file')}">${Icon('download', 'me-1')}${escapeHtml(d.fileName || 'file')}</button>` : `<span class="text-secondary">${escapeHtml(d.fileName || '—')}</span>`}</td>
                 <td>${escapeHtml(userName(d.uploadedBy))}</td>
                 <td class="text-nowrap">${fmtDate(d.createdAt)}</td>
                 <td class="text-end">
-                  ${d.filePath ? `<button class="btn btn-sm btn-outline-primary btn-summarize" data-id="${d.id}" title="AI 幫我抓重點">${Icon('sparkle')}</button>` : ''}
+                  ${d.filePath ? `<button class="btn btn-sm btn-outline-secondary btn-preview-doc" data-id="${d.id}" title="Preview">${Icon('eye')}</button>` : ''}
+                  ${d.filePath ? `<button class="btn btn-sm btn-outline-primary btn-summarize" data-id="${d.id}" title="AI Summarize">${Icon('sparkle')}</button>` : ''}
+                  ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-replace-doc" data-id="${d.id}" title="Replace File">${Icon('upload')}</button>` : ''}
+                  ${d.filePath ? `<button class="btn btn-sm btn-outline-secondary btn-doc-history" data-id="${d.id}" title="Version History">${Icon('history')}</button>` : ''}
                   ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${d.id}">${Icon('edit')}</button>` : ''}
                   ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${d.id}">${Icon('trash')}</button>` : ''}
                 </td>
-              </tr>`).join('') || `<tr><td colspan="9" class="text-center text-secondary py-3">No documents yet.</td></tr>`}
+              </tr>`).join('') || `<tr><td colspan="5" class="text-center text-secondary py-3">No documents yet.</td></tr>`}
           </tbody>
         </table>
       </div>
     </div>`;
-
-  const fields = () => ([
-    { name: 'title', label: 'Title', required: true },
-    { name: 'category', label: 'Category', type: 'select', options: ['Templates', 'Policies', 'Agreements', 'Certificates', 'Other'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP' },
-    { name: 'gameTitle', label: 'Game Title (optional)' },
-    { name: 'reportType', label: 'Report Type (optional)', type: 'select', allowEmpty: true, options: REPORT_TYPE_OPTIONS.map((v) => ({ value: v, label: v })) },
-    { name: 'relatedCaseId', label: 'Related Case (optional)', type: 'select', allowEmpty: true, options: State.lookups.cases.map((c) => ({ value: c.id, label: c.caseNumber + ' - ' + c.title })) },
-    { name: 'relatedContractId', label: 'Related Contract (optional)', type: 'select', allowEmpty: true, options: State.lookups.contracts.map((c) => ({ value: c.id, label: c.contractNumber + ' - ' + c.title })) },
-    { name: 'fileName', label: 'File Upload', type: 'file' },
-  ]);
-
-  if (canCreate) content.querySelector('#btnCreate').addEventListener('click', () => {
-    showFormModal({ title: 'Upload Document', fields: fields(), submitLabel: 'Upload',
-      aiAssist: { module: 'documents' },
-      onSubmit: async (data) => { await Api.post('/api/documents', data); toast('Document uploaded'); route(); } });
+  content.querySelector('#btnBackToList').addEventListener('click', (e) => {
+    e.preventDefault(); documentsFolderNav = { ...documentsFolderNav, gameTitle: null }; renderDocuments(content);
   });
-  content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
-    const item = docs.find((d) => d.id === btn.dataset.id);
-    showFormModal({ title: 'Edit Document', fields: fields().filter((f) => f.name !== 'fileName'), initial: item,
-      onSubmit: async (data) => { await Api.put(`/api/documents/${item.id}`, data); toast('Updated'); route(); } });
-  }));
-  content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async () => {
-    if (!(await confirmDialog('Delete this document?'))) return;
-    await Api.del(`/api/documents/${btn.dataset.id}`);
-    toast('Deleted'); route();
-  }));
-  content.querySelectorAll('.btn-summarize').forEach((btn) => btn.addEventListener('click', async () => {
-    const item = docs.find((d) => d.id === btn.dataset.id);
-    const originalHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '…';
+  const checkBtn = content.querySelector('#btnCheckFolderConsistency');
+  if (checkBtn) checkBtn.addEventListener('click', async () => {
+    const originalHtml = checkBtn.innerHTML;
+    checkBtn.disabled = true;
+    checkBtn.innerHTML = '…';
     try {
-      const result = await Api.post(`/api/documents/${item.id}/summarize`, {});
-      showInfoModal({
-        title: `AI 重點摘要 – ${item.title}`,
-        bodyHtml: `
-          <p>${escapeHtml(result.summary || '')}</p>
-          ${(result.keyPoints || []).length
-            ? `<ul class="mb-0">${result.keyPoints.map((k) => `<li>${escapeHtml(k)}</li>`).join('')}</ul>`
-            : ''}
-          <p class="small text-secondary mt-3 mb-0">這是 AI 根據文件內容整理的重點摘要,僅供快速參考,實際內容仍以原文件為準。</p>
-        `,
+      const gameId = gameDocsWithFile.map((d) => d.gameId).find((v) => v);
+      const result = await Api.post('/api/documents/check-consistency', {
+        documentIds: gameDocsWithFile.map((d) => d.id),
+        gameTitle: documentsFolderNav.gameTitle !== UNCATEGORIZED_GAME ? documentsFolderNav.gameTitle : undefined,
+        gameId,
       });
+      showConsistencyResultModal(`${documentsFolderNav.provider} / ${documentsFolderNav.gameTitle}`, result);
     } catch (err) {
       toast(err.message, 'danger');
     } finally {
-      btn.disabled = false;
-      btn.innerHTML = originalHtml;
+      checkBtn.disabled = false;
+      checkBtn.innerHTML = originalHtml;
     }
-  }));
+  });
+  if (canCreate) {
+    const prefill = {};
+    if (documentsFolderNav.provider !== UNCATEGORIZED_PROVIDER) prefill.provider = documentsFolderNav.provider;
+    if (documentsFolderNav.gameTitle !== UNCATEGORIZED_GAME) prefill.gameTitle = documentsFolderNav.gameTitle;
+    wireUpload(prefill);
+  }
+  wireRowActions(gameDocs);
 }
 
 // ---------------------------------------------------------------------------
 // Page: Task Management
 // ---------------------------------------------------------------------------
+// A task counts as Overdue when it has a Due Date in the past and isn't
+// already Completed — same "overdue" definition the Dashboard's Today's
+// To-Dos widget uses. Deliberately a derived bucket, not a real `status`
+// value stored on the task — a task that's actually "In Progress" but past
+// its due date should still show as In Progress if you clear the Overdue
+// filter, not silently change status.
+function isTaskOverdue(t) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return t.status !== 'Completed' && t.dueDate && t.dueDate < todayStr;
+}
+
+// The 4 stat tiles above the task table (see renderTasks) — count + tone +
+// icon for each bucket, and how to test whether a given task falls into it.
+// 'All' isn't included here; it's just "no filter applied" (taskStatusFilter
+// === null), same convention as documentsFolderNav's provider filter.
+const TASK_STAT_TILES = [
+  { key: 'Not Started', label: 'Not Started', tone: 'indigo', icon: 'checklist', test: (t) => t.status === 'Not Started' },
+  { key: 'In Progress', label: 'In Progress', tone: 'amber', icon: 'clock', test: (t) => t.status === 'In Progress' },
+  { key: 'Completed', label: 'Completed', tone: 'green', icon: 'checkSquare', test: (t) => t.status === 'Completed' },
+  { key: 'Overdue', label: 'Overdue', tone: 'rose', icon: 'bell', test: isTaskOverdue },
+];
+
 async function renderTasks(content) {
   const tasks = await Api.get('/api/tasks');
   const canCreate = canDo('tasks', 'create');
   const canEdit = canDo('tasks', 'edit');
   const canDelete = canDo('tasks', 'delete');
-  content.innerHTML = listToolbar({ title: 'Task Management', canCreate }) + `
+
+  const statTilesHtml = `
+    <div class="row g-3 mb-3">
+      ${TASK_STAT_TILES.map((tile) => {
+        const count = tasks.filter(tile.test).length;
+        const active = taskStatusFilter === tile.key;
+        return `
+        <div class="col-6 col-md-3">
+          <div class="card stat-card stat-card-clickable${active ? ' stat-card-active' : ''} btn-task-stat" data-key="${tile.key}" role="button" style="cursor:pointer;">
+            <div class="card-body">
+              <div class="stat-icon tone-${tile.tone}">${Icon(tile.icon)}</div>
+              <div class="stat-value">${count}</div>
+              <div class="stat-label">${escapeHtml(tile.label)}</div>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  const activeTile = TASK_STAT_TILES.find((tile) => tile.key === taskStatusFilter);
+  const filteredTasks = activeTile ? tasks.filter(activeTile.test) : tasks;
+
+  content.innerHTML = listToolbar({ title: 'Task Management', canCreate }) + statTilesHtml + (
+    activeTile ? `<div class="mb-2"><button type="button" class="btn btn-sm btn-outline-secondary" id="btnClearTaskFilter">${Icon('x', 'me-1')}Clear filter: ${escapeHtml(activeTile.label)}</button></div>` : ''
+  ) + `
     <div class="card stat-card">
       <div class="table-responsive">
         <table class="table table-hover mb-0">
           <thead class="table-light"><tr><th>Title</th><th>Type</th><th>Assignee</th><th>Due</th><th>Status</th><th></th></tr></thead>
           <tbody>
-            ${tasks.map((t) => `
+            ${filteredTasks.map((t) => `
               <tr>
                 <td>${escapeHtml(t.title)}${caseName(t.relatedCaseId) ? `<div class="small text-secondary">${escapeHtml(caseName(t.relatedCaseId))}</div>` : ''}</td>
                 <td><span class="badge text-bg-light border text-capitalize">${escapeHtml(t.type)}</span></td>
                 <td>${escapeHtml(userName(t.assigneeId))}</td>
                 <td class="text-nowrap">${fmtDate(t.dueDate)}</td>
-                <td>${badge(t.status)}</td>
+                <td>${badge(t.status)}${isTaskOverdue(t) ? ` ${badge('Overdue')}` : ''}</td>
                 <td class="text-end">
                   ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${t.id}">${Icon('edit')}</button>` : ''}
                   ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${t.id}">${Icon('trash')}</button>` : ''}
                 </td>
-              </tr>`).join('') || `<tr><td colspan="6" class="text-center text-secondary py-3">No tasks yet.</td></tr>`}
+              </tr>`).join('') || `<tr><td colspan="6" class="text-center text-secondary py-3">${activeTile ? `No ${activeTile.label} tasks.` : 'No tasks yet.'}</td></tr>`}
           </tbody>
         </table>
       </div>
     </div>`;
 
-  const fields = () => ([
-    { name: 'title', label: 'Title', required: true },
-    { name: 'description', label: 'Description', type: 'textarea' },
-    { name: 'assigneeId', label: 'Assignee', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
-    { name: 'type', label: 'Type', type: 'select', options: [{ value: 'personal', label: 'Personal' }, { value: 'team', label: 'Team' }], required: true },
-    { name: 'status', label: 'Status', type: 'select', options: ['Not Started', 'In Progress', 'Completed'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'dueDate', label: 'Due Date', type: 'date' },
-    { name: 'relatedCaseId', label: 'Related Case (optional)', type: 'select', allowEmpty: true, options: State.lookups.cases.map((c) => ({ value: c.id, label: c.caseNumber + ' - ' + c.title })) },
-    { name: 'relatedContractId', label: 'Related Contract (optional)', type: 'select', allowEmpty: true, options: State.lookups.contracts.map((c) => ({ value: c.id, label: c.contractNumber + ' - ' + c.title })) },
-  ]);
+  content.querySelectorAll('.btn-task-stat').forEach((card) => card.addEventListener('click', () => {
+    taskStatusFilter = taskStatusFilter === card.dataset.key ? null : card.dataset.key;
+    renderTasks(content);
+  }));
+  const clearFilterBtn = content.querySelector('#btnClearTaskFilter');
+  if (clearFilterBtn) clearFilterBtn.addEventListener('click', () => { taskStatusFilter = null; renderTasks(content); });
+
+  const fields = taskFormFields;
 
   if (canCreate) content.querySelector('#btnCreate').addEventListener('click', () => {
     showFormModal({ title: 'New Task', fields: fields(), initial: { type: 'personal', status: 'Not Started' },
@@ -1801,7 +3569,7 @@ async function renderTasks(content) {
       } });
   });
   content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
-    const item = tasks.find((t) => t.id === btn.dataset.id);
+    const item = filteredTasks.find((t) => t.id === btn.dataset.id);
     showFormModal({ title: 'Edit Task', fields: fields(), initial: item,
       onSubmit: async (data) => { await Api.put(`/api/tasks/${item.id}`, data); toast('Task updated'); route(); } });
   }));
@@ -1935,6 +3703,9 @@ async function renderSettings(content) {
       <li class="nav-item"><button class="nav-link active" data-tab="users">Users</button></li>
       <li class="nav-item"><button class="nav-link" data-tab="roles">Roles &amp; Permissions</button></li>
       <li class="nav-item"><button class="nav-link" data-tab="departments">Departments</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="notifications">Notification Settings</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="submission">Submission Settings</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="requiredDocuments">Required Document Settings</button></li>
     </ul>
     <div id="settingsBody"></div>`;
   const body = content.querySelector('#settingsBody');
@@ -1943,6 +3714,9 @@ async function renderSettings(content) {
     if (tab === 'users') return renderUsersTab(body);
     if (tab === 'roles') return renderRolesTab(body);
     if (tab === 'departments') return renderDepartmentsTab(body);
+    if (tab === 'notifications') return renderNotificationSettingsTab(body);
+    if (tab === 'submission') return renderSubmissionSettingsTab(body);
+    if (tab === 'requiredDocuments') return renderRequiredDocumentSettingsTab(body);
   }
   content.querySelectorAll('#settingsTabs .nav-link').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
   await showTab('users');
@@ -2040,6 +3814,132 @@ async function renderDepartmentsTab(body) {
     await Api.del(`/api/departments/${btn.dataset.id}`);
     toast('Deleted'); renderDepartmentsTab(body);
   }));
+}
+
+// Settings > Notification Settings — toggles which in-app notifications the
+// system actually sends (see server/routes.js's notifyCaseStageChange /
+// notifyTaskAssignee / the approval-decision notify call, all gated by
+// these same three keys). All three default to on, matching how the system
+// has always behaved.
+async function renderNotificationSettingsTab(body) {
+  const settings = await Api.get('/api/settings');
+  const canEdit = canDo('settings', 'edit');
+  const n = settings.notifications || {};
+  const rows = [
+    { key: 'notifyOnApprovalDecision', label: 'Notify on Approval Decision', hint: 'Notify the requester when their approval request is approved or rejected.' },
+    { key: 'notifyOnTaskAssignment', label: 'Notify on Task Assignment', hint: 'Notify a user when they are assigned (or reassigned) to a task.' },
+    { key: 'notifyOnCaseStageChange', label: 'Notify on Case Status Change', hint: 'Notify a case\'s Owner when its PAGCOR Stage changes.' },
+  ];
+  body.innerHTML = `
+    <div class="card stat-card"><div class="card-body">
+      <h6 class="mb-3">Notification Settings</h6>
+      <form id="notificationSettingsForm">
+        ${rows.map((r) => `
+          <div class="form-check form-switch mb-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="chk-${r.key}" ${n[r.key] !== false ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
+            <label class="form-check-label" for="chk-${r.key}">${escapeHtml(r.label)}</label>
+            <div class="small text-secondary">${escapeHtml(r.hint)}</div>
+          </div>`).join('')}
+        ${canEdit ? `<button type="submit" class="btn btn-primary">Save</button>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
+      </form>
+    </div></div>`;
+  if (!canEdit) return;
+  body.querySelector('#notificationSettingsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const notifications = {};
+    rows.forEach((r) => { notifications[r.key] = body.querySelector(`#chk-${r.key}`).checked; });
+    try {
+      await Api.put('/api/settings', { notifications });
+      toast('Notification settings saved');
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  });
+}
+
+// Settings > Submission Settings — the follow-up window used both to
+// auto-create each case's "follow up N days later" Task Management
+// reminder (see server/routes.js's syncDeadlineFollowUpTask) and to flag
+// games stuck in a PAGCOR stage on the Dashboard (see
+// /api/dashboard/summary's followUps).
+async function renderSubmissionSettingsTab(body) {
+  const settings = await Api.get('/api/settings');
+  const canEdit = canDo('settings', 'edit');
+  body.innerHTML = `
+    <div class="card stat-card"><div class="card-body">
+      <h6 class="mb-3">Submission Settings</h6>
+      <form id="submissionSettingsForm">
+        <div class="mb-3" style="max-width:320px;">
+          <label class="form-label">Follow-up window (days)</label>
+          <input type="number" min="1" class="form-control" id="followUpDays" value="${settings.followUpDays || 30}" ${canEdit ? '' : 'disabled'}>
+          <div class="small text-secondary mt-1">How many days after a case's Submit Date to automatically create a follow-up reminder, and how long a case can sit in "Submitted to PAGCOR" / "Under PAGCOR Review" before it's flagged on the Dashboard.</div>
+        </div>
+        ${canEdit ? `<button type="submit" class="btn btn-primary">Save</button>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
+      </form>
+    </div></div>`;
+  if (!canEdit) return;
+  body.querySelector('#submissionSettingsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const followUpDays = Number(body.querySelector('#followUpDays').value);
+    try {
+      await Api.put('/api/settings', { followUpDays });
+      toast('Submission settings saved');
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  });
+}
+
+// Settings > Required Document Settings — the checklist template a new
+// PAGCOR case (a case with a Provider set) gets automatically (see
+// server/routes.js's getChecklistTemplate, used by cases' onCreate).
+// Editing this only affects cases created after saving; existing cases keep
+// whatever checklist they already have, same as changing a template never
+// rewrites past records.
+async function renderRequiredDocumentSettingsTab(body) {
+  const settings = await Api.get('/api/settings');
+  const canEdit = canDo('settings', 'edit');
+  let items = (settings.requiredDocumentChecklist || []).map((i) => ({ ...i }));
+
+  function draw() {
+    body.innerHTML = `
+      <div class="card stat-card"><div class="card-body">
+        <h6 class="mb-1">Required Document Settings</h6>
+        <p class="small text-secondary">The document checklist shown on every new PAGCOR case. Changing this only affects cases created after saving — existing cases keep their current checklist.</p>
+        <div id="reqDocRows">
+          ${items.map((it, idx) => `
+            <div class="d-flex gap-2 align-items-center mb-2" data-idx="${idx}">
+              <input type="text" class="form-control form-control-sm req-doc-label" value="${escapeHtml(it.label || '')}" placeholder="Document name" ${canEdit ? '' : 'disabled'}>
+              ${canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-remove-req-doc" data-idx="${idx}">${Icon('trash')}</button>` : ''}
+            </div>`).join('') || '<div class="small text-secondary mb-2">No required documents configured.</div>'}
+        </div>
+        ${canEdit ? `
+          <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="btnAddReqDoc">${Icon('plus', 'me-1')}Add Document</button>
+          <div><button type="button" class="btn btn-primary" id="btnSaveReqDocs">Save</button></div>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
+      </div></div>`;
+    if (!canEdit) return;
+    body.querySelector('#btnAddReqDoc').addEventListener('click', () => {
+      items.push({ key: `doc${items.length}-${Math.floor(Math.random() * 100000)}`, label: '' });
+      draw();
+    });
+    body.querySelectorAll('.btn-remove-req-doc').forEach((btn) => btn.addEventListener('click', () => {
+      items.splice(Number(btn.dataset.idx), 1);
+      draw();
+    }));
+    body.querySelector('#btnSaveReqDocs').addEventListener('click', async () => {
+      const labels = Array.from(body.querySelectorAll('.req-doc-label')).map((el) => el.value.trim());
+      if (labels.some((l) => !l)) { toast('Each document needs a name.', 'danger'); return; }
+      const payload = labels.map((label, idx) => ({ key: items[idx].key || `doc${idx}`, label }));
+      try {
+        await Api.put('/api/settings', { requiredDocumentChecklist: payload });
+        toast('Required document settings saved');
+        items = payload;
+      } catch (err) {
+        toast(err.message, 'danger');
+      }
+    });
+  }
+  draw();
 }
 
 // ---------------------------------------------------------------------------

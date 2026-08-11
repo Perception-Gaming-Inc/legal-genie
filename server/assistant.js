@@ -1,8 +1,9 @@
 'use strict';
 /**
  * "AI Assistant" — a chat entry point where a user can type a plain-language
- * request ("幫我建立一個日本客戶的 NDA", "幫我找去年所有菲律賓客戶的授權合約")
- * and have Gemini either answer directly (for read-only lookups — it calls
+ * request ("Create an NDA for a Japanese client", "Find every licensing
+ * contract from Philippine clients last year") and have Gemini either
+ * answer directly (for read-only lookups — it calls
  * search_* tools, which THIS SERVER executes immediately against the real
  * data and feeds back to Gemini to summarize) or propose a concrete action
  * (create_case / create_contract / create_task) that the user must
@@ -14,7 +15,7 @@
  * Design principle: read-only tool calls execute automatically (no side
  * effects, nothing to confirm); anything that WRITES data always comes back
  * to the frontend as a `pendingAction` first — the user sees exactly what
- * would be created and must click "確認執行" before executeAction() below
+ * would be created and must click "Confirm" before executeAction() below
  * ever runs. This mirrors the same "propose, then human confirms" pattern
  * used for other side-effectful actions, since an internal legal system is
  * exactly the kind of place a wrong auto-created record is a real nuisance
@@ -202,9 +203,9 @@ async function callGemini(contents, systemText) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
-      'AI Assistant 尚未設定 —— 需要先在環境變數加入 GEMINI_API_KEY(見 README，' +
-      '可以在 https://aistudio.google.com/apikey 免費申請，不需要信用卡)，' +
-      '在那之前系統其他功能完全不受影響。'
+      'AI Assistant is not set up yet — add GEMINI_API_KEY to your environment variables first ' +
+      '(see the README; you can get a free key at https://aistudio.google.com/apikey, no credit ' +
+      'card required). The rest of the system is unaffected until then.'
     );
   }
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
@@ -220,7 +221,7 @@ async function callGemini(contents, systemText) {
   if (!response.ok) {
     let detail = '';
     try { detail = (await response.json())?.error?.message || ''; } catch (e) { /* ignore */ }
-    throw new Error(`AI 服務回應錯誤 (${response.status})${detail ? `:${detail}` : ''}`);
+    throw new Error(`AI service error (${response.status})${detail ? `: ${detail}` : ''}`);
   }
   return response.json();
 }
@@ -236,21 +237,21 @@ function textFrom(parts) {
 // Human-readable summaries for pending (unconfirmed) write actions
 // ---------------------------------------------------------------------------
 function summarize(type, resolvedInput, notes) {
-  const noteSuffix = notes.length ? `（${notes.join('；')}）` : '';
+  const noteSuffix = notes.length ? ` (${notes.join('; ')})` : '';
   if (type === 'create_case') {
     const pagcorPart = resolvedInput.provider
-      ? `，Provider ${resolvedInput.provider}${resolvedInput.gameTitle ? `，遊戲《${resolvedInput.gameTitle}》` : ''}`
+      ? `, Provider ${resolvedInput.provider}${resolvedInput.gameTitle ? `, Game "${resolvedInput.gameTitle}"` : ''}`
       : '';
-    return `建立案件:「${resolvedInput.title}」— 類型 ${resolvedInput.type}，優先度 ${resolvedInput.priority || 'Medium'}` +
-      `${resolvedInput.deadline ? `，期限 ${resolvedInput.deadline}` : ''}${pagcorPart}${noteSuffix}`;
+    return `Create Case: "${resolvedInput.title}" — Type ${resolvedInput.type}, Priority ${resolvedInput.priority || 'Medium'}` +
+      `${resolvedInput.deadline ? `, Submit Date ${resolvedInput.deadline}` : ''}${pagcorPart}${noteSuffix}`;
   }
   if (type === 'create_contract') {
-    return `建立合約:「${resolvedInput.title}」— 對象 ${resolvedInput.counterparty}，類型 ${resolvedInput.type}${noteSuffix}`;
+    return `Create Contract: "${resolvedInput.title}" — Counterparty ${resolvedInput.counterparty}, Type ${resolvedInput.type}${noteSuffix}`;
   }
   if (type === 'create_task') {
-    return `建立待辦:「${resolvedInput.title}」${resolvedInput.dueDate ? `，到期 ${resolvedInput.dueDate}` : ''}${noteSuffix}`;
+    return `Create Task: "${resolvedInput.title}"${resolvedInput.dueDate ? `, Due ${resolvedInput.dueDate}` : ''}${noteSuffix}`;
   }
-  return `執行 ${type}`;
+  return `Run ${type}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +295,7 @@ async function runTurn({ history = [], text, user }) {
 
     if (functionCalls.length === 0) {
       // Plain reply, no tool calls — conversation turn is done.
-      return { reply: textFrom(parts) || '（沒有內容）', pendingActions: [] };
+      return { reply: textFrom(parts) || '(No content)', pendingActions: [] };
     }
 
     const writeCall = functionCalls.find((p) => WRITE_TOOLS[p.functionCall.name]);
@@ -336,7 +337,7 @@ async function runTurn({ history = [], text, user }) {
     contents.push({ role: 'user', parts: functionResponseParts });
   }
 
-  return { reply: '這個請求需要的步驟有點多，可以請你拆成比較小的問題再試一次嗎？', pendingActions: [] };
+  return { reply: 'This request needs quite a few steps — could you try breaking it into smaller questions?', pendingActions: [] };
 }
 
 async function resolvePendingAction(call, user) {
@@ -345,7 +346,7 @@ async function resolvePendingAction(call, user) {
 
   if (call.name === 'create_case') {
     const owner = await resolveUserId(input.ownerUsername, user.id);
-    if (owner.resolvedFrom === 'not-found') notes.push(`找不到使用者「${owner.requested}」，已預設指派給你`);
+    if (owner.resolvedFrom === 'not-found') notes.push(`User "${owner.requested}" not found — defaulted to assigning it to you`);
     const resolvedInput = {
       title: input.title, type: input.type, priority: input.priority || 'Medium',
       status: 'Open', deadline: input.deadline || null, description: input.description || '',
@@ -362,7 +363,7 @@ async function resolvePendingAction(call, user) {
 
   if (call.name === 'create_contract') {
     const owner = await resolveUserId(input.ownerUsername, user.id);
-    if (owner.resolvedFrom === 'not-found') notes.push(`找不到使用者「${owner.requested}」，已預設指派給你`);
+    if (owner.resolvedFrom === 'not-found') notes.push(`User "${owner.requested}" not found — defaulted to assigning it to you`);
     const resolvedInput = {
       title: input.title, counterparty: input.counterparty, type: input.type,
       effectiveDate: input.effectiveDate || null, expiryDate: input.expiryDate || null,
@@ -373,11 +374,11 @@ async function resolvePendingAction(call, user) {
 
   if (call.name === 'create_task') {
     const assignee = await resolveUserId(input.assigneeUsername, user.id);
-    if (assignee.resolvedFrom === 'not-found') notes.push(`找不到使用者「${assignee.requested}」，已預設指派給你`);
+    if (assignee.resolvedFrom === 'not-found') notes.push(`User "${assignee.requested}" not found — defaulted to assigning it to you`);
     let relatedCaseId = null;
     if (input.relatedCaseNumber) {
       relatedCaseId = await resolveCaseId(input.relatedCaseNumber);
-      if (!relatedCaseId) notes.push(`找不到案件「${input.relatedCaseNumber}」，將不連結案件`);
+      if (!relatedCaseId) notes.push(`Case "${input.relatedCaseNumber}" not found — will not be linked`);
     }
     const resolvedInput = {
       title: input.title, description: input.description || '', assigneeId: assignee.id,

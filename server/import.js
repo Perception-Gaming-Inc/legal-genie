@@ -198,6 +198,7 @@ function mapRow(row, colMap, sheetSettings, sheetName) {
     gameVersion: asTrimmedString(cell(row, colMap.gameVersion)),
     withJackpot: colMap.withJackpot !== undefined ? normalizeYesNo(cell(row, colMap.withJackpot)) : null,
     pagcorStage,
+    pagcorStageChangedAt: new Date().toISOString(),
     pagcorChecklist,
     description: descParts.join(' '),
     // Not persisted on the Case itself (routes.js strips this before

@@ -236,4 +236,35 @@ function readXlsx(buffer) {
   });
 }
 
-module.exports = { readXlsx, excelSerialToIsoDate };
+// Used by server/ai.js's filePart(): AI smart-fill (extractFields, the
+// consistency check, etc.) sends Gemini either inlineData (PDF/images) or a
+// plain `text` part — there's no third "spreadsheet" input type, so an
+// .xlsx upload gets converted to a flat tab-separated text table instead
+// and sent the same way a pasted-in text excerpt would be. Reuses
+// readXlsx() above rather than re-parsing the file a second way, so both
+// the Excel-import feature and AI smart-fill stay behind one xlsx reader.
+const MAX_XLSX_TEXT_CHARS = 60000; // keeps the AI prompt a sane size for very large workbooks
+function xlsxToText(buffer) {
+  const sheets = readXlsx(buffer);
+  if (!sheets.length || sheets.every((s) => !s.rows.length)) {
+    throw new Error('No worksheet content was found in this .xlsx file.');
+  }
+  const cellText = (v) => (v === null || v === undefined ? '' : String(v));
+  let out = '';
+  let truncated = false;
+  for (const sheet of sheets) {
+    if (truncated) break;
+    const label = sheets.length > 1 ? `[Sheet: ${sheet.name || '(unnamed)'}]\n` : '';
+    const sheetText = `${label}${sheet.rows.map((r) => r.map(cellText).join('\t')).join('\n')}\n`;
+    if (out.length + sheetText.length > MAX_XLSX_TEXT_CHARS) {
+      out += sheetText.slice(0, Math.max(0, MAX_XLSX_TEXT_CHARS - out.length));
+      truncated = true;
+    } else {
+      out += sheetText;
+    }
+  }
+  if (truncated) out += '\n...(content too long, truncated)';
+  return out.trim();
+}
+
+module.exports = { readXlsx, excelSerialToIsoDate, xlsxToText };

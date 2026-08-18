@@ -63,10 +63,29 @@ function uuid() {
   return crypto.randomUUID();
 }
 
+// Supabase/PostgREST caps how many rows a single select returns (the
+// project's "Max Rows" setting, 1000 by default) — a plain `.select()` with
+// no .range() silently returns just the first page once a collection grows
+// past that cap, with no error, which every caller here (case/document
+// lists, dashboard, login's user lookup, session lookup) assumed could
+// never happen. Paginates internally instead, so every existing caller
+// keeps working unchanged and genuinely gets everything. .order('id') gives
+// a stable cursor across pages — pagination without an explicit order isn't
+// guaranteed stable in Postgres if rows are being written concurrently.
+const PAGE_SIZE = 1000;
 async function all(collection) {
-  const { data, error } = await supabase.from('records').select('data').eq('collection', collection);
-  if (error) throw new Error(`store.all(${collection}): ${error.message}`);
-  return data.map((row) => row.data);
+  const out = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('records').select('data').eq('collection', collection)
+      .order('id').range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(`store.all(${collection}): ${error.message}`);
+    out.push(...data.map((row) => row.data));
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return out;
 }
 
 async function find(collection, id) {
@@ -78,20 +97,56 @@ async function find(collection, id) {
 
 async function insert(collection, record) {
   const row = { id: uuid(), createdAt: new Date().toISOString(), ...record };
+  // version: 1 — see update()'s comment below for why this exists. Every
+  // record starts at version 1; requires the `version` column added by the
+  // migration in supabase-schema.sql.
   const { error } = await supabase.from('records').insert({
-    collection, id: row.id, data: row, created_at: row.createdAt,
+    collection, id: row.id, data: row, created_at: row.createdAt, version: 1,
   });
   if (error) throw new Error(`store.insert(${collection}): ${error.message}`);
   return row;
 }
 
-async function update(collection, id, patch) {
-  const existing = await find(collection, id);
-  if (!existing) return null;
-  const updated = { ...existing, ...patch, updatedAt: new Date().toISOString() };
-  const { error } = await supabase
-    .from('records').update({ data: updated }).eq('collection', collection).eq('id', id);
+// Optimistic-locking update, replacing what used to be a plain
+// read-modify-write: read the row, merge the patch in JS, write the whole
+// merged object back. That pattern has a real lost-update race — two
+// concurrent updates to the SAME record both read the same starting
+// snapshot, and whichever write lands second silently overwrites the
+// first's change (e.g. two admins each save a different Settings tab at
+// nearly the same time; the second save's merge is based on stale data, so
+// it silently reverts the first admin's change even though both requests
+// return success).
+//
+// Fixed here using a `version` integer column (see supabase-schema.sql):
+// the UPDATE is conditioned on `.eq('version', currentVersion)` in the same
+// atomic statement as the write, so if another update already landed
+// between our read and our write, this one matches zero rows instead of
+// blindly overwriting. On that conflict, retry (bounded — see maxAttempts)
+// by re-reading the now-current row and reapplying THIS caller's patch on
+// top of it, rather than silently losing the caller's change or silently
+// clobbering the other update's. A plain top-level column filter
+// (`version`, not a JSONB path into `data`) is used deliberately — it's the
+// same simple `.eq()` pattern already used everywhere else in this file,
+// not something new to get subtly wrong against real Postgres.
+async function update(collection, id, patch, _attempt = 1) {
+  const { data: row, error: readErr } = await supabase
+    .from('records').select('data, version').eq('collection', collection).eq('id', id).maybeSingle();
+  if (readErr) throw new Error(`store.update(${collection}, ${id}): ${readErr.message}`);
+  if (!row) return null;
+  const currentVersion = row.version || 1;
+  const updated = { ...row.data, ...patch, updatedAt: new Date().toISOString() };
+  const { error, count } = await supabase
+    .from('records')
+    .update({ data: updated, version: currentVersion + 1 }, { count: 'exact' })
+    .eq('collection', collection).eq('id', id).eq('version', currentVersion);
   if (error) throw new Error(`store.update(${collection}, ${id}): ${error.message}`);
+  if (!count) {
+    const maxAttempts = 5;
+    if (_attempt >= maxAttempts) {
+      throw new Error(`store.update(${collection}, ${id}): gave up after ${maxAttempts} conflicting concurrent updates`);
+    }
+    return update(collection, id, patch, _attempt + 1);
+  }
   return updated;
 }
 

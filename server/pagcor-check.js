@@ -4,7 +4,7 @@
  * Approval" letter (read by AI in server/ai.js's extractApprovalNotice,
  * since these letters are usually scanned images with no text layer) up
  * against Tiffany's own tracked cases, and auto-advances any matched case's
- * PAGCOR Stage to "LOA Approved" without her having to manually look each
+ * PAGCOR Stage to "Approved" without her having to manually look each
  * one up or update it by hand.
  *
  * An earlier version of this feature instead cross-referenced PAGCOR's own
@@ -87,7 +87,7 @@ async function applyApprovalNoticeGames(cases, noticeGames, updateFn) {
     }
 
     const c = candidates[0];
-    if (c.pagcorStage === 'LOA Approved') {
+    if (c.pagcorStage === 'Approved') {
       alreadyApproved.push({ caseNumber: c.caseNumber, title: c.title, gameId: c.gameId });
       continue;
     }
@@ -95,9 +95,9 @@ async function applyApprovalNoticeGames(cases, noticeGames, updateFn) {
       skippedRejected.push({ caseNumber: c.caseNumber, title: c.title, gameId: c.gameId });
       continue;
     }
-    const oldStage = c.pagcorStage || 'Not Started';
-    await updateFn(c.id, { pagcorStage: 'LOA Approved', status: 'Closed' });
-    updatedCases.push({ caseNumber: c.caseNumber, title: c.title, gameId: c.gameId, provider: c.provider, oldStage, newStage: 'LOA Approved' });
+    const oldStage = c.pagcorStage || 'Pending Documents';
+    await updateFn(c.id, { pagcorStage: 'Approved', status: 'Closed' });
+    updatedCases.push({ caseNumber: c.caseNumber, title: c.title, gameId: c.gameId, provider: c.provider, oldStage, newStage: 'Approved' });
   }
 
   return { updatedCases, alreadyApproved, skippedRejected, unmatched, ambiguous };

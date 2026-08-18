@@ -127,3 +127,28 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Legal Genie running at http://localhost:${PORT}`);
 });
+
+// Due-today follow-up email reminders (added 2026-08-18) — see
+// server/routes.js's checkAndSendFollowUpReminders for what this actually
+// does and server/email.js for the one-time Resend setup. Runs once shortly
+// after boot (so a reminder due today still goes out even if the process
+// was only just (re)started), then hourly after that. Requires this process
+// to keep running continuously to ever fire — harmless but ineffective in a
+// serverless deployment (e.g. Vercel, where each request spins up a fresh,
+// short-lived instance) since the interval never gets the chance to tick;
+// this is written for the persistent Render deployment (see render.yaml)
+// or a long-running local `node server.js` session. Each call is
+// independently try/caught and awaits its own ensureSeeded() so it can't
+// run against an un-seeded store, and a single failure (e.g. Resend not
+// configured yet) never crashes the timer itself.
+const FOLLOW_UP_CHECK_INTERVAL_MS = 60 * 60 * 1000; // hourly
+async function runFollowUpReminderCheck() {
+  try {
+    await ensureSeeded();
+    await router.runDueFollowUpReminders();
+  } catch (err) {
+    console.error('[email] follow-up reminder check failed:', err.message);
+  }
+}
+setTimeout(runFollowUpReminderCheck, 30 * 1000);
+setInterval(runFollowUpReminderCheck, FOLLOW_UP_CHECK_INTERVAL_MS);

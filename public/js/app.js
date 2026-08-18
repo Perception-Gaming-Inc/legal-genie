@@ -30,6 +30,7 @@ const ICON_PATHS = {
   chevronRight: '<polyline points="9 18 15 12 9 6"/>',
   eye: '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
   history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 9 8 9"/><polyline points="12 7 12 12 16 14"/>',
+  book: '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',
 };
 function Icon(name, cls) {
   const d = ICON_PATHS[name] || '';
@@ -158,7 +159,7 @@ async function previewAuthedFile(url) {
 // ---------------------------------------------------------------------------
 // Global state
 // ---------------------------------------------------------------------------
-const State = { user: null, role: null, lookups: null, assistant: { turns: [] } };
+const State = { user: null, role: null, lookups: null };
 
 // Document Center folder-browser position (Provider -> Game -> Documents —
 // see renderDocuments()). Deliberately module-level (not local to
@@ -177,7 +178,7 @@ let documentsFolderNav = { provider: null, gameTitle: null };
 // edit/delete triggers via route(), so filtering by "Overdue" and then
 // editing one of those tasks doesn't silently reset back to showing
 // everything.
-let taskStatusFilter = null; // null = show all; else 'Not Started' | 'In Progress' | 'Completed' | 'Overdue'
+let taskStatusFilter = null; // null = show all; else 'To-Do' | 'In Progress' | 'Completed' | 'Overdue'
 
 // Some Providers show only a short in-game watermark on their own screens
 // rather than their full company name — confirmed directly by Tiffany:
@@ -213,12 +214,11 @@ let calendarSelectedDate = null;
 // permanent slot in the nav.
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-  { key: 'assistant', label: 'AI Assistant', icon: 'sparkle' },
   { key: 'calendar', label: 'Calendar', icon: 'calendar' },
   { key: 'cases', label: 'Case Management', icon: 'briefcase' },
-  { key: 'contracts', label: 'Contract Management', icon: 'file' },
   { key: 'documents', label: 'Document Center', icon: 'folder' },
   { key: 'tasks', label: 'Task Management', icon: 'checklist' },
+  { key: 'knowledgeBase', label: 'Knowledge Base', icon: 'book' },
   { key: 'settings', label: 'Settings', icon: 'gear' },
 ];
 
@@ -229,17 +229,107 @@ const NAV = [
 // this is plain browser JS with no build step to share a module with the
 // server. If you change the wording/keys in server/pagcor.js, update this
 // copy too.
+// Changed 2026-08-12 at Tiffany's request from the earlier 6-stage list
+// (Not Started / Preparing Documents / Submitted to PAGCOR / Under PAGCOR
+// Review / LOA Approved / Rejected) to this simpler 5-stage one — see the
+// matching comment in server/pagcor.js and scripts/migrate-pagcor-stages.js
+// for how existing cases on the old stage names were migrated.
 const PAGCOR_STAGE_OPTIONS = [
-  'Not Started', 'Preparing Documents', 'Submitted to PAGCOR', 'Under PAGCOR Review', 'LOA Approved', 'Rejected',
+  'Pending Documents', 'For Review', 'On Process', 'Approved', 'Rejected',
 ];
 // The normal, linear left-to-right pipeline a game submission moves through.
 // 'Rejected' is deliberately excluded here — it's an off-path terminal state
 // (a submission can be rejected from any point in the pipeline), not a
 // further step along it, so it gets its own distinct visual treatment in
-// pagcorStageStepperHtml() below rather than a 6th step on the bar.
+// pagcorStageStepperHtml() below rather than a 5th step on the bar.
 const PAGCOR_LINEAR_STAGES = [
-  'Not Started', 'Preparing Documents', 'Submitted to PAGCOR', 'Under PAGCOR Review', 'LOA Approved',
+  'Pending Documents', 'For Review', 'On Process', 'Approved',
 ];
+// Brought back 2026-08-12 at Tiffany's request (was removed once already,
+// see the matching comment in server/pagcor.js for the full history). This
+// is a simple, manually-maintained tracking checklist; it does not gate the
+// "Download All Documents" button (that's the AI Parameter Consistency
+// Check's job — see renderCaseDetail()'s downloadReady logic).
+//
+// `let`, not `const`, since 2026-08-12 (later the same day): the actual
+// list of items is now editable in Settings > Required Document Settings
+// (see renderChecklistSettingsTab below), not fixed in code. boot() below
+// sets this from State.lookups.checklistItems (sent by GET /api/lookups —
+// app.js is plain browser JS with no bundler, so it can't require()
+// server/routes.js's getChecklistItems() directly, unlike server/import.js
+// can). Starts empty so nothing tries to render checklist UI before boot()
+// has actually populated it.
+let PAGCOR_CHECKLIST_ITEMS = [];
+function checklistDoneCount(checklist) {
+  if (!checklist) return 0;
+  return PAGCOR_CHECKLIST_ITEMS.filter((i) => checklist[i.key]).length;
+}
+// Small "2/3" pill for the case row / case detail header — title attribute
+// spells out exactly which items are still outstanding, so hovering answers
+// "what's left" without opening the modal.
+function checklistBadgeHtml(checklist) {
+  const done = checklistDoneCount(checklist);
+  const total = PAGCOR_CHECKLIST_ITEMS.length;
+  const missing = PAGCOR_CHECKLIST_ITEMS.filter((i) => !(checklist && checklist[i.key])).map((i) => i.label);
+  const tone = done === total ? 'success' : done === 0 ? 'neutral' : 'warning';
+  const title = done === total ? 'Checklist complete' : `Still missing: ${missing.join(', ')}`;
+  return `<span class="badge badge-soft-${tone}" title="${escapeHtml(title)}">${done}/${total}</span>`;
+}
+// Modal to tick off the PAGCOR Checklist for one case — saves straight
+// through the normal PUT /api/cases/:id endpoint (checklist is just a
+// regular field on the case, same as any other), then calls onSaved() so
+// the caller can refresh whatever's showing the case (table row or the
+// case detail page).
+function showPagcorChecklistModal(item, onSaved) {
+  const modalId = 'pagcorChecklistModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  const checklist = item.checklist || {};
+  modalEl.innerHTML = `
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">PAGCOR Checklist — ${escapeHtml(item.gameTitle || item.title)}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          ${PAGCOR_CHECKLIST_ITEMS.map((i) => `
+            <div class="form-check mb-2">
+              <input class="form-check-input checklist-item" type="checkbox" id="checklist-${i.key}" data-key="${i.key}" ${checklist[i.key] ? 'checked' : ''}>
+              <label class="form-check-label" for="checklist-${i.key}">${escapeHtml(i.label)}</label>
+            </div>`).join('')}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="checklistSaveBtn">Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+
+  modalEl.querySelector('#checklistSaveBtn').addEventListener('click', async () => {
+    const btn = modalEl.querySelector('#checklistSaveBtn');
+    btn.disabled = true;
+    const newChecklist = {};
+    modalEl.querySelectorAll('.checklist-item').forEach((cb) => { newChecklist[cb.dataset.key] = cb.checked; });
+    try {
+      await Api.put(`/api/cases/${item.id}`, { checklist: newChecklist });
+      modal.hide();
+      toast('Checklist updated');
+      if (onSaved) onSaved();
+    } catch (err) {
+      toast(err.message, 'danger');
+      btn.disabled = false;
+    }
+  });
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
 // Renders the horizontal PAGCOR review progress stepper shown at the top of
 // the case detail page (renderCaseDetail() below). Steps before the current
 // stage are marked done (checkmark), the current stage is highlighted, and
@@ -259,44 +349,36 @@ function pagcorStageStepperHtml(stage, canEdit) {
         <span class="small text-secondary">This game submission did not pass PAGCOR review.</span>
       </div>`;
   }
-  const idx = Math.max(0, PAGCOR_LINEAR_STAGES.indexOf(stage || 'Not Started'));
+  const idx = Math.max(0, PAGCOR_LINEAR_STAGES.indexOf(stage || 'Pending Documents'));
   return `
     <div class="pagcor-stepper d-flex align-items-start">
       ${PAGCOR_LINEAR_STAGES.map((s, i) => {
         const state = i < idx ? 'done' : (i === idx ? 'current' : 'upcoming');
         const connector = i > 0 ? `<div class="pagcor-step-connector ${i <= idx ? 'done' : ''}"></div>` : '';
         const clickable = canEdit && i !== idx;
+        const titleText = clickable ? `Click to set to "${s}"` : s;
         return `${connector}
-        <div class="pagcor-step pagcor-step-${state}${clickable ? ' pagcor-step-clickable' : ''}" ${clickable ? `data-stage="${escapeHtml(s)}"` : ''} title="${clickable ? `Click to set to "${escapeHtml(s)}"` : escapeHtml(s)}"
+        <div class="pagcor-step pagcor-step-${state}${clickable ? ' pagcor-step-clickable' : ''}" ${clickable ? `data-stage="${escapeHtml(s)}"` : ''} title="${escapeHtml(titleText)}">
           <div class="pagcor-step-dot">${state === 'done' ? Icon('check') : (i + 1)}</div>
           <div class="pagcor-step-label">${escapeHtml(s)}</div>
         </div>`;
       }).join('')}
     </div>`;
 }
-const PAGCOR_CHECKLIST_ITEMS = [
-  { key: 'gameManual', label: 'Game Manual' },
-  { key: 'parameter', label: 'Parameter' },
-  { key: 'rtpCertification', label: 'RTP Certification' },
-];
 const REPORT_TYPE_OPTIONS = [
-  'Math Model Report', 'RNG Test Report', 'Game Rules / Paytable', 'PAGCOR Submission Letter', 'Letter of Approval (LOA)', 'Other',
+  'Math Model Report', 'RNG Test Report', 'Game Rules / Paytable', 'PAGCOR Submission Letter', 'Letter of Approval (LOA)',
+  // Added 2026-08-18 for the Jackpot-game testing branch (PAGCOR Game
+  // Testing -> Post-Testing Requirements) — see caseFormFields()'s jackpot
+  // tracking fields below for the matching case-level tracking.
+  'Jackpot Report', 'PAGCOR Testing Screenshots', 'Other',
 ];
 const GAME_TYPE_OPTIONS = ['Slots', 'Arcade-Type', 'Table', 'eBingo', 'Other'];
 const YES_NO_OPTIONS = ['Yes', 'No'];
 
 function canView(moduleKey) {
-  // AI Assistant is a cross-cutting utility, not a data module with its own
-  // row in the roles table (existing, already-seeded roles predate this
-  // feature and have no 'assistant' permission entry at all) — so it's
-  // always visible to any signed-in user. The write actions it can propose
-  // (create_case/create_contract/create_task) are still individually
-  // permission-checked server-side against the real module, same as the
-  // normal forms — this bypass only affects whether the nav link shows up.
-  if (moduleKey === 'assistant') return true;
-  // Same reasoning as 'assistant' above — the Calendar page has no data of
-  // its own, it just reads Case deadlines and Task due dates, each of which
-  // is already permission-checked at its own /api/cases and /api/tasks
+  // The Calendar page has no data of its own, it just reads Case deadlines
+  // and Task due dates, each of which is already permission-checked at
+  // its own /api/cases and /api/tasks
   // fetch (renderCalendar only requests either list when canView('cases')/
   // canView('tasks') is true, so a viewer without Case access simply never
   // sees deadlines on the calendar, without needing its own roles-table row).
@@ -319,8 +401,23 @@ function canDo(moduleKey, action) {
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// Date Received (and possibly other free-text-from-Excel fields) can carry
+// a raw string with no year at all (e.g. a spreadsheet cell that just said
+// "May 13") — server/import.js's formatDateish() passes those through
+// as-is rather than guessing a year. new Date("May 13") doesn't fail,
+// though: it silently parses to some arbitrary year (2001, a legacy JS
+// Date quirk), which would then be treated as if it were a real, known
+// year. That's actively misleading for DISPLAY (fmtDate below) and just as
+// misleading for SORTING (sortValue in renderCases) — a year-less date
+// used to sort by that same fake 2001 regardless of the column showing the
+// plain "May 13" text next to it, scrambling the order. Shared here so
+// both call sites agree on what counts as "no real year to sort/format by".
+function hasReliableYear(v) {
+  return !(typeof v === 'string' && !/\d{4}/.test(v));
+}
 function fmtDate(iso) {
   if (!iso) return '—';
+  if (!hasReliableYear(iso)) return iso;
   const d = new Date(iso);
   if (isNaN(d)) return iso;
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -334,9 +431,13 @@ function fmtDateTime(iso) {
 const STATUS_TONE = {
   Open: 'info', Active: 'info', Pending: 'warning', 'In Progress': 'info',
   Closed: 'neutral', Completed: 'success', Approved: 'success', Compliant: 'success',
-  Overdue: 'danger', Rejected: 'danger', 'Due Soon': 'warning', 'Not Started': 'neutral',
+  Overdue: 'danger', Rejected: 'danger', 'Due Soon': 'warning',
+  'To-Do': 'neutral',
   Expired: 'neutral', Terminated: 'neutral', Draft: 'neutral',
-  'Preparing Documents': 'neutral', 'Submitted to PAGCOR': 'info', 'Under PAGCOR Review': 'warning', 'LOA Approved': 'success',
+  // PAGCOR Stage tones (Approved/Rejected reuse the generic entries above).
+  'Pending Documents': 'neutral', 'For Review': 'info', 'On Process': 'warning',
+  // Knowledge Base document/FAQ status (see renderKnowledgeBase in app.js).
+  'Pending Review': 'warning', Archived: 'neutral',
 };
 function badge(text) {
   const tone = STATUS_TONE[text] || 'neutral';
@@ -353,10 +454,6 @@ function userName(id) {
 function caseName(id) {
   const c = (State.lookups.cases || []).find((x) => x.id === id);
   return c ? `${c.caseNumber} – ${c.title}` : null;
-}
-function contractName(id) {
-  const c = (State.lookups.contracts || []).find((x) => x.id === id);
-  return c ? `${c.contractNumber} – ${c.title}` : null;
 }
 function toast(message, variant = 'success') {
   const wrap = document.getElementById('toastWrap');
@@ -738,7 +835,7 @@ function renderShell() {
   app.innerHTML = `
     <div class="d-flex">
       <nav class="lms-sidebar d-flex flex-column flex-shrink-0">
-        <div class="brand"><span class="brand-mark">${sparkleMark()}</span>Legal Genie</div>
+        <div class="brand"><span class="brand-mark"><img src="/images/logo-mark.png" alt="" /></span>Legal Genie</div>
         <div class="nav flex-column" id="sideNav">
           ${NAV.filter((n) => canView(n.key)).map((n) => `
             <a class="nav-link" href="#/${n.key}" data-key="${n.key}">${Icon(n.icon)}${n.label}</a>
@@ -783,14 +880,13 @@ async function refreshNotifBadge() {
 
 const ROUTES = {
   dashboard: renderDashboard,
-  assistant: renderAssistant,
   calendar: renderCalendar,
   cases: renderCases,
-  contracts: renderContracts,
   documents: renderDocuments,
   tasks: renderTasks,
   approvals: renderApprovals,
   notifications: renderNotifications,
+  knowledgeBase: renderKnowledgeBase,
   settings: renderSettings,
 };
 
@@ -839,27 +935,34 @@ function renderLogin(message) {
   app.innerHTML = `
   <div class="login-wrap">
     <div class="card login-card shadow-lg">
+      <div class="login-card-accent-bar"></div>
       <div class="card-body p-4">
-        <div class="text-center mb-3">
-          <div class="login-logo-mark">${sparkleMark()}</div>
-          <h5 class="mt-2 mb-0">Legal Genie</h5>
+        <div class="text-center mb-4">
+          <div class="login-logo-mark"><img src="/images/logo-mark.png" alt="" /></div>
+          <h5 class="mt-3 mb-1 login-title">Legal Genie</h5>
           <div class="text-secondary small">Gaming Machine &amp; Online Gaming Manufacturer</div>
         </div>
         ${message ? `<div class="alert alert-warning py-2 small">${escapeHtml(message)}</div>` : ''}
         <form id="loginForm">
           <div class="mb-3">
             <label class="form-label">Username</label>
-            <input class="form-control" name="username" autofocus required>
+            <input class="form-control" name="username" autofocus required autocomplete="username">
           </div>
           <div class="mb-3">
             <label class="form-label">Password</label>
-            <input class="form-control" type="password" name="password" required>
+            <input class="form-control" type="password" name="password" required autocomplete="current-password">
           </div>
           <div id="loginError" class="text-danger small mb-2"></div>
-          <button class="btn btn-primary w-100" type="submit">Sign In</button>
+          <button class="btn btn-primary w-100 login-submit-btn" type="submit">Sign In</button>
         </form>
-        <div class="text-secondary small mt-3">
-          Demo accounts: <code>admin/admin123</code>, <code>jchen/password123</code>, <code>mtan/password123</code>, <code>viewer/password123</code>
+        <div class="login-demo-accounts mt-4">
+          <div class="login-demo-title">Demo Accounts</div>
+          <div class="login-demo-chips">
+            <span class="login-demo-chip"><code>admin</code> / <code>admin123</code></span>
+            <span class="login-demo-chip"><code>jchen</code> / <code>password123</code></span>
+            <span class="login-demo-chip"><code>mtan</code> / <code>password123</code></span>
+            <span class="login-demo-chip"><code>viewer</code> / <code>password123</code></span>
+          </div>
         </div>
       </div>
     </div>
@@ -885,7 +988,6 @@ async function doLogout() {
   try { await Api.post('/api/auth/logout'); } catch (e) { /* ignore */ }
   Api.setToken(null);
   State.user = null;
-  State.assistant = { turns: [] }; // don't leak one user's chat into the next login
   renderLogin();
 }
 
@@ -1199,6 +1301,35 @@ function wireCalEventButtons(container, calEvents) {
 // ---------------------------------------------------------------------------
 async function renderDashboard(content) {
   const s = await Api.get('/api/dashboard/summary');
+
+  // The lower row is Today's To-Dos (left) next to Recently Updated
+  // Cases/Pending Approvals/Follow-ups (right). Both sides are only ever
+  // populated when there's actually data (each widget function returns ''
+  // when empty — see todaysTasksWidgetHtml etc. below), which is common
+  // day-to-day (e.g. "My Pending Tasks" is often 0). Splitting into two
+  // fixed col-lg-6 halves regardless left a big empty rectangle on
+  // whichever side had nothing — just moved from "cards shrink-wrapped,
+  // blank flex remainder" (the col-lg-6 width bug) to "column is properly
+  // 50% wide but empty". So: only split 50/50 when BOTH sides have
+  // something to show; otherwise give the side that has content the full
+  // row width, and skip the row entirely if neither has anything.
+  const leftHtml = todaysTasksWidgetHtml(s.todaysTasks);
+  const rightHtml = [
+    recentlyUpdatedCasesWidgetHtml(s.recentlyUpdatedCases),
+    pendingApprovalsWidgetHtml(s.pendingApprovals),
+    followUpsWidgetHtml(s.followUps),
+  ].join('');
+  let widgetRowHtml = '';
+  if (leftHtml && rightHtml) {
+    widgetRowHtml = `
+    <div class="row g-3">
+      <div class="col-lg-6">${leftHtml}</div>
+      <div class="col-lg-6">${rightHtml}</div>
+    </div>`;
+  } else if (leftHtml || rightHtml) {
+    widgetRowHtml = `<div class="row g-3"><div class="col-lg-12">${leftHtml}${rightHtml}</div></div>`;
+  }
+
   content.innerHTML = `
     <div class="row g-3 mb-4">
       <div class="col-md-4"><div class="card stat-card"><div class="card-body">
@@ -1217,17 +1348,7 @@ async function renderDashboard(content) {
         <div class="stat-label">PAGCOR Follow-ups Due (${s.followUpDays || 30}+ days)</div>
       </div></div></div>
     </div>
-    <div class="row g-3">
-      <div class="col-lg-6">
-        ${todaysTasksWidgetHtml(s.todaysTasks)}
-        ${pendingDocumentsWidgetHtml(s.pendingDocuments, s.pendingDocumentsCount)}
-      </div>
-      <div class="col-lg-6">
-        ${recentlyUpdatedCasesWidgetHtml(s.recentlyUpdatedCases)}
-        ${pendingApprovalsWidgetHtml(s.pendingApprovals)}
-        ${followUpsWidgetHtml(s.followUps)}
-      </div>
-    </div>
+    ${widgetRowHtml}
     ${pagcorBoardHtml(s.pagcorBoard)}`;
 
   const canApprove = canDo('approvals', 'approve');
@@ -1294,30 +1415,10 @@ function recentlyUpdatedCasesWidgetHtml(recentlyUpdatedCases) {
     </div>`;
 }
 
-// "Pending Documents" — PAGCOR cases whose required-document checklist
-// isn't fully checked off yet (see /api/dashboard/summary's
-// pendingDocuments), so it's obvious at a glance which games still need
-// paperwork chased down before they can move forward.
-function pendingDocumentsWidgetHtml(pendingDocuments, pendingDocumentsCount) {
-  if (!pendingDocuments || !pendingDocuments.length) return '';
-  return `
-    <div class="mb-4">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 class="mb-0">Pending Documents</h6>
-        ${pendingDocumentsCount > pendingDocuments.length ? `<span class="small text-secondary">${pendingDocumentsCount} total</span>` : ''}
-      </div>
-      <div class="card stat-card"><div class="list-group list-group-flush">
-        ${pendingDocuments.map((c) => `
-          <a href="#/cases/${c.id}" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;">
-            <div>
-              <div class="fw-semibold">${escapeHtml(c.gameTitle || c.title)}${c.provider ? ` <span class="text-secondary fw-normal">· ${escapeHtml(c.provider)}</span>` : ''}</div>
-              <div class="small text-secondary">${escapeHtml(c.pagcorStage || '')}</div>
-            </div>
-            <span class="badge badge-soft-warning">${c.checklistDone}/${c.checklistTotal} docs</span>
-          </a>`).join('')}
-      </div></div>
-    </div>`;
-}
+// (This section used to also include a "Pending Documents" dashboard widget
+// driven by the PAGCOR Checklist — removed at Tiffany's request along with
+// that checklist feature; see renderCaseDetail()'s Download All Documents
+// gate, which now relies purely on the AI Parameter Consistency Check.)
 
 // Approval Center no longer has its own permanent sidebar slot (see NAV) —
 // this is where its pending items actually surface day-to-day now. Same
@@ -1353,8 +1454,8 @@ function pendingApprovalsWidgetHtml(pendingApprovals) {
     </div>`;
 }
 
-// 30-day PAGCOR follow-up reminder — a game sitting in "Submitted to
-// PAGCOR" or "Under PAGCOR Review" for 30+ days with no Stage change is
+// 30-day PAGCOR follow-up reminder — a game sitting in "For Review"
+// or "On Process" for 30+ days with no Stage change is
 // easy to lose track of when it's buried in a spreadsheet; this surfaces
 // it right on the Dashboard instead. Each row links straight to that
 // case's detail page (not a filtered list — these are specific games that
@@ -1384,7 +1485,7 @@ function followUpsWidgetHtml(followUps) {
 // that Stage (see /api/dashboard/summary's pagcorBoard for the per-stage
 // counts computed server-side). Skipped entirely if there are no PAGCOR
 // cases yet (nothing to show). Deliberately just counts, not individual
-// game cards — a stage like "Under PAGCOR Review" can hold hundreds of
+// game cards — a stage like "On Process" can hold hundreds of
 // games, and this is meant to answer "how are we distributed across
 // stages?" at a glance, not to browse the games themselves (that's what
 // clicking through to the filtered Case Management list is for).
@@ -1428,213 +1529,15 @@ function listToolbar({ title, canCreate, onCreate, extraButtonsHtml }) {
 }
 
 // ---------------------------------------------------------------------------
-// Page: AI Assistant
-// ---------------------------------------------------------------------------
-// Chat with the AI Assistant (server/assistant.js). Read-only lookups
-// (search) answer directly; anything that would create a record comes back
-// as a "pending action" card the user must confirm before it's written.
-const ASSISTANT_EXAMPLES = [
-  'Create an NDA for a Japanese client',
-  'Find every licensing contract from Philippine clients last year',
-  'Open a high-priority commercial case, owned by me',
-  'Draft a PAGCOR submission letter, Provider is FC, game is Fortune Dragon',
-];
-
-function assistantActionCardHtml(turnIdx, actionIdx, action, state) {
-  const stateHtml = {
-    pending: `
-      <button class="btn btn-sm btn-success btn-confirm-action" data-turn="${turnIdx}" data-action="${actionIdx}">Confirm</button>
-      <button class="btn btn-sm btn-outline-secondary btn-cancel-action" data-turn="${turnIdx}" data-action="${actionIdx}">Cancel</button>`,
-    confirming: `<span class="small text-secondary"><span class="spinner-border spinner-border-sm me-1"></span>Running…</span>`,
-    confirmed: `<span class="small text-success">${Icon('check', 'me-1')}Created</span>`,
-    cancelled: `<span class="small text-secondary">Cancelled</span>`,
-    error: `<span class="small text-danger">Failed — please try again</span>`,
-  }[state] || '';
-  return `
-    <div class="border rounded p-2 mb-2 bg-light" style="max-width:520px;">
-      <div class="small mb-2">${escapeHtml(action.summary)}</div>
-      ${stateHtml}
-    </div>`;
-}
-
-function renderAssistantLog() {
-  const log = document.getElementById('assistantLog');
-  if (!log) return;
-  const turns = State.assistant.turns;
-  if (turns.length === 0) {
-    log.innerHTML = `
-      <div class="text-secondary">
-        <p>Hi, I'm Legal Genie's AI Assistant. I can search existing cases/contracts/documents for you, or create new cases, contracts, and tasks.</p>
-        <p class="mb-1">Try asking:</p>
-        <ul>${ASSISTANT_EXAMPLES.map((ex) => `<li><a href="#" class="assistant-example">${escapeHtml(ex)}</a></li>`).join('')}</ul>
-      </div>`;
-    log.querySelectorAll('.assistant-example').forEach((a) => a.addEventListener('click', (e) => {
-      e.preventDefault();
-      const input = document.getElementById('assistantInput');
-      if (input) { input.value = a.textContent; input.focus(); }
-    }));
-    return;
-  }
-  log.innerHTML = turns.map((t, i) => {
-    if (t.role === 'user') {
-      return `<div class="mb-3 text-end"><span class="badge bg-primary-subtle text-dark p-2 fw-normal" style="white-space:normal;">${escapeHtml(t.text)}</span></div>`;
-    }
-    const actions = (t.pendingActions || []).map((a, ai) => assistantActionCardHtml(i, ai, a, (t.actionStates || [])[ai] || 'pending')).join('');
-    return `
-      <div class="mb-3">
-        <div class="d-flex align-items-start gap-2">
-          <div class="mt-1">${sparkleMark('text-primary')}</div>
-          <div style="max-width:600px;">
-            ${t.text ? `<div class="mb-2">${escapeHtml(t.text).replace(/\n/g, '<br>')}</div>` : ''}
-            ${actions}
-          </div>
-        </div>
-      </div>`;
-  }).join('');
-  log.scrollTop = log.scrollHeight;
-  log.querySelectorAll('.btn-confirm-action').forEach((btn) => btn.addEventListener('click', () => confirmAssistantAction(Number(btn.dataset.turn), Number(btn.dataset.action))));
-  log.querySelectorAll('.btn-cancel-action').forEach((btn) => btn.addEventListener('click', () => cancelAssistantAction(Number(btn.dataset.turn), Number(btn.dataset.action))));
-}
-
-function assistantHistoryForApi() {
-  // Plain {role, text} pairs only — see server/assistant.js for why raw
-  // tool-call details are deliberately not threaded across turns.
-  return State.assistant.turns.map((t) => ({
-    role: t.role,
-    text: t.text || (t.pendingActions && t.pendingActions.length ? '(proposed an action)' : ''),
-  }));
-}
-
-async function sendAssistantMessage(text) {
-  const historyForApi = assistantHistoryForApi();
-  State.assistant.turns.push({ role: 'user', text });
-  renderAssistantLog();
-  try {
-    const resp = await Api.post('/api/assistant/message', { history: historyForApi, text });
-    State.assistant.turns.push({
-      role: 'assistant',
-      text: resp.reply,
-      pendingActions: resp.pendingActions || [],
-      actionStates: (resp.pendingActions || []).map(() => 'pending'),
-    });
-  } catch (err) {
-    State.assistant.turns.push({ role: 'assistant', text: `An error occurred: ${err.message}` });
-  }
-  renderAssistantLog();
-}
-
-async function confirmAssistantAction(turnIdx, actionIdx) {
-  const turn = State.assistant.turns[turnIdx];
-  const action = turn.pendingActions[actionIdx];
-  turn.actionStates[actionIdx] = 'confirming';
-  renderAssistantLog();
-  try {
-    await Api.post('/api/assistant/confirm', { type: action.type, input: action.input });
-    turn.actionStates[actionIdx] = 'confirmed';
-    toast('Created');
-  } catch (err) {
-    turn.actionStates[actionIdx] = 'error';
-    toast(err.message, 'danger');
-  }
-  renderAssistantLog();
-}
-
-function cancelAssistantAction(turnIdx, actionIdx) {
-  const turn = State.assistant.turns[turnIdx];
-  turn.actionStates[actionIdx] = 'cancelled';
-  renderAssistantLog();
-}
-
-async function renderAssistant(content) {
-  content.innerHTML = `
-    <div class="card stat-card d-flex flex-column p-0" style="height: calc(100vh - 170px);">
-      <div class="flex-grow-1 overflow-auto p-3" id="assistantLog"></div>
-      <form id="assistantForm" class="d-flex gap-2 p-3 border-top">
-        <input type="text" class="form-control" id="assistantInput" autocomplete="off"
-          placeholder="Describe what you'd like to do, e.g. 'Find every licensing contract from Philippine clients last year'">
-        <button type="submit" class="btn btn-primary text-nowrap">Send</button>
-      </form>
-    </div>`;
-  renderAssistantLog();
-  content.querySelector('#assistantForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const input = content.querySelector('#assistantInput');
-    const text = input.value.trim();
-    if (!text) return;
-    const btn = content.querySelector('button[type="submit"]');
-    input.value = '';
-    input.disabled = true;
-    btn.disabled = true;
-    try {
-      await sendAssistantMessage(text);
-    } finally {
-      input.disabled = false;
-      btn.disabled = false;
-      input.focus();
-    }
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Page: Case Management
 // ---------------------------------------------------------------------------
-function pagcorChecklistLabel(item) {
-  const list = item.pagcorChecklist || [];
-  if (!list.length) return item.provider ? 'Checklist' : null;
-  const done = list.filter((i) => i.done).length;
-  return `${done}/${list.length}`;
-}
-
-function showPagcorChecklistModal(item) {
-  const canEditCase = canDo('cases', 'edit');
-  const checklist = PAGCOR_CHECKLIST_ITEMS.map((tpl) => {
-    const existing = (item.pagcorChecklist || []).find((i) => i.key === tpl.key);
-    return { key: tpl.key, label: tpl.label, done: existing ? !!existing.done : false };
-  });
-  const modalEl = document.createElement('div');
-  modalEl.className = 'modal fade';
-  modalEl.innerHTML = `
-    <div class="modal-dialog"><div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">PAGCOR Checklist — ${escapeHtml(item.caseNumber)}</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <div class="mb-3">
-          <div class="fw-semibold">${escapeHtml(item.title)}</div>
-          ${(item.provider || item.gameTitle) ? `<div class="small text-secondary">${escapeHtml(item.provider || '—')}${item.gameTitle ? ` — ${escapeHtml(item.gameTitle)}` : ''}</div>` : ''}
-        </div>
-        <div class="list-group">
-          ${checklist.map((c) => `
-            <label class="list-group-item d-flex align-items-center gap-2">
-              <input type="checkbox" class="form-check-input mt-0 chk-item" data-key="${c.key}" ${c.done ? 'checked' : ''} ${canEditCase ? '' : 'disabled'}>
-              <span>${escapeHtml(c.label)}</span>
-            </label>`).join('')}
-        </div>
-        ${!canEditCase ? '<div class="small text-secondary mt-2">You do not have permission to edit cases, so this checklist is read-only.</div>' : ''}
-      </div>
-      <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button></div>
-    </div></div>`;
-  document.body.appendChild(modalEl);
-  const modal = new bootstrap.Modal(modalEl);
-  modal.show();
-  let dirty = false;
-  modalEl.querySelectorAll('.chk-item').forEach((chk) => chk.addEventListener('change', async () => {
-    const key = chk.dataset.key;
-    const updated = checklist.map((c) => (c.key === key ? { ...c, done: chk.checked } : c));
-    checklist.splice(0, checklist.length, ...updated);
-    try {
-      await Api.put(`/api/cases/${item.id}`, { pagcorChecklist: updated });
-      item.pagcorChecklist = updated;
-      dirty = true;
-    } catch (err) {
-      chk.checked = !chk.checked;
-      toast(err.message, 'danger');
-    }
-  }));
-  modalEl.addEventListener('hidden.bs.modal', () => { modalEl.remove(); if (dirty) route(); });
-}
-
+// (This section used to also include pagcorChecklistLabel()/
+// showPagcorChecklistModal() for a manually-maintained PAGCOR Checklist —
+// removed at Tiffany's request once the AI Parameter Consistency Check's
+// own documentCompleteness section started covering "which required
+// documents are missing" automatically, making a second manual checklist
+// redundant. See renderCaseDetail()'s Download All Documents gate below,
+// which now relies purely on that AI check.)
 // ---------------------------------------------------------------------------
 // Import Excel/CSV -> bulk-create Cases (see server/import.js). Two-step:
 // pick a file -> server parses + shows a per-sheet preview/settings -> user
@@ -1665,7 +1568,7 @@ function importSheetSettingsHtml(sheet) {
               <div>
                 <label class="form-label small mb-1">PAGCOR Stage</label>
                 <select class="form-select form-select-sm sheet-stage" style="width:200px;">
-                  ${PAGCOR_STAGE_OPTIONS.map((s) => `<option value="${escapeHtml(s)}" ${s === 'Preparing Documents' ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+                  ${PAGCOR_STAGE_OPTIONS.map((s) => `<option value="${escapeHtml(s)}" ${s === 'Pending Documents' ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
                 </select>
               </div>` : `<div class="small text-secondary">Status column detected — stage will be inferred per row.</div>`}
           </div>
@@ -1797,6 +1700,14 @@ function caseFormFields() {
     // etc.) — only changed the label users actually see, so no data
     // migration or renamed logic is needed.
     { name: 'deadline', label: 'Submit Date', type: 'date' },
+    // Added 2026-08-12 at Tiffany's request, replacing "Case #" as a column
+    // in Case Management's table (see renderCases() below) — when the
+    // documents for this submission actually came in from the Provider.
+    // Not gated behind isPagcorCase since it's a generally useful date for
+    // any case, same as Submit Date above. Populated automatically by Excel
+    // import when the sheet has its own "Date Received" column (see
+    // server/import.js's mapRow()), or settable by hand.
+    { name: 'dateReceived', label: 'Date Received (optional)', type: 'date' },
     { name: 'isPagcorCase', label: 'This is a PAGCOR game submission case (check to show game-related fields)', type: 'checkbox', controlsSection: 'pagcor' },
     { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP', section: 'pagcor' },
     { name: 'gameTitle', label: 'Game Title (optional)', section: 'pagcor' },
@@ -1804,7 +1715,29 @@ function caseFormFields() {
     { name: 'gameId', label: 'Game ID (optional)', section: 'pagcor' },
     { name: 'gameVersion', label: 'Game Version (optional)', section: 'pagcor' },
     { name: 'withJackpot', label: 'With Jackpot? (optional)', type: 'select', allowEmpty: true, options: YES_NO_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
+    // Added 2026-08-18 to track the "Jackpot games only" PAGCOR Game Testing
+    // branch from Galatic Events Corp's process flowchart — a jackpot game
+    // must be scheduled/tested by PAGCOR and its post-testing docs (Jackpot
+    // Report, Testing Screenshots — see REPORT_TYPE_OPTIONS above) submitted
+    // before PAGCOR Evaluation, whereas a non-jackpot game skips straight to
+    // evaluation. Left as plain optional fields (not conditionally hidden
+    // behind With Jackpot's value) since the form-field system here has no
+    // value-conditional visibility — they're simply only relevant/filled in
+    // when With Jackpot is Yes.
+    { name: 'jackpotTestingDate', label: 'PAGCOR Game Testing Date (optional, jackpot games only)', type: 'date', section: 'pagcor' },
+    { name: 'jackpotReportSubmitted', label: 'Jackpot Report Submitted? (optional)', type: 'select', allowEmpty: true, options: YES_NO_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
+    { name: 'testingScreenshotsSubmitted', label: 'Testing Screenshots Submitted? (optional)', type: 'select', allowEmpty: true, options: YES_NO_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
     { name: 'pagcorStage', label: 'PAGCOR Stage (optional)', type: 'select', allowEmpty: true, options: PAGCOR_STAGE_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
+    // Added 2026-08-18 so a Rejected case can record why (for the "Email
+    // Sent: Non-compliant, Reasons Provided" step on the flowchart) and how
+    // many times this game has been submitted — the flowchart's "END (for
+    // this attempt)" implies a rejected game is often resubmitted as a new
+    // attempt rather than the same case just changing stage. Bump this by
+    // hand when resubmitting; kept as a simple number rather than an
+    // auto-incrementing/linked-case system to match how small the rest of
+    // this form already is.
+    { name: 'rejectionReason', label: 'Rejection Reason (optional)', type: 'textarea', section: 'pagcor' },
+    { name: 'submissionAttempt', label: 'Submission Attempt # (optional, e.g. 1, 2, 3...)', section: 'pagcor' },
     { name: 'loaExpiryDate', label: 'LOA Expiry Date (optional)', type: 'date', section: 'pagcor' },
     { name: 'description', label: 'Description', type: 'textarea' },
   ];
@@ -1820,7 +1753,7 @@ function taskFormFields() {
     { name: 'description', label: 'Description', type: 'textarea' },
     { name: 'assigneeId', label: 'Assignee', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
     { name: 'type', label: 'Type', type: 'select', options: [{ value: 'personal', label: 'Personal' }, { value: 'team', label: 'Team' }], required: true },
-    { name: 'status', label: 'Status', type: 'select', options: ['Not Started', 'In Progress', 'Completed'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'status', label: 'Status', type: 'select', options: ['To-Do', 'In Progress', 'Completed'].map((v) => ({ value: v, label: v })), required: true },
     { name: 'dueDate', label: 'Due Date', type: 'date' },
     { name: 'relatedCaseId', label: 'Related Case (optional)', type: 'select', allowEmpty: true, options: State.lookups.cases.map((c) => ({ value: c.id, label: c.caseNumber + ' - ' + c.title })) },
     { name: 'relatedContractId', label: 'Related Contract (optional)', type: 'select', allowEmpty: true, options: State.lookups.contracts.map((c) => ({ value: c.id, label: c.contractNumber + ' - ' + c.title })) },
@@ -1844,7 +1777,7 @@ function calendarEventFormFields() {
 // case's own fields — see renderCaseDetail's #btnLoaNotice handler. Uses
 // pagcorStageChangedAt (stamped whenever pagcorStage actually changes — see
 // server/routes.js's cases onCreate/onUpdate) as the approval date, since
-// that's precisely the moment the case last became "LOA Approved"; falls
+// that's precisely the moment the case last became "Approved"; falls
 // back to today if that's somehow missing (e.g. a very old record).
 function loaNotificationDraftText(item) {
   const lines = [
@@ -1973,6 +1906,31 @@ async function renderCaseDetail(content, id) {
   // /api/cases/:id/check-consistency in server/routes.js for the same
   // pattern server-side.
   const relatedDocs = canDo('documents', 'view') ? (await Api.get('/api/documents')).filter((d) => d.relatedCaseId === item.id) : [];
+
+  // Gate for the "Download All Documents" button below — mirrors
+  // GET /api/cases/:id/download-all's own gate in server/routes.js exactly
+  // (the last AI Parameter Consistency Check came back "ready" for the
+  // CURRENT set of related documents), so the button's enabled/disabled
+  // state never disagrees with what clicking it will actually do. The
+  // server re-checks this itself too — this is purely so the button can
+  // explain *why* it's disabled instead of the person having to click it
+  // and read a toast. (This gate used to also require a separate
+  // manually-maintained PAGCOR Checklist to be fully checked off — removed
+  // at Tiffany's request since the AI check's own documentCompleteness
+  // section already covers "what's missing".)
+  const filedDocs = relatedDocs.filter((d) => d.filePath);
+  const lastCheck = item.lastConsistencyCheck;
+  const consistencyPassed = !!lastCheck && lastCheck.overallStatus === 'ready';
+  const consistencyStale = !lastCheck || !Array.isArray(lastCheck.documentIds)
+    || filedDocs.length !== lastCheck.documentIds.length
+    || filedDocs.some((d) => !lastCheck.documentIds.includes(d.id));
+  const downloadReady = filedDocs.length > 0 && consistencyPassed && !consistencyStale;
+  const downloadDisabledReason = !filedDocs.length
+    ? 'Upload at least one document before downloading.'
+    : (!consistencyPassed || consistencyStale)
+      ? 'Run the AI Parameter Consistency Check above and confirm no anomalies before downloading.'
+      : '';
+
   const field = (label, value) => `
     <div class="col-6 col-md-3 mb-3">
       <div class="small text-secondary">${escapeHtml(label)}</div>
@@ -1980,15 +1938,16 @@ async function renderCaseDetail(content, id) {
     </div>`;
   content.innerHTML = `
     <div class="mb-3"><a href="#/cases" class="small text-decoration-none">&larr; Back to Case Management</a></div>
-    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3 case-detail-header-row">
       <div>
         <h4 class="mb-0">${escapeHtml(item.caseNumber)}</h4>
         <div class="text-secondary">${escapeHtml(item.title)}</div>
       </div>
-      <div class="d-flex gap-2">
+      <div class="d-flex gap-2 case-header-actions">
         ${canUploadDocs ? `<button class="btn btn-outline-secondary btn-sm" id="btnUploadCaseDocs">${Icon('upload', 'me-1')}Upload Documents</button>` : ''}
         ${item.provider ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
-        ${item.pagcorStage === 'LOA Approved' ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
+        ${canDo('documents', 'view') && filedDocs.length ? `<button class="btn ${downloadReady ? 'btn-primary' : 'btn-outline-secondary'} btn-sm" id="btnDownloadAll" ${downloadReady ? '' : 'disabled'} title="${escapeHtml(downloadReady ? 'Download all of this case\'s documents as a .zip' : downloadDisabledReason)}">${Icon('download', 'me-1')}Download All Documents</button>` : ''}
+        ${item.pagcorStage === 'Approved' ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
         ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnEditCase">${Icon('edit', 'me-1')}Edit</button>` : ''}
         ${canDelete ? `<button class="btn btn-outline-danger btn-sm" id="btnDeleteCase">${Icon('trash', 'me-1')}Delete</button>` : ''}
       </div>
@@ -2004,6 +1963,9 @@ async function renderCaseDetail(content, id) {
         ${field('Game Type', item.gameType)}
         ${field('Game Version', item.gameVersion)}
         ${field('With Jackpot', item.withJackpot)}
+        ${item.withJackpot === 'Yes' ? field('PAGCOR Game Testing Date', fmtDate(item.jackpotTestingDate)) : ''}
+        ${item.withJackpot === 'Yes' ? field('Jackpot Report Submitted', item.jackpotReportSubmitted) : ''}
+        ${item.withJackpot === 'Yes' ? field('Testing Screenshots Submitted', item.testingScreenshotsSubmitted) : ''}
         ${field('Provider', item.provider)}
         ${field('Type', item.type)}
         ${field('Owner', userName(item.ownerId))}
@@ -2011,22 +1973,10 @@ async function renderCaseDetail(content, id) {
         ${field('Status', item.status)}
         ${field('Submit Date', fmtDate(item.deadline))}
         ${field('LOA Expiry Date', fmtDate(item.loaExpiryDate))}
+        ${item.pagcorStage === 'Rejected' ? field('Submission Attempt #', item.submissionAttempt) : ''}
       </div>
       ${item.description ? `<div class="mt-2"><div class="small text-secondary">Description</div><div>${escapeHtml(item.description)}</div></div>` : ''}
-    </div></div>
-    <div class="card"><div class="card-body">
-      <h6 class="mb-2">PAGCOR Checklist</h6>
-      <div class="list-group">
-        ${PAGCOR_CHECKLIST_ITEMS.map((tpl) => {
-          const existing = (item.pagcorChecklist || []).find((i) => i.key === tpl.key);
-          return `
-          <label class="list-group-item d-flex align-items-center gap-2">
-            <input type="checkbox" class="form-check-input mt-0 chk-item" data-key="${tpl.key}" ${existing && existing.done ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
-            <span>${escapeHtml(tpl.label)}</span>
-          </label>`;
-        }).join('')}
-      </div>
-      ${!canEdit ? '<div class="small text-secondary mt-2">You do not have permission to edit cases, so this checklist is read-only.</div>' : ''}
+      ${item.pagcorStage === 'Rejected' && item.rejectionReason ? `<div class="mt-2"><div class="small text-secondary">Rejection Reason</div><div>${escapeHtml(item.rejectionReason)}</div></div>` : ''}
     </div></div>
     ${canDo('documents', 'view') ? `
     <div class="card mt-3"><div class="card-body">
@@ -2046,6 +1996,15 @@ async function renderCaseDetail(content, id) {
               </div>` : ''}
           </div>`).join('')}
       </div>` : `<div class="small text-secondary">No documents linked to this case yet${canUploadDocs ? ' — click "Upload Documents" above to get started.' : '.'}</div>`}
+    </div></div>` : ''}
+    ${item.provider && PAGCOR_CHECKLIST_ITEMS.length ? `
+    <div class="card mt-3"><div class="card-body">
+      <h6 class="mb-2" style="font-size:1.05rem;">PAGCOR Checklist ${checklistBadgeHtml(item.checklist)}</h6>
+      ${PAGCOR_CHECKLIST_ITEMS.map((i) => `
+        <div class="form-check mb-2">
+          <input class="form-check-input checklist-item" type="checkbox" id="checklist-${i.key}" data-key="${i.key}" ${item.checklist && item.checklist[i.key] ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
+          <label class="form-check-label" for="checklist-${i.key}">${escapeHtml(i.label)}</label>
+        </div>`).join('')}
     </div></div>` : ''}`;
 
   content.querySelectorAll('.btn-download-doc').forEach((btn) => btn.addEventListener('click', () => {
@@ -2058,16 +2017,15 @@ async function renderCaseDetail(content, id) {
   const uploadDocsBtn = content.querySelector('#btnUploadCaseDocs');
   if (uploadDocsBtn) uploadDocsBtn.addEventListener('click', () => showCaseDocumentUploadModal(item, relatedDocs.length));
 
-  content.querySelectorAll('.chk-item').forEach((chk) => chk.addEventListener('change', async () => {
-    const updatedChecklist = Array.from(content.querySelectorAll('.chk-item')).map((el) => ({ key: el.dataset.key, done: el.checked }));
-    try {
-      await Api.put(`/api/cases/${item.id}`, { pagcorChecklist: updatedChecklist });
-      item.pagcorChecklist = updatedChecklist;
-    } catch (err) {
-      chk.checked = !chk.checked;
-      toast(err.message, 'danger');
-    }
-  }));
+  // Only ever enabled (see downloadReady above) once every document is
+  // uploaded and the AI Parameter Consistency Check has passed for the
+  // current documents — the server re-verifies all of that itself in
+  // GET /api/cases/:id/download-all and returns a JSON {error} otherwise,
+  // which downloadAuthedFile() already surfaces as a toast.
+  const downloadAllBtn = content.querySelector('#btnDownloadAll');
+  if (downloadAllBtn) downloadAllBtn.addEventListener('click', () => {
+    downloadAuthedFile(`/api/cases/${item.id}/download-all`, `${item.caseNumber || item.id} - ${item.title || item.gameTitle || 'Case'}.zip`);
+  });
 
   // Clicking a step on the PAGCOR Review Progress stepper jumps straight to
   // that stage — no need to open the Edit form just to change one field.
@@ -2086,6 +2044,24 @@ async function renderCaseDetail(content, id) {
     }
   }));
 
+  // Inline PAGCOR Checklist panel (bottom of the case detail page) — each
+  // checkbox saves and re-renders immediately, same pattern as the stepper
+  // clicks above, so the X/3 badge in the heading always reflects what's
+  // actually saved rather than pending, unconfirmed local state.
+  content.querySelectorAll('.checklist-item').forEach((cb) => cb.addEventListener('change', async () => {
+    const newChecklist = { ...(item.checklist || {}) };
+    content.querySelectorAll('.checklist-item').forEach((el) => { newChecklist[el.dataset.key] = el.checked; });
+    content.querySelectorAll('.checklist-item').forEach((el) => { el.disabled = true; });
+    try {
+      await Api.put(`/api/cases/${item.id}`, { checklist: newChecklist });
+      toast('Checklist updated');
+      await renderCaseDetail(content, id);
+    } catch (err) {
+      toast(err.message, 'danger');
+      content.querySelectorAll('.checklist-item').forEach((el) => { el.disabled = false; });
+    }
+  }));
+
   // AI cross-document parameter consistency check — checks a fixed 5-item
   // checklist (Game ID / Game Manual / Game Version / Minimum Bet / Maximum
   // Bet) across every Document Center file whose "Related Case" points to
@@ -2100,6 +2076,11 @@ async function renderCaseDetail(content, id) {
     try {
       const result = await Api.post(`/api/cases/${item.id}/check-consistency`, {});
       showConsistencyResultModal(item.title, result);
+      // The server just persisted this result as the case's
+      // lastConsistencyCheck (see server/routes.js) — re-render so the
+      // "Download All Documents" gate above picks up the fresh result
+      // immediately instead of only after leaving and returning to the page.
+      await renderCaseDetail(content, id);
     } catch (err) {
       toast(err.message, 'danger');
     } finally {
@@ -2335,7 +2316,7 @@ async function renderCases(content) {
         <table class="table table-hover mb-0 table-clickable">
           <thead class="table-light"><tr>
             <th style="width:34px;"><input type="checkbox" id="selectAllCheckbox" title="Select all on this page"></th>
-            <th class="sortable-th case-col" data-sort="caseNumber">Case # <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="dateReceived">Date Received <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="gameId">Game ID <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="title">Title <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="type">Type <span class="sort-indicator"></span></th>
@@ -2364,13 +2345,12 @@ async function renderCases(content) {
   const fields = caseFormFields;
 
   function rowHtml(c) {
-    const checklistLabel = pagcorChecklistLabel(c);
     return `
       <tr data-id="${c.id}">
         <td><input type="checkbox" class="row-checkbox" data-id="${c.id}" ${selectedIds.has(c.id) ? 'checked' : ''}></td>
-        <td class="text-nowrap case-col" title="${escapeHtml(c.caseNumber)}">${escapeHtml((c.caseNumber || '').replace(/^CASE-/i, ''))}</td>
+        <td class="text-nowrap">${fmtDate(c.dateReceived)}</td>
         <td class="text-nowrap">${escapeHtml(c.gameId || '—')}</td>
-        <td>${escapeHtml(c.title)}</td>
+        <td title="${escapeHtml(c.caseNumber || '')}">${escapeHtml(c.title)}</td>
         <td>${escapeHtml(c.type)}</td>
         <td>${escapeHtml(c.provider || '—')}</td>
         <td>${c.pagcorStage ? badge(c.pagcorStage) : '<span class="text-secondary">—</span>'}</td>
@@ -2379,7 +2359,7 @@ async function renderCases(content) {
         <td>${badge(c.status)}</td>
         <td class="text-nowrap">${fmtDate(c.deadline)}</td>
         <td class="text-end text-nowrap">
-          ${checklistLabel ? `<button class="btn btn-sm btn-outline-secondary btn-checklist" data-id="${c.id}" title="PAGCOR Checklist">${Icon('checkSquare')} ${checklistLabel}</button>` : ''}
+          ${c.provider && PAGCOR_CHECKLIST_ITEMS.length ? `<button class="btn btn-sm btn-outline-secondary btn-checklist" data-id="${c.id}" title="PAGCOR Checklist (${checklistDoneCount(c.checklist)}/${PAGCOR_CHECKLIST_ITEMS.length})">${Icon('checklist')}</button>` : ''}
           ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${c.id}">${Icon('edit')}</button>` : ''}
           ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${c.id}">${Icon('trash')}</button>` : ''}
         </td>
@@ -2406,17 +2386,17 @@ async function renderCases(content) {
         onSubmit: async (data) => { await Api.put(`/api/cases/${item.id}`, data); toast('Case updated'); route(); },
       });
     }));
+    content.querySelectorAll('.btn-checklist').forEach((btn) => btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = cases.find((c) => c.id === btn.dataset.id);
+      showPagcorChecklistModal(item, () => route());
+    }));
     content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!(await confirmDialog('Delete this case?'))) return;
       await Api.del(`/api/cases/${btn.dataset.id}`);
       toast('Case deleted');
       route();
-    }));
-    content.querySelectorAll('.btn-checklist').forEach((btn) => btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const item = cases.find((c) => c.id === btn.dataset.id);
-      showPagcorChecklistModal(item);
     }));
     content.querySelectorAll('.row-checkbox').forEach((cb) => cb.addEventListener('change', (e) => {
       e.stopPropagation();
@@ -2505,13 +2485,13 @@ async function renderCases(content) {
     modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
   }
 
-  // Sort value per column — pagcorStage sorts by pipeline order (Not Started
-  // → ... → Rejected), not alphabetically; priority sorts High/Medium/Low
+  // Sort value per column — pagcorStage sorts by pipeline order (Pending
+  // Documents → ... → Rejected), not alphabetically; priority sorts High/Medium/Low
   // rather than alphabetically; everything else is a case-insensitive string
   // (or numeric epoch for Deadline, with no-deadline sorting last).
   function sortValue(c, col) {
     switch (col) {
-      case 'caseNumber': return c.caseNumber || '';
+      case 'dateReceived': return (c.dateReceived && hasReliableYear(c.dateReceived)) ? new Date(c.dateReceived).getTime() : Infinity;
       case 'gameId': return (c.gameId || '').toLowerCase();
       case 'title': return (c.title || '').toLowerCase();
       case 'type': return (c.type || '').toLowerCase();
@@ -2545,14 +2525,13 @@ async function renderCases(content) {
   // fine in Excel; mirrors the same field set the Import feature reads.
   function exportCasesCsv() {
     const header = ['Case #', 'Title', 'Type', 'Provider', 'Game Title', 'Game Type', 'Game ID', 'Game Version', 'With Jackpot',
-      'PAGCOR Stage', 'Game Manual', 'Parameter', 'RTP Certification', 'Owner', 'Priority', 'Status', 'Submit Date', 'LOA Expiry Date', 'Description'];
+      'PAGCOR Stage', 'Owner', 'Priority', 'Status', 'Date Received', 'Submit Date', 'LOA Expiry Date', 'Description'];
     const lines = [header.map(csvEscape).join(',')];
     sortedFilteredCases().forEach((c) => {
-      const cl = Object.fromEntries((c.pagcorChecklist || []).map((i) => [i.key, i.done ? 'Yes' : 'No']));
       lines.push([
         c.caseNumber, c.title, c.type, c.provider || '', c.gameTitle || '', c.gameType || '', c.gameId || '', c.gameVersion || '', c.withJackpot || '',
-        c.pagcorStage || '', cl.gameManual || '', cl.parameter || '', cl.rtpCertification || '',
-        userName(c.ownerId), c.priority, c.status, c.deadline || '', c.loaExpiryDate || '', c.description || '',
+        c.pagcorStage || '',
+        userName(c.ownerId), c.priority, c.status, c.dateReceived || '', c.deadline || '', c.loaExpiryDate || '', c.description || '',
       ].map(csvEscape).join(','));
     });
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
@@ -2969,7 +2948,7 @@ function showImportApprovalNoticeModal() {
           <div class="small text-secondary mb-2">
             Upload the approval notice PAGCOR sent you (PDF or image, scanned files are fine too).
             AI will read the content, find the games approved in the letter, and automatically match them against the corresponding cases in your system,
-            changing matched cases to "LOA Approved". If no match is found, or multiple cases match,
+            changing matched cases to "Approved". If no match is found, or multiple cases match,
             they'll be listed here for you to confirm manually — nothing is guessed.
           </div>
           <input type="file" class="form-control" id="approvalNoticeFile" accept="application/pdf,image/*">
@@ -3008,8 +2987,8 @@ function showImportApprovalNoticeModal() {
         : '';
       body.innerHTML = `
         ${result.noticeReference || result.approvalDate ? `<div class="small text-secondary mb-2">${result.noticeReference ? `Reference No.: ${escapeHtml(result.noticeReference)}　` : ''}${result.approvalDate ? `Date: ${escapeHtml(result.approvalDate)}` : ''}</div>` : ''}
-        ${section('Automatically Approved', result.updatedCases, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)} (${escapeHtml(c.oldStage)} → LOA Approved)</li>`)}
-        ${section('Already LOA Approved', result.alreadyApproved, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
+        ${section('Automatically Approved', result.updatedCases, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)} (${escapeHtml(c.oldStage)} → Approved)</li>`)}
+        ${section('Already Approved', result.alreadyApproved, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
         ${section('Case Status is Rejected — Not Automatically Changed', result.skippedRejected, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
         ${section('⚠️ No Matching Case Found (needs manual confirmation)', result.unmatched, (g) => `<li>${escapeHtml(g.gameTitle || '(unnamed)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''}${g.provider ? ` — ${escapeHtml(g.provider)}` : ''}</li>`)}
         ${section('⚠️ Matches Multiple Cases — Not Automatically Changed (needs manual confirmation)', result.ambiguous, (g) => `<li>${escapeHtml(g.gameTitle || '(unnamed)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''} — Matches: ${g.matchedCaseNumbers.map(escapeHtml).join(', ')}</li>`)}
@@ -3022,100 +3001,6 @@ function showImportApprovalNoticeModal() {
       btn.textContent = originalLabel;
     }
   });
-}
-
-// ---------------------------------------------------------------------------
-// Page: Contract Management
-// ---------------------------------------------------------------------------
-async function renderContracts(content) {
-  const contracts = await Api.get('/api/contracts');
-  const canCreate = canDo('contracts', 'create');
-  const canEdit = canDo('contracts', 'edit');
-  const canDelete = canDo('contracts', 'delete');
-  content.innerHTML = listToolbar({ title: 'Contract Management', canCreate }) + `
-    <div class="card stat-card">
-      <div class="table-responsive">
-        <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>Contract #</th><th>Title</th><th>Counterparty</th><th>Type</th><th>Owner</th><th>Expiry</th><th>Status</th><th></th></tr></thead>
-          <tbody>
-            ${contracts.map((c) => `
-              <tr>
-                <td>${escapeHtml(c.contractNumber)}</td>
-                <td>${escapeHtml(c.title)}</td>
-                <td>${escapeHtml(c.counterparty)}</td>
-                <td>${escapeHtml(c.type)}</td>
-                <td>${escapeHtml(userName(c.ownerId))}</td>
-                <td class="text-nowrap">${fmtDate(c.expiryDate)}</td>
-                <td>${badge(c.status)}</td>
-                <td class="text-end">
-                  <button class="btn btn-sm btn-outline-secondary btn-versions" data-id="${c.id}">${Icon('clock')}</button>
-                  ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${c.id}">${Icon('edit')}</button>` : ''}
-                  ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${c.id}">${Icon('trash')}</button>` : ''}
-                </td>
-              </tr>`).join('') || `<tr><td colspan="8" class="text-center text-secondary py-3">No contracts yet.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
-
-  const fields = () => ([
-    { name: 'title', label: 'Title', required: true },
-    { name: 'counterparty', label: 'Counterparty', required: true },
-    { name: 'type', label: 'Type', type: 'select', options: ['License', 'Supply', 'Services', 'Employment', 'NDA', 'Other'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'ownerId', label: 'Owner', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
-    { name: 'effectiveDate', label: 'Effective Date', type: 'date' },
-    { name: 'expiryDate', label: 'Expiry Date', type: 'date' },
-    { name: 'status', label: 'Status', type: 'select', options: ['Active', 'Expired', 'Terminated', 'Draft'].map((v) => ({ value: v, label: v })), required: true },
-  ]);
-
-  if (canCreate) {
-    content.querySelector('#btnCreate').addEventListener('click', () => {
-      showFormModal({
-        title: 'New Contract', fields: fields(), initial: { status: 'Active' },
-        aiAssist: { module: 'contracts' },
-        onSubmit: async (data) => { await Api.post('/api/contracts', data); toast('Contract created'); route(); },
-      });
-    });
-  }
-  content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
-    const item = contracts.find((c) => c.id === btn.dataset.id);
-    showFormModal({
-      title: 'Edit Contract', fields: fields(), initial: item,
-      onSubmit: async (data) => { await Api.put(`/api/contracts/${item.id}`, data); toast('Contract updated'); route(); },
-    });
-  }));
-  content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async () => {
-    if (!(await confirmDialog('Delete this contract?'))) return;
-    await Api.del(`/api/contracts/${btn.dataset.id}`);
-    toast('Contract deleted');
-    route();
-  }));
-  content.querySelectorAll('.btn-versions').forEach((btn) => btn.addEventListener('click', async () => {
-    const item = contracts.find((c) => c.id === btn.dataset.id);
-    const versions = await Api.get(`/api/contracts/${item.id}/versions`);
-    showFormModal({
-      title: `Upload New Version – ${item.title}`,
-      fields: [
-        { name: 'fileName', label: 'File (optional upload)', type: 'file' },
-        { name: 'notes', label: 'Version notes', type: 'textarea' },
-      ],
-      submitLabel: 'Upload Version',
-      onSubmit: async (data) => {
-        await Api.post(`/api/contracts/${item.id}/versions`, data);
-        toast('Version uploaded');
-        route();
-      },
-    });
-    setTimeout(() => {
-      const list = document.createElement('div');
-      list.className = 'small text-secondary px-3 pb-2';
-      list.innerHTML = versions.length
-        ? `<strong>Existing versions:</strong><ul class="mb-0">${versions.map((v) => `<li>v${v.versionNo} – ${escapeHtml(v.fileName || 'no file')} (${escapeHtml(v.notes || '')})</li>`).join('')}</ul>`
-        : 'No versions uploaded yet.';
-      const body = document.querySelector('#formModal .modal-body');
-      if (body) body.prepend(list);
-    }, 0);
-  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -3402,18 +3287,13 @@ async function renderDocuments(content) {
 
   // ---- Documents within one Provider + Game (drill-down) -----------------
   const gameDocs = docs.filter((d) => normProviderKey(d.provider || UNCATEGORIZED_PROVIDER) === normProviderKey(documentsFolderNav.provider) && normKey(d.gameTitle || UNCATEGORIZED_GAME) === normKey(documentsFolderNav.gameTitle));
-  // Comparable straight from this folder — no Case required. The Case
-  // detail page's own "AI Parameter Consistency Check" only ever sees documents whose
-  // Related Case already points at that Case; plenty of games get filed
-  // here before (or without) a Case existing for them at all, so this
-  // folder-scoped version compares whatever's actually sitting in this
-  // Provider+Game folder instead of requiring that extra linking step
-  // first.
-  const gameDocsWithFile = gameDocs.filter((d) => d.filePath);
-  const canCheckConsistency = gameDocsWithFile.length >= 2;
+  // Document Center is intentionally just a storage/browse view now (per
+  // Tiffany: it's "a storage room" — you visit it to find a file, not to do
+  // work on it) — the AI Parameter Consistency Check that used to live here
+  // was removed at her request; it's still available from the Case detail
+  // page, which is where document review/upload work actually happens.
   content.innerHTML = listToolbar({
     title: `Document Center — ${documentsFolderNav.provider} / ${documentsFolderNav.gameTitle}`, canCreate,
-    extraButtonsHtml: canCheckConsistency ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckFolderConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : '',
   }) + `
     <div class="mb-3"><a href="#" id="btnBackToList" class="small text-decoration-none">&larr; All Documents</a></div>
     <div class="card stat-card">
@@ -3443,26 +3323,6 @@ async function renderDocuments(content) {
   content.querySelector('#btnBackToList').addEventListener('click', (e) => {
     e.preventDefault(); documentsFolderNav = { ...documentsFolderNav, gameTitle: null }; renderDocuments(content);
   });
-  const checkBtn = content.querySelector('#btnCheckFolderConsistency');
-  if (checkBtn) checkBtn.addEventListener('click', async () => {
-    const originalHtml = checkBtn.innerHTML;
-    checkBtn.disabled = true;
-    checkBtn.innerHTML = '…';
-    try {
-      const gameId = gameDocsWithFile.map((d) => d.gameId).find((v) => v);
-      const result = await Api.post('/api/documents/check-consistency', {
-        documentIds: gameDocsWithFile.map((d) => d.id),
-        gameTitle: documentsFolderNav.gameTitle !== UNCATEGORIZED_GAME ? documentsFolderNav.gameTitle : undefined,
-        gameId,
-      });
-      showConsistencyResultModal(`${documentsFolderNav.provider} / ${documentsFolderNav.gameTitle}`, result);
-    } catch (err) {
-      toast(err.message, 'danger');
-    } finally {
-      checkBtn.disabled = false;
-      checkBtn.innerHTML = originalHtml;
-    }
-  });
   if (canCreate) {
     const prefill = {};
     if (documentsFolderNav.provider !== UNCATEGORIZED_PROVIDER) prefill.provider = documentsFolderNav.provider;
@@ -3491,7 +3351,7 @@ function isTaskOverdue(t) {
 // 'All' isn't included here; it's just "no filter applied" (taskStatusFilter
 // === null), same convention as documentsFolderNav's provider filter.
 const TASK_STAT_TILES = [
-  { key: 'Not Started', label: 'Not Started', tone: 'indigo', icon: 'checklist', test: (t) => t.status === 'Not Started' },
+  { key: 'To-Do', label: 'To-Do', tone: 'indigo', icon: 'checklist', test: (t) => t.status === 'To-Do' },
   { key: 'In Progress', label: 'In Progress', tone: 'amber', icon: 'clock', test: (t) => t.status === 'In Progress' },
   { key: 'Completed', label: 'Completed', tone: 'green', icon: 'checkSquare', test: (t) => t.status === 'Completed' },
   { key: 'Overdue', label: 'Overdue', tone: 'rose', icon: 'bell', test: isTaskOverdue },
@@ -3559,7 +3419,7 @@ async function renderTasks(content) {
   const fields = taskFormFields;
 
   if (canCreate) content.querySelector('#btnCreate').addEventListener('click', () => {
-    showFormModal({ title: 'New Task', fields: fields(), initial: { type: 'personal', status: 'Not Started' },
+    showFormModal({ title: 'New Task', fields: fields(), initial: { type: 'personal', status: 'To-Do' },
       onSubmit: async (data) => {
         const created = await Api.post('/api/tasks', data);
         if (data.assigneeId) {
@@ -3695,6 +3555,190 @@ async function renderNotifications(content) {
 }
 
 // ---------------------------------------------------------------------------
+// Page: Knowledge Base
+// ---------------------------------------------------------------------------
+// A repository of reference material (PAGCOR Guidelines/Circulars, company
+// SOPs, application forms, etc.) plus a company-approved FAQ list — see
+// server/routes.js's Knowledge Base section for the full rationale. This is
+// deliberately just storage/organization (upload or link a source, tag it
+// with a category, track version/status) — no AI search over it yet.
+const KB_CATEGORY_OPTIONS = [
+  'Game Submission', 'Regulatory Framework', 'Application Forms', 'Operational Forms',
+  'Game Approval', 'System / Platform', 'Distributor / Reseller',
+  'OneDrive / Submission Repository', 'Fees', 'FAQ / Internal SOP',
+];
+const KB_STATUS_OPTIONS = ['Draft', 'Pending Review', 'Active', 'Archived'];
+
+async function renderKnowledgeBase(content) {
+  content.innerHTML = `
+    <ul class="nav nav-tabs mb-3" id="kbTabs">
+      <li class="nav-item"><button class="nav-link active" data-tab="documents">Documents</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="faqs">FAQ</button></li>
+    </ul>
+    <div id="kbBody"></div>`;
+  const body = content.querySelector('#kbBody');
+  async function showTab(tab) {
+    content.querySelectorAll('#kbTabs .nav-link').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+    if (tab === 'documents') return renderKbDocumentsTab(body);
+    if (tab === 'faqs') return renderKbFaqsTab(body);
+  }
+  content.querySelectorAll('#kbTabs .nav-link').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  await showTab('documents');
+}
+
+async function renderKbDocumentsTab(body) {
+  const docs = await Api.get('/api/kb-documents');
+  const canCreate = canDo('knowledgeBase', 'create');
+  const canEdit = canDo('knowledgeBase', 'edit');
+  const canDelete = canDo('knowledgeBase', 'delete');
+  // Newest-updated first, so anything recently added/edited surfaces at the
+  // top rather than getting buried under the seeded PAGCOR source pack.
+  const sorted = [...docs].sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''));
+  body.innerHTML = listToolbar({ title: 'Knowledge Base — Documents', canCreate }) + `
+    <div class="card stat-card">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead class="table-light"><tr><th>Title</th><th>Category</th><th>Type</th><th>Version</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            ${sorted.map((d) => `
+              <tr>
+                <td>
+                  ${escapeHtml(d.title)}
+                  ${d.notes ? `<div class="small text-secondary">${escapeHtml(d.notes)}</div>` : ''}
+                </td>
+                <td>${escapeHtml(d.category || '—')}</td>
+                <td class="text-nowrap">
+                  ${d.documentType === 'External Link'
+                    ? (d.sourceUrl ? `<a href="${escapeHtml(d.sourceUrl)}" target="_blank" rel="noopener">${Icon('file', 'me-1')}Link</a>` : 'External Link')
+                    : (d.filePath ? `<a href="#" class="btn-kb-download" data-id="${d.id}">${Icon('download', 'me-1')}${escapeHtml(d.fileName || 'File')}</a>` : 'Uploaded File')}
+                </td>
+                <td>${escapeHtml(d.version || '—')}</td>
+                <td>${badge(d.status)}</td>
+                <td class="text-end">
+                  ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${d.id}">${Icon('edit')}</button>` : ''}
+                  ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${d.id}">${Icon('trash')}</button>` : ''}
+                </td>
+              </tr>`).join('') || `<tr><td colspan="6" class="text-center text-secondary py-3">No documents yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  const fields = () => ([
+    { name: 'title', label: 'Title', required: true },
+    { name: 'category', label: 'Category', type: 'select', options: KB_CATEGORY_OPTIONS.map((v) => ({ value: v, label: v })), required: true },
+    { name: 'documentType', label: 'Source Type', type: 'select', options: [{ value: 'External Link', label: 'External Link (e.g. a PAGCOR web page/PDF URL)' }, { value: 'Uploaded File', label: 'Uploaded File' }], required: true },
+    { name: 'sourceUrl', label: 'Source URL', placeholder: 'https://www.pagcor.ph/...', section: 'externalLink' },
+    { name: 'fileName', label: 'File Upload', type: 'file', section: 'uploadedFile' },
+    { name: 'version', label: 'Version (optional)', placeholder: 'e.g. Rev. No. 3' },
+    { name: 'revisionNumber', label: 'Revision Number (optional)' },
+    { name: 'publicationDate', label: 'Publication Date (optional)', type: 'date' },
+    { name: 'effectivityDate', label: 'Effectivity Date (optional)', type: 'date' },
+    { name: 'status', label: 'Status', type: 'select', options: KB_STATUS_OPTIONS.map((v) => ({ value: v, label: v })), required: true },
+    { name: 'supersedesDocumentId', label: 'Supersedes (optional)', type: 'select', allowEmpty: true, options: docs.map((d) => ({ value: d.id, label: d.title })) },
+    { name: 'notes', label: 'Notes (optional)', type: 'textarea' },
+  ]);
+
+  // documentType drives whether the Source URL or File Upload field is
+  // relevant — showFormModal's section/controlsSection mechanism is built
+  // for a checkbox toggle, not a 2-way select, so this wires the same
+  // show/hide behavior by hand off the select's change event instead.
+  function wireSourceTypeToggle(modalRoot, initialType) {
+    const select = modalRoot.querySelector('[name="documentType"]');
+    if (!select) return;
+    const apply = (type) => {
+      modalRoot.querySelectorAll('[data-section="externalLink"]').forEach((el) => { el.style.display = type === 'External Link' ? '' : 'none'; });
+      modalRoot.querySelectorAll('[data-section="uploadedFile"]').forEach((el) => { el.style.display = type === 'Uploaded File' ? '' : 'none'; });
+    };
+    apply(initialType || select.value);
+    select.addEventListener('change', () => apply(select.value));
+  }
+
+  if (canCreate) {
+    content.querySelector('#btnCreate').addEventListener('click', () => {
+      showFormModal({
+        title: 'New Knowledge Base Document', fields: fields(), initial: { documentType: 'External Link', status: 'Draft' },
+        onSubmit: async (data) => { await Api.post('/api/kb-documents', data); toast('Document added'); renderKbDocumentsTab(body); },
+      });
+      setTimeout(() => wireSourceTypeToggle(document.getElementById('formModal'), 'External Link'), 0);
+    });
+  }
+  body.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
+    const item = docs.find((d) => d.id === btn.dataset.id);
+    showFormModal({
+      title: 'Edit Knowledge Base Document', fields: fields(), initial: item,
+      onSubmit: async (data) => { await Api.put(`/api/kb-documents/${item.id}`, data); toast('Document updated'); renderKbDocumentsTab(body); },
+    });
+    setTimeout(() => wireSourceTypeToggle(document.getElementById('formModal'), item.documentType), 0);
+  }));
+  body.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async () => {
+    if (!(await confirmDialog('Delete this document?'))) return;
+    await Api.del(`/api/kb-documents/${btn.dataset.id}`);
+    toast('Document deleted');
+    renderKbDocumentsTab(body);
+  }));
+  body.querySelectorAll('.btn-kb-download').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    downloadAuthedFile(`/api/kb-documents/${a.dataset.id}/download`, docs.find((d) => d.id === a.dataset.id)?.fileName || 'file');
+  }));
+}
+
+async function renderKbFaqsTab(body) {
+  const faqs = await Api.get('/api/kb-faqs');
+  const canCreate = canDo('knowledgeBase', 'create');
+  const canEdit = canDo('knowledgeBase', 'edit');
+  const canDelete = canDo('knowledgeBase', 'delete');
+  body.innerHTML = listToolbar({ title: 'Knowledge Base — FAQ', canCreate }) + `
+    <div class="card stat-card"><div class="list-group list-group-flush">
+      ${faqs.map((f) => `
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <div class="fw-semibold">${escapeHtml(f.question)}</div>
+              <div class="small text-secondary mb-1">${escapeHtml(f.category || '—')}</div>
+              <div>${escapeHtml(f.answer)}</div>
+            </div>
+            <div class="text-end text-nowrap">
+              ${badge(f.status)}
+              <div class="mt-2">
+                ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${f.id}">${Icon('edit')}</button>` : ''}
+                ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${f.id}">${Icon('trash')}</button>` : ''}
+              </div>
+            </div>
+          </div>
+        </div>`).join('') || '<div class="list-group-item text-secondary">No FAQ entries yet.</div>'}
+    </div></div>`;
+
+  const fields = () => ([
+    { name: 'question', label: 'Question', required: true },
+    { name: 'answer', label: 'Answer', type: 'textarea', required: true },
+    { name: 'category', label: 'Category', type: 'select', options: KB_CATEGORY_OPTIONS.map((v) => ({ value: v, label: v })), required: true },
+    { name: 'status', label: 'Status', type: 'select', options: KB_STATUS_OPTIONS.map((v) => ({ value: v, label: v })), required: true },
+  ]);
+  if (canCreate) {
+    body.querySelector('#btnCreate').addEventListener('click', () => {
+      showFormModal({
+        title: 'New FAQ Entry', fields: fields(), initial: { status: 'Draft' },
+        onSubmit: async (data) => { await Api.post('/api/kb-faqs', data); toast('FAQ added'); renderKbFaqsTab(body); },
+      });
+    });
+  }
+  body.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
+    const item = faqs.find((f) => f.id === btn.dataset.id);
+    showFormModal({
+      title: 'Edit FAQ Entry', fields: fields(), initial: item,
+      onSubmit: async (data) => { await Api.put(`/api/kb-faqs/${item.id}`, data); toast('FAQ updated'); renderKbFaqsTab(body); },
+    });
+  }));
+  body.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async () => {
+    if (!(await confirmDialog('Delete this FAQ entry?'))) return;
+    await Api.del(`/api/kb-faqs/${btn.dataset.id}`);
+    toast('FAQ deleted');
+    renderKbFaqsTab(body);
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Page: Settings (Users / Roles / Departments)
 // ---------------------------------------------------------------------------
 async function renderSettings(content) {
@@ -3705,7 +3749,8 @@ async function renderSettings(content) {
       <li class="nav-item"><button class="nav-link" data-tab="departments">Departments</button></li>
       <li class="nav-item"><button class="nav-link" data-tab="notifications">Notification Settings</button></li>
       <li class="nav-item"><button class="nav-link" data-tab="submission">Submission Settings</button></li>
-      <li class="nav-item"><button class="nav-link" data-tab="requiredDocuments">Required Document Settings</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="telegram">Telegram Notifications</button></li>
+      <li class="nav-item"><button class="nav-link" data-tab="checklist">Required Document Settings</button></li>
     </ul>
     <div id="settingsBody"></div>`;
   const body = content.querySelector('#settingsBody');
@@ -3716,7 +3761,8 @@ async function renderSettings(content) {
     if (tab === 'departments') return renderDepartmentsTab(body);
     if (tab === 'notifications') return renderNotificationSettingsTab(body);
     if (tab === 'submission') return renderSubmissionSettingsTab(body);
-    if (tab === 'requiredDocuments') return renderRequiredDocumentSettingsTab(body);
+    if (tab === 'telegram') return renderTelegramSettingsTab(body);
+    if (tab === 'checklist') return renderChecklistSettingsTab(body);
   }
   content.querySelectorAll('#settingsTabs .nav-link').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
   await showTab('users');
@@ -3767,22 +3813,44 @@ async function renderUsersTab(body) {
   }));
 }
 
+function permissionBadgeHtml(p) {
+  const marks = ['view', 'create', 'edit', 'delete', 'approve'].filter((a) => p[a]).map((a) => a[0].toUpperCase()).join('');
+  if (!marks) return '<span class="text-secondary">—</span>';
+  let tone = 'neutral';
+  if (p.delete) tone = 'success';
+  else if (p.create || p.edit) tone = 'info';
+  else if (p.view) tone = 'neutral';
+  return `<span class="badge badge-soft-${tone} perm-badge">${marks}</span>`;
+}
+
 async function renderRolesTab(body) {
   const roles = await Api.get('/api/roles');
   const canEdit = canDo('settings', 'edit');
-  body.innerHTML = `<div class="card stat-card"><div class="table-responsive"><table class="table mb-0">
-    <thead class="table-light"><tr><th>Role</th>${['Dashboard', 'Cases', 'Contracts', 'Documents', 'Tasks', 'Approvals', 'Notifications', 'Settings'].map((m) => `<th class="text-center">${m}</th>`).join('')}</tr></thead>
+  const modules = [
+    { key: 'dashboard', label: 'Dashboard' }, { key: 'cases', label: 'Cases' },
+    { key: 'documents', label: 'Documents' },
+    { key: 'tasks', label: 'Tasks' }, { key: 'approvals', label: 'Approvals' },
+    { key: 'notifications', label: 'Notifications' }, { key: 'knowledgeBase', label: 'Knowledge Base' },
+    { key: 'settings', label: 'Settings' },
+  ];
+  body.innerHTML = `<div class="card stat-card"><div class="table-responsive"><table class="table mb-0 roles-perm-table">
+    <thead class="table-light"><tr><th>Role</th>${modules.map((m) => `<th class="text-center">${m.label}</th>`).join('')}</tr></thead>
     <tbody>
       ${roles.map((r) => `<tr>
         <td class="fw-semibold">${escapeHtml(r.name)}</td>
-        ${['dashboard', 'cases', 'contracts', 'documents', 'tasks', 'approvals', 'notifications', 'settings'].map((m) => {
-          const p = r.name === 'Admin' ? { view: true, create: true, edit: true, delete: true, approve: true } : ((r.permissions || {})[m] || {});
-          const marks = ['view', 'create', 'edit', 'delete', 'approve'].filter((a) => p[a]).map((a) => a[0].toUpperCase()).join('');
-          return `<td class="text-center small">${marks || '—'}</td>`;
+        ${modules.map((m) => {
+          const p = r.name === 'Admin' ? { view: true, create: true, edit: true, delete: true, approve: true } : ((r.permissions || {})[m.key] || {});
+          return `<td class="text-center">${permissionBadgeHtml(p)}</td>`;
         }).join('')}
       </tr>`).join('')}
     </tbody></table></div>
-    <div class="card-footer small text-secondary">Legend: V=View, C=Create, E=Edit, D=Delete, A=Approve. Admin role always has full access.${canEdit ? ' Contact your system administrator to adjust granular permissions.' : ''}</div>
+    <div class="card-footer small text-secondary">
+      <span class="badge badge-soft-success perm-badge">VCEDA</span> full access &nbsp;
+      <span class="badge badge-soft-info perm-badge">VCE</span> can create/edit &nbsp;
+      <span class="badge badge-soft-neutral perm-badge">V</span> view only &nbsp;
+      <span class="text-secondary">—</span> no access
+      <br>V=View, C=Create, E=Edit, D=Delete, A=Approve. Admin role always has full access.${canEdit ? ' Contact your system administrator to adjust granular permissions.' : ''}
+    </div>
     </div>`;
 }
 
@@ -3829,10 +3897,11 @@ async function renderNotificationSettingsTab(body) {
     { key: 'notifyOnApprovalDecision', label: 'Notify on Approval Decision', hint: 'Notify the requester when their approval request is approved or rejected.' },
     { key: 'notifyOnTaskAssignment', label: 'Notify on Task Assignment', hint: 'Notify a user when they are assigned (or reassigned) to a task.' },
     { key: 'notifyOnCaseStageChange', label: 'Notify on Case Status Change', hint: 'Notify a case\'s Owner when its PAGCOR Stage changes.' },
+    { key: 'notifyOnFollowUpDueEmail', label: 'Email Me on Follow-up Due Date', hint: 'Send an email (via Resend — see Settings > Submission Settings for the address, and server/email.js for one-time setup) on the day an auto-created follow-up reminder comes due.' },
   ];
   body.innerHTML = `
     <div class="card stat-card"><div class="card-body">
-      <h6 class="mb-3">Notification Settings</h6>
+      <h6 class="mb-3" style="font-size:1.05rem;">Notification Settings</h6>
       <form id="notificationSettingsForm">
         ${rows.map((r) => `
           <div class="form-check form-switch mb-3">
@@ -3867,12 +3936,17 @@ async function renderSubmissionSettingsTab(body) {
   const canEdit = canDo('settings', 'edit');
   body.innerHTML = `
     <div class="card stat-card"><div class="card-body">
-      <h6 class="mb-3">Submission Settings</h6>
+      <h6 class="mb-3" style="font-size:1.05rem;">Submission Settings</h6>
       <form id="submissionSettingsForm">
         <div class="mb-3" style="max-width:320px;">
           <label class="form-label">Follow-up window (days)</label>
           <input type="number" min="1" class="form-control" id="followUpDays" value="${settings.followUpDays || 30}" ${canEdit ? '' : 'disabled'}>
-          <div class="small text-secondary mt-1">How many days after a case's Submit Date to automatically create a follow-up reminder, and how long a case can sit in "Submitted to PAGCOR" / "Under PAGCOR Review" before it's flagged on the Dashboard.</div>
+          <div class="small text-secondary mt-1">How many days after a case's Submit Date to automatically create a follow-up reminder, and how long a case can sit in "For Review" / "On Process" before it's flagged on the Dashboard.</div>
+        </div>
+        <div class="mb-3" style="max-width:320px;">
+          <label class="form-label">Reminder Email</label>
+          <input type="email" class="form-control" id="reminderEmail" value="${escapeHtml(settings.reminderEmail || '')}" placeholder="you@example.com" ${canEdit ? '' : 'disabled'}>
+          <div class="small text-secondary mt-1">Where the "follow-up due today" email goes (Notification Settings > "Email Me on Follow-up Due Date" must also be on). Requires RESEND_API_KEY to be configured on the server — see server/email.js. Leave blank to turn email reminders off.</div>
         </div>
         ${canEdit ? `<button type="submit" class="btn btn-primary">Save</button>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
       </form>
@@ -3881,8 +3955,9 @@ async function renderSubmissionSettingsTab(body) {
   body.querySelector('#submissionSettingsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const followUpDays = Number(body.querySelector('#followUpDays').value);
+    const reminderEmail = body.querySelector('#reminderEmail').value.trim();
     try {
-      await Api.put('/api/settings', { followUpDays });
+      await Api.put('/api/settings', { followUpDays, reminderEmail });
       toast('Submission settings saved');
     } catch (err) {
       toast(err.message, 'danger');
@@ -3890,56 +3965,158 @@ async function renderSubmissionSettingsTab(body) {
   });
 }
 
-// Settings > Required Document Settings — the checklist template a new
-// PAGCOR case (a case with a Provider set) gets automatically (see
-// server/routes.js's getChecklistTemplate, used by cases' onCreate).
-// Editing this only affects cases created after saving; existing cases keep
-// whatever checklist they already have, same as changing a template never
-// rewrites past records.
-async function renderRequiredDocumentSettingsTab(body) {
+// Settings > Telegram Notifications — added 2026-08-12 at Tiffany's
+// request. PAGCOR Stage itself has to stay a manual field (it comes from
+// actually contacting PAGCOR — nothing in this app can know it
+// automatically), but once someone here DOES update it, this lets the
+// system post that update straight into the case's Provider's own
+// Telegram group automatically, instead of Tiffany typing the same update
+// out by hand in Telegram every time. Requires TELEGRAM_BOT_TOKEN to be
+// configured server-side and the bot to already be a member of each group
+// entered below — see server/telegram.js for the one-time setup steps.
+// Provider isn't a fixed lookup table anywhere else in this app (it's a
+// free-text field on cases), so the Provider -> chat ID mapping here is
+// just a free-form add/remove list rather than a dropdown.
+async function renderTelegramSettingsTab(body) {
   const settings = await Api.get('/api/settings');
   const canEdit = canDo('settings', 'edit');
-  let items = (settings.requiredDocumentChecklist || []).map((i) => ({ ...i }));
+  const n = settings.notifications || {};
+  let mappings = Object.entries(settings.providerTelegramChatIds || {}).map(([provider, chatId]) => ({ provider, chatId }));
+  if (!mappings.length) mappings = [{ provider: '', chatId: '' }];
 
-  function draw() {
-    body.innerHTML = `
-      <div class="card stat-card"><div class="card-body">
-        <h6 class="mb-1">Required Document Settings</h6>
-        <p class="small text-secondary">The document checklist shown on every new PAGCOR case. Changing this only affects cases created after saving — existing cases keep their current checklist.</p>
-        <div id="reqDocRows">
-          ${items.map((it, idx) => `
-            <div class="d-flex gap-2 align-items-center mb-2" data-idx="${idx}">
-              <input type="text" class="form-control form-control-sm req-doc-label" value="${escapeHtml(it.label || '')}" placeholder="Document name" ${canEdit ? '' : 'disabled'}>
-              ${canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-remove-req-doc" data-idx="${idx}">${Icon('trash')}</button>` : ''}
-            </div>`).join('') || '<div class="small text-secondary mb-2">No required documents configured.</div>'}
-        </div>
-        ${canEdit ? `
-          <button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="btnAddReqDoc">${Icon('plus', 'me-1')}Add Document</button>
-          <div><button type="button" class="btn btn-primary" id="btnSaveReqDocs">Save</button></div>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
-      </div></div>`;
-    if (!canEdit) return;
-    body.querySelector('#btnAddReqDoc').addEventListener('click', () => {
-      items.push({ key: `doc${items.length}-${Math.floor(Math.random() * 100000)}`, label: '' });
-      draw();
-    });
-    body.querySelectorAll('.btn-remove-req-doc').forEach((btn) => btn.addEventListener('click', () => {
-      items.splice(Number(btn.dataset.idx), 1);
-      draw();
+  const rowsHtml = () => mappings.map((m, i) => `
+    <div class="row g-2 mb-2 tg-mapping-row" data-idx="${i}">
+      <div class="col-5"><input class="form-control form-control-sm tg-provider" placeholder="Provider (e.g. FC)" value="${escapeHtml(m.provider)}" ${canEdit ? '' : 'disabled'}></div>
+      <div class="col-5"><input class="form-control form-control-sm tg-chatid" placeholder="Telegram group Chat ID (e.g. -1001234567890)" value="${escapeHtml(m.chatId)}" ${canEdit ? '' : 'disabled'}></div>
+      <div class="col-2">${canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-remove-tg-row" data-idx="${i}">${Icon('trash')}</button>` : ''}</div>
+    </div>`).join('');
+
+  body.innerHTML = `
+    <div class="card stat-card"><div class="card-body">
+      <h6 class="mb-2" style="font-size:1.05rem;">Telegram Notifications</h6>
+      <div class="small text-secondary mb-3">When a case's PAGCOR Stage changes, automatically post an update into that Provider's Telegram group — one row per Provider below. Requires a Telegram Bot to already be set up and added to each group (see README/ask your developer); PAGCOR Stage itself still has to be updated here by hand, since only contacting PAGCOR can confirm it.</div>
+      <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" role="switch" id="chk-telegramEnabled" ${n.notifyTelegramOnCaseStageChange !== false ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
+        <label class="form-check-label" for="chk-telegramEnabled">Send Telegram message on Case Status Change</label>
+      </div>
+      <label class="form-label small text-secondary mb-1">Provider &rarr; Telegram group</label>
+      <div id="tgMappingRows">${rowsHtml()}</div>
+      ${canEdit ? `<button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="btnAddTgRow">${Icon('plus', 'me-1')}Add Provider</button><br>` : ''}
+      ${canEdit ? `<button type="button" class="btn btn-primary" id="btnSaveTg">Save</button>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
+    </div></div>`;
+
+  if (!canEdit) return;
+
+  function readRowsFromDom() {
+    mappings = Array.from(body.querySelectorAll('.tg-mapping-row')).map((rowEl) => ({
+      provider: rowEl.querySelector('.tg-provider').value,
+      chatId: rowEl.querySelector('.tg-chatid').value,
     }));
-    body.querySelector('#btnSaveReqDocs').addEventListener('click', async () => {
-      const labels = Array.from(body.querySelectorAll('.req-doc-label')).map((el) => el.value.trim());
-      if (labels.some((l) => !l)) { toast('Each document needs a name.', 'danger'); return; }
-      const payload = labels.map((label, idx) => ({ key: items[idx].key || `doc${idx}`, label }));
-      try {
-        await Api.put('/api/settings', { requiredDocumentChecklist: payload });
-        toast('Required document settings saved');
-        items = payload;
-      } catch (err) {
-        toast(err.message, 'danger');
-      }
-    });
   }
-  draw();
+  function wireRows() {
+    body.querySelectorAll('.btn-remove-tg-row').forEach((btn) => btn.addEventListener('click', () => {
+      readRowsFromDom();
+      mappings.splice(Number(btn.dataset.idx), 1);
+      if (!mappings.length) mappings = [{ provider: '', chatId: '' }];
+      body.querySelector('#tgMappingRows').innerHTML = rowsHtml();
+      wireRows();
+    }));
+  }
+  wireRows();
+  body.querySelector('#btnAddTgRow').addEventListener('click', () => {
+    readRowsFromDom();
+    mappings.push({ provider: '', chatId: '' });
+    body.querySelector('#tgMappingRows').innerHTML = rowsHtml();
+    wireRows();
+  });
+  body.querySelector('#btnSaveTg').addEventListener('click', async () => {
+    readRowsFromDom();
+    const providerTelegramChatIds = {};
+    mappings.forEach((m) => { if (m.provider.trim() && m.chatId.trim()) providerTelegramChatIds[m.provider.trim()] = m.chatId.trim(); });
+    const notifications = { ...n, notifyTelegramOnCaseStageChange: body.querySelector('#chk-telegramEnabled').checked };
+    try {
+      await Api.put('/api/settings', { providerTelegramChatIds, notifications });
+      toast('Telegram settings saved');
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  });
+}
+
+// Settings > Required Document Settings — added 2026-08-12 (second round,
+// same day as the Telegram Notifications tab above). The PAGCOR Checklist
+// itself was brought back earlier that day as a fixed 3-item list (Game
+// Manual / Parameter / RTP Certification), with this customization tab
+// deliberately deferred since it wasn't asked for yet — now it is, so the
+// items themselves are editable here instead of fixed in code. Same
+// add/remove-row list pattern as renderTelegramSettingsTab just above,
+// except each row is just a single Label — the object key each item saves
+// under (case.checklist.<key>) is generated/preserved server-side (see
+// slugifyChecklistKey in routes.js) so renaming a label in place doesn't
+// orphan already-saved checkbox state under the old key. The Download All
+// Documents gate on the case detail page still relies purely on the AI
+// Parameter Consistency Check, not this checklist — see server/pagcor.js's
+// header comment for the full history.
+async function renderChecklistSettingsTab(body) {
+  const canEdit = canDo('settings', 'edit');
+  // Read straight from the live PAGCOR_CHECKLIST_ITEMS (set at boot from
+  // /api/lookups, kept in sync locally after every save below) rather than
+  // re-fetching Settings, since this list is exactly that.
+  let items = PAGCOR_CHECKLIST_ITEMS.map((i) => ({ key: i.key, label: i.label }));
+  if (!items.length) items = [{ key: '', label: '' }];
+
+  const rowsHtml = () => items.map((i, idx) => `
+    <div class="row g-2 mb-2 checklist-item-row" data-idx="${idx}" data-key="${escapeHtml(i.key)}">
+      <div class="col-9"><input class="form-control form-control-sm ci-label" placeholder="e.g. Game Manual" value="${escapeHtml(i.label)}" ${canEdit ? '' : 'disabled'}></div>
+      <div class="col-3">${canEdit ? `<button type="button" class="btn btn-sm btn-outline-danger btn-remove-ci-row" data-idx="${idx}">${Icon('trash')}</button>` : ''}</div>
+    </div>`).join('');
+
+  body.innerHTML = `
+    <div class="card stat-card"><div class="card-body">
+      <h6 class="mb-2" style="font-size:1.05rem;">Required Document Settings</h6>
+      <div class="small text-secondary mb-3">The PAGCOR Checklist items tracked on every case with a Provider set (the checklist panel at the bottom of a case's detail page, and the checklist icon on each Case Management row). Add, rename, or remove items as your tracking needs change — Excel/CSV import will automatically match a spreadsheet column against an item's label (e.g. a column named "Game Manual" auto-fills the "Game Manual" item). This does not affect the separate AI Parameter Consistency Check, which always checks its own fixed set of parameters and document types.</div>
+      <label class="form-label small text-secondary mb-1">Checklist items</label>
+      <div id="ciRows">${rowsHtml()}</div>
+      ${canEdit ? `<button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="btnAddCiRow">${Icon('plus', 'me-1')}Add Item</button><br>` : ''}
+      ${canEdit ? `<button type="button" class="btn btn-primary" id="btnSaveCi">Save</button>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
+    </div></div>`;
+
+  if (!canEdit) return;
+
+  function readRowsFromDom() {
+    items = Array.from(body.querySelectorAll('.checklist-item-row')).map((rowEl) => ({
+      key: rowEl.dataset.key || '',
+      label: rowEl.querySelector('.ci-label').value,
+    }));
+  }
+  function wireRows() {
+    body.querySelectorAll('.btn-remove-ci-row').forEach((btn) => btn.addEventListener('click', () => {
+      readRowsFromDom();
+      items.splice(Number(btn.dataset.idx), 1);
+      if (!items.length) items = [{ key: '', label: '' }];
+      body.querySelector('#ciRows').innerHTML = rowsHtml();
+      wireRows();
+    }));
+  }
+  wireRows();
+  body.querySelector('#btnAddCiRow').addEventListener('click', () => {
+    readRowsFromDom();
+    items.push({ key: '', label: '' });
+    body.querySelector('#ciRows').innerHTML = rowsHtml();
+    wireRows();
+  });
+  body.querySelector('#btnSaveCi').addEventListener('click', async () => {
+    readRowsFromDom();
+    const checklistItems = items.filter((i) => i.label.trim()).map((i) => ({ key: i.key, label: i.label.trim() }));
+    try {
+      const updated = await Api.put('/api/settings', { checklistItems });
+      PAGCOR_CHECKLIST_ITEMS = updated.checklistItems || [];
+      toast('Required Document Settings saved');
+      renderChecklistSettingsTab(body);
+    } catch (err) {
+      toast(err.message, 'danger');
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -3954,6 +4131,7 @@ async function boot(skipTokenCheck) {
       State.role = me.role;
     }
     State.lookups = await Api.get('/api/lookups');
+    PAGCOR_CHECKLIST_ITEMS = State.lookups.checklistItems || [];
     renderShell();
     await route();
   } catch (err) {

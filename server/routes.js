@@ -4,11 +4,13 @@ const store = require('./store');
 const auth = require('./auth');
 const storage = require('./storage');
 const ai = require('./ai');
-const assistant = require('./assistant');
 const pagcor = require('./pagcor');
 const pagcorCheck = require('./pagcor-check');
 const caseImport = require('./import');
+const telegram = require('./telegram');
+const email = require('./email');
 const { mimeFor } = require('./mime');
+const zipLite = require('./zip-lite');
 
 const router = new Router();
 
@@ -52,41 +54,80 @@ async function notifyUser(userId, type, message, relatedId = null, relatedType =
 
 // ---------------------------------------------------------------------------
 // System Settings — a single row (id: 'system') holding the few things
-// Settings > Notification/Submission/Required Document Settings let an
-// Admin configure, instead of leaving them as hardcoded constants scattered
-// across routes.js/pagcor.js. Falls back to those original hardcoded values
-// (30-day follow-up, the standard PAGCOR_CHECKLIST_ITEMS, all notification
-// triggers on) the first time this is ever read, so a fresh install behaves
-// exactly like before this existed.
+// Settings > Notification/Submission Settings let an Admin configure,
+// instead of leaving them as hardcoded constants scattered across
+// routes.js/pagcor.js. Falls back to those original hardcoded values
+// (30-day follow-up, all notification triggers on) the first time this is
+// ever read, so a fresh install behaves exactly like before this existed.
+// (This used to also default a `requiredDocumentChecklist` template for the
+// PAGCOR Checklist feature — removed along with that feature; see
+// server/pagcor.js's header comment.)
+//
+// providerTelegramChatIds (added 2026-08-12): a Provider-name -> Telegram
+// group chat-ID map, edited in Settings > Telegram Notifications, used by
+// notifyCaseStageChange() below to post a status update straight into that
+// Provider's own group whenever a case's PAGCOR Stage changes — she was
+// doing this by hand in Telegram every time. Only PAGCOR Stage itself
+// (which comes from PAGCOR, and genuinely can't be auto-detected — someone
+// still has to call/check with PAGCOR and update it here) stays manual;
+// everything downstream of "the stage just changed" is now automatic. See
+// server/telegram.js for the actual send + one-time bot setup notes.
 async function getSystemSettings() {
   let settings = await store.find('settings', 'system');
   if (!settings) {
     settings = await store.insert('settings', {
       id: 'system',
       followUpDays: 30,
-      requiredDocumentChecklist: pagcor.PAGCOR_CHECKLIST_ITEMS,
       notifications: {
         notifyOnApprovalDecision: true,
         notifyOnTaskAssignment: true,
         notifyOnCaseStageChange: true,
+        notifyTelegramOnCaseStageChange: true,
+        // Added 2026-08-18 alongside reminderEmail below — whether the
+        // due-today follow-up email actually goes out (see
+        // checkAndSendFollowUpReminders near the bottom of this file).
+        notifyOnFollowUpDueEmail: true,
       },
+      providerTelegramChatIds: {},
+      checklistItems: pagcor.PAGCOR_CHECKLIST_ITEMS,
+      // Added 2026-08-18: where the "follow up N days later" reminder
+      // email (see checkAndSendFollowUpReminders below) gets sent. Null
+      // until Tiffany enters one in Settings > Submission Settings — no
+      // email is sent while this is empty, same "off until configured"
+      // pattern as providerTelegramChatIds above.
+      reminderEmail: null,
     });
   }
   return settings;
 }
 
-// New cases (see crudRoutes onCreate for 'cases' below) get their PAGCOR
-// checklist from whatever's currently configured in Required Document
-// Settings — falling back to the standard PAGCOR_CHECKLIST_ITEMS the first
-// time settings are read. Deliberately only affects cases created *after*
-// a settings change; existing cases keep whatever checklist they already
-// have, same as changing a template never rewrites past records.
-async function getChecklistTemplate() {
-  const settings = await getSystemSettings();
-  const items = (settings.requiredDocumentChecklist && settings.requiredDocumentChecklist.length)
-    ? settings.requiredDocumentChecklist
-    : pagcor.PAGCOR_CHECKLIST_ITEMS;
-  return items.map((item) => ({ ...item, done: false }));
+// checklistItems (added 2026-08-12, second round — Settings > Required
+// Document Settings): the PAGCOR Checklist's items used to be the fixed
+// PAGCOR_CHECKLIST_ITEMS constant in server/pagcor.js; now that list lives
+// here instead, editable from Settings, so Tiffany can add/rename/remove
+// tracked document types herself without needing a code change. A
+// pre-existing settings row (any real install from before this field
+// existed) won't have `checklistItems` set at all — falls back to the
+// original hardcoded 3-item default in that case, same items as always,
+// rather than silently becoming an empty checklist for existing users.
+// Deliberately checks `Array.isArray`, not truthiness/length: an
+// intentionally-emptied list (someone removed every item in Settings) is a
+// real `[]`, which must stay empty, not silently repopulate with defaults.
+function getChecklistItems(settings) {
+  return Array.isArray(settings.checklistItems) ? settings.checklistItems : pagcor.PAGCOR_CHECKLIST_ITEMS;
+}
+
+// Turns a checklist item's display label into a stable object key (used as
+// case.checklist.<key>) — e.g. "Game Manual" -> "gameManual", "RTP
+// Certification" -> "rtpCertification", matching the naming convention the
+// original hardcoded PAGCOR_CHECKLIST_ITEMS already used. Only used for
+// brand-new items (see PUT /api/settings below) — editing an existing
+// item's label keeps its original key, so renaming "Parameter" to
+// "Parameters" doesn't orphan every case's already-saved checkbox state.
+function slugifyChecklistKey(label) {
+  const words = String(label || '').trim().toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (!words.length) return 'item';
+  return words.map((w, i) => (i === 0 ? w : w[0].toUpperCase() + w.slice(1))).join('');
 }
 
 function notificationsEnabled(settings, key) {
@@ -101,13 +142,40 @@ function notificationsEnabled(settings, key) {
 // request (never on a save that leaves the Stage alone), gated by Settings
 // > Notification Settings > "Notify on case status change". Skips notifying
 // someone about their own change — nobody needs a notification for an
-// action they just took themselves.
+// action they just took themselves. Also fires the Telegram notification
+// to the case's Provider group (see notifyProviderTelegram below) — that
+// one is NOT skipped for the acting user, since the Provider on the other
+// end has no idea who clicked the button in Legal Genie.
 async function notifyCaseStageChange(row, existing, actingUser) {
   if (!row || !existing || !row.pagcorStage || existing.pagcorStage === row.pagcorStage) return;
-  if (!row.ownerId || row.ownerId === actingUser.id) return;
   const settings = await getSystemSettings();
-  if (!notificationsEnabled(settings, 'notifyOnCaseStageChange')) return;
-  await notifyUser(row.ownerId, 'case_stage_change', `Case "${row.title}" status changed to "${row.pagcorStage}"`, row.id, 'case');
+  if (row.ownerId && row.ownerId !== actingUser.id && notificationsEnabled(settings, 'notifyOnCaseStageChange')) {
+    await notifyUser(row.ownerId, 'case_stage_change', `Case "${row.title}" status changed to "${row.pagcorStage}"`, row.id, 'case');
+  }
+  await notifyProviderTelegram(row, settings);
+}
+
+// Posts a PAGCOR Stage update straight into the case's Provider's Telegram
+// group, added 2026-08-12 at Tiffany's request — she was typing this same
+// update out by hand in Telegram every time a submission's status changed.
+// Best-effort only and deliberately silent on any expected "not configured
+// yet" condition (no provider on the case, feature toggled off, no chat ID
+// entered yet for this Provider) — those are normal states for a case or a
+// fresh install, not errors. An actual Telegram API failure (bad token,
+// bot not in the group, group deleted, etc.) is logged server-side but
+// still never thrown further — a Telegram outage must never block or fail
+// the underlying case save this is reporting on.
+async function notifyProviderTelegram(row, settings) {
+  if (!row.provider) return;
+  if (!notificationsEnabled(settings, 'notifyTelegramOnCaseStageChange')) return;
+  const chatId = (settings.providerTelegramChatIds || {})[row.provider];
+  if (!chatId) return;
+  const text = `📋 PAGCOR Submission Update\nGame: ${row.gameTitle || row.title}${row.caseNumber ? `\nCase: ${row.caseNumber}` : ''}\nStatus: ${row.pagcorStage}`;
+  try {
+    await telegram.sendTelegramMessage(chatId, text);
+  } catch (err) {
+    console.error(`[telegram] failed to notify Provider "${row.provider}" (case ${row.id}):`, err.message);
+  }
 }
 
 // Notifies a task's Assignee when they're newly assigned (a fresh task, or
@@ -165,9 +233,9 @@ router.get('/api/auth/me', async (req, res) => {
 router.get('/api/lookups', async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  const [users, departments, roles, cases, contracts] = await Promise.all([
+  const [users, departments, roles, cases, contracts, settings] = await Promise.all([
     store.all('users'), store.all('departments'), store.all('roles'),
-    store.all('cases'), store.all('contracts'),
+    store.all('cases'), store.all('contracts'), getSystemSettings(),
   ]);
   sendJson(res, 200, {
     users: users.map((u) => ({ id: u.id, fullName: u.fullName, username: u.username })),
@@ -175,6 +243,14 @@ router.get('/api/lookups', async (req, res) => {
     roles: roles.map((r) => ({ id: r.id, name: r.name })),
     cases: cases.map((c) => ({ id: c.id, title: c.title, caseNumber: c.caseNumber })),
     contracts: contracts.map((c) => ({ id: c.id, title: c.title, contractNumber: c.contractNumber })),
+    // The frontend can't reach getChecklistItems() itself (plain browser
+    // JS, no server import) — sent here once at boot instead, alongside
+    // everything else State.lookups already holds, so the PAGCOR Checklist
+    // UI (case rows, case detail, the modal) all read the current
+    // Settings-configured list rather than a hardcoded copy. See
+    // renderTelegramSettingsTab's sibling, renderChecklistSettingsTab, for
+    // where this gets edited.
+    checklistItems: getChecklistItems(settings),
   });
 });
 
@@ -229,41 +305,6 @@ router.post('/api/cases/extract-from-documents', async (req, res, params, body) 
 });
 
 // ---------------------------------------------------------------------------
-// AI Assistant (optional — see server/assistant.js; requires
-// GEMINI_API_KEY same as AI smart-fill above). Read-only lookups
-// (search_*) execute immediately; anything that would create a record
-// comes back as a `pendingAction` that the user must separately confirm
-// via /api/assistant/confirm before it's actually written.
-// ---------------------------------------------------------------------------
-router.post('/api/assistant/message', async (req, res, params, body) => {
-  const user = await requireAuth(req, res);
-  if (!user) return;
-  try {
-    const { reply, pendingActions } = await assistant.runTurn({
-      history: Array.isArray(body.history) ? body.history : [],
-      text: body.text || '',
-      user,
-    });
-    sendJson(res, 200, { reply, pendingActions });
-  } catch (err) {
-    sendJson(res, 400, { error: err.message });
-  }
-});
-
-router.post('/api/assistant/confirm', async (req, res, params, body) => {
-  const user = await requireAuth(req, res);
-  if (!user) return;
-  const { type, input } = body || {};
-  if (!type || !input) return sendJson(res, 400, { error: 'Missing action type/input' });
-  try {
-    const result = await assistant.executeAction({ type, input }, user);
-    sendJson(res, 201, { result });
-  } catch (err) {
-    sendJson(res, 400, { error: err.message });
-  }
-});
-
-// ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
 router.get('/api/dashboard/summary', async (req, res) => {
@@ -272,8 +313,8 @@ router.get('/api/dashboard/summary', async (req, res) => {
   const today = new Date();
   const in14 = new Date(today.getTime() + 14 * 86400000);
 
-  const [tasks, cases, contracts, notifications, approvals] = await Promise.all([
-    store.all('tasks'), store.all('cases'), store.all('contracts'),
+  const [tasks, cases, notifications, approvals] = await Promise.all([
+    store.all('tasks'), store.all('cases'),
     store.all('notifications'), store.all('approvals'),
   ]);
 
@@ -317,11 +358,6 @@ router.get('/api/dashboard/summary', async (req, res) => {
       });
     }
   });
-  contracts.forEach((c) => {
-    if (c.expiryDate && new Date(c.expiryDate) <= in14) {
-      upcomingDeadlines.push({ type: 'Contract', id: c.id, title: c.title, date: c.expiryDate });
-    }
-  });
   upcomingDeadlines.sort((a, b) => new Date(a.date) - new Date(b.date));
 
   // Follow-up window comes from Settings > Submission Settings (defaults to
@@ -329,14 +365,14 @@ router.get('/api/dashboard/summary', async (req, res) => {
   const settings = await getSystemSettings();
   const followUpDays = Number.isFinite(settings.followUpDays) && settings.followUpDays > 0 ? settings.followUpDays : 30;
 
-  // Follow-up reminder — flags games that have been sitting in "Submitted to
-  // PAGCOR" or "Under PAGCOR Review" for followUpDays+ with nobody having
-  // followed up (i.e. the Stage itself hasn't changed). This came directly
-  // from legal's feedback that games silently stall at PAGCOR for weeks with
-  // no visibility until someone happens to check. Falls back to createdAt
-  // for older cases that predate the pagcorStageChangedAt field (see
+  // Follow-up reminder — flags games that have been sitting in "For Review"
+  // or "On Process" for followUpDays+ with nobody having followed up (i.e.
+  // the Stage itself hasn't changed). This came directly from legal's
+  // feedback that games silently stall at PAGCOR for weeks with no
+  // visibility until someone happens to check. Falls back to createdAt for
+  // older cases that predate the pagcorStageChangedAt field (see
   // crudRoutes' onCreate/onUpdate for cases in this file).
-  const FOLLOW_UP_STAGES = ['Submitted to PAGCOR', 'Under PAGCOR Review'];
+  const FOLLOW_UP_STAGES = ['For Review', 'On Process'];
   const followUpCutoff = new Date(today.getTime() - followUpDays * 86400000);
   const followUps = cases
     .filter((c) => FOLLOW_UP_STAGES.includes(c.pagcorStage))
@@ -366,7 +402,7 @@ router.get('/api/dashboard/summary', async (req, res) => {
   // Provider set are PAGCOR game-submission cases (see crudRoutes onCreate
   // above for the same "Provider present -> PAGCOR case" convention). Each
   // column returns a small sample (most-recently-created first) plus a total
-  // count, rather than every case, since a stage like "Under PAGCOR Review"
+  // count, rather than every case, since a stage like "On Process"
   // can hold hundreds of games — the client links out to the filtered Case
   // Management list for the rest instead of rendering them all here.
   const PAGCOR_BOARD_SAMPLE_SIZE = 5;
@@ -383,32 +419,9 @@ router.get('/api/dashboard/summary', async (req, res) => {
         caseNumber: c.caseNumber,
         title: c.title,
         provider: c.provider,
-        checklistDone: (c.pagcorChecklist || []).filter((i) => i.done).length,
-        checklistTotal: (c.pagcorChecklist || []).length,
       })),
     };
   });
-
-  // "Pending Documents" — PAGCOR cases whose required-document checklist
-  // (Settings > Required Document Settings) isn't fully checked off yet,
-  // still open (not LOA Approved/Rejected). Reuses the same
-  // checklistDone/checklistTotal shape the pagcorBoard sample rows already
-  // compute above, so the Dashboard widget and the PAGCOR board agree on
-  // what "incomplete" means.
-  const pendingDocuments = pagcorCases
-    .filter((c) => !['LOA Approved', 'Rejected'].includes(c.pagcorStage))
-    .map((c) => ({
-      id: c.id,
-      caseNumber: c.caseNumber,
-      title: c.title,
-      gameTitle: c.gameTitle,
-      provider: c.provider,
-      pagcorStage: c.pagcorStage,
-      checklistDone: (c.pagcorChecklist || []).filter((i) => i.done).length,
-      checklistTotal: (c.pagcorChecklist || []).length,
-    }))
-    .filter((c) => c.checklistTotal > 0 && c.checklistDone < c.checklistTotal)
-    .sort((a, b) => (a.checklistTotal - a.checklistDone) < (b.checklistTotal - b.checklistDone) ? 1 : -1);
 
   sendJson(res, 200, {
     pagcorBoard,
@@ -417,8 +430,6 @@ router.get('/api/dashboard/summary', async (req, res) => {
     followUpDays,
     todaysTasks,
     recentlyUpdatedCases,
-    pendingDocuments: pendingDocuments.slice(0, 10),
-    pendingDocumentsCount: pendingDocuments.length,
     upcomingDeadlines: upcomingDeadlines.slice(0, 10),
     recentNotifications: myNotifications,
     unreadNotificationsCount: notifications.filter((n) => n.userId === user.id && !n.isRead).length,
@@ -428,7 +439,6 @@ router.get('/api/dashboard/summary', async (req, res) => {
     pendingApprovalsCount: pendingApprovals.length,
     counts: {
       cases: cases.filter((c) => c.status !== 'Closed').length,
-      contracts: contracts.filter((c) => c.status === 'Active').length,
     },
   });
 });
@@ -436,17 +446,28 @@ router.get('/api/dashboard/summary', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Generic list/get/create/update/delete factory
 // ---------------------------------------------------------------------------
-function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCreate, afterUpdate, afterDelete }) {
+function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCreate, afterUpdate, afterDelete, filterList }) {
+  // filterList(rows, user) -> rows the given user is allowed to see. Used both
+  // for the list endpoint and (as a single-row check) for get/update/delete,
+  // so a row hidden from the list can't be read/edited/deleted by guessing its id.
+  async function visibleRow(row, user) {
+    if (!row) return null;
+    if (!filterList) return row;
+    const visible = await filterList([row], user);
+    return visible.length ? visible[0] : null;
+  }
+
   router.get(base, async (req, res) => {
     const user = await requirePerm(req, res, moduleName, 'view');
     if (!user) return;
-    sendJson(res, 200, await store.all(collection));
+    const rows = await store.all(collection);
+    sendJson(res, 200, filterList ? await filterList(rows, user) : rows);
   });
 
   router.get(`${base}/:id`, async (req, res, params) => {
     const user = await requirePerm(req, res, moduleName, 'view');
     if (!user) return;
-    const row = await store.find(collection, params.id);
+    const row = await visibleRow(await store.find(collection, params.id), user);
     if (!row) return sendJson(res, 404, { error: 'Not found' });
     sendJson(res, 200, row);
   });
@@ -473,7 +494,8 @@ function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCre
     // can tell whether pagcorStage actually changed this request without
     // re-querying (store.update() already overwrites the row by the time
     // afterUpdate runs, so "before" state would otherwise be lost).
-    const existing = (onUpdate || afterUpdate) ? await store.find(collection, params.id) : null;
+    const existing = await visibleRow(await store.find(collection, params.id), user);
+    if (!existing) return sendJson(res, 404, { error: 'Not found' });
     const patch = onUpdate ? await onUpdate(body, user, params.id, existing) : body;
     const row = await store.update(collection, params.id, patch);
     if (!row) return sendJson(res, 404, { error: 'Not found' });
@@ -486,10 +508,11 @@ function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCre
   router.delete(`${base}/:id`, async (req, res, params) => {
     const user = await requirePerm(req, res, moduleName, 'delete');
     if (!user) return;
-    const existing = afterDelete ? await store.find(collection, params.id) : null;
+    const existing = await visibleRow(await store.find(collection, params.id), user);
+    if (!existing) return sendJson(res, 404, { error: 'Not found' });
     const ok = await store.remove(collection, params.id);
     if (!ok) return sendJson(res, 404, { error: 'Not found' });
-    if (afterDelete && existing) {
+    if (afterDelete) {
       try { await afterDelete(existing, user); } catch (err) { console.error(`afterDelete(${base}) failed:`, err); }
     }
     sendJson(res, 200, { ok: true });
@@ -538,7 +561,7 @@ async function syncDeadlineFollowUpTask(caseRow) {
       description: `Case "${caseRow.title}" has a Submit Date of ${caseRow.deadline}. This reminder was created automatically ${followUpDays} days later to follow up on progress.`,
       assigneeId: caseRow.ownerId || null,
       type: 'team',
-      status: 'Not Started',
+      status: 'To-Do',
       dueDate: followUpDate,
       relatedCaseId: caseRow.id,
       isDeadlineFollowUp: true,
@@ -555,17 +578,22 @@ crudRoutes({
   onCreate: async (body) => {
     const patch = { ...body, caseNumber: body.caseNumber || await store.nextNumber('case', 'CASE') };
     // A case with a Provider set is a PAGCOR game-submission case — give it
-    // the standard checklist/stage automatically so the user doesn't have to
-    // set those up by hand every time. Cases without a Provider (Commercial,
-    // IP, Litigation, etc.) are untouched. The checklist template itself
-    // comes from Settings > Required Document Settings (see
-    // getChecklistTemplate above) — falls back to the standard
-    // PAGCOR_CHECKLIST_ITEMS the first time settings are read.
-    if (body.provider && !patch.pagcorChecklist) patch.pagcorChecklist = await getChecklistTemplate();
-    if (body.provider && !patch.pagcorStage) patch.pagcorStage = 'Preparing Documents';
+    // the standard stage automatically so the user doesn't have to set it up
+    // by hand every time. Cases without a Provider (Commercial, IP,
+    // Litigation, etc.) are untouched.
+    if (body.provider && !patch.pagcorStage) patch.pagcorStage = 'Pending Documents';
+    // Same idea for the PAGCOR Checklist — a fresh PAGCOR case starts with
+    // every currently-configured item unchecked (see Settings > Required
+    // Document Settings / getChecklistItems above), unless the Excel import
+    // path (server/import.js) already supplied real values read from the
+    // sheet.
+    if (body.provider && !patch.checklist) {
+      const settings = await getSystemSettings();
+      patch.checklist = Object.fromEntries(getChecklistItems(settings).map((i) => [i.key, false]));
+    }
     // Stamp when the case entered its current PAGCOR Stage, so the Dashboard
-    // can flag games that have been sitting in "Submitted to PAGCOR" /
-    // "Under PAGCOR Review" for the configured follow-up window without
+    // can flag games that have been sitting in "For Review" /
+    // "On Process" for the configured follow-up window without
     // anyone following up (see onUpdate below and
     // /api/dashboard/summary's followUps). Only set if not already provided
     // (e.g. by the Excel import path in import.js).
@@ -643,7 +671,25 @@ router.post('/api/cases/import-approval-notice', async (req, res, params, body) 
   try {
     const extracted = await ai.extractApprovalNotice({ fileName: body.fileName, fileContentBase64: body.fileContentBase64 });
     const cases = await store.all('cases');
-    const result = await pagcorCheck.applyApprovalNoticeGames(cases, extracted.games, (id, patch) => store.update('cases', id, patch));
+    // updateFn used to call store.update() directly, bypassing the same
+    // pagcorStageChangedAt stamping + notifyCaseStageChange (owner
+    // notification + Telegram post to the Provider's group) that
+    // bulk-update-stage and a normal case Edit both go through — meaning
+    // approving a game via a real scanned PAGCOR notice letter (arguably
+    // the most important moment to notify anyone) silently notified no
+    // one. `cases` here is the same pre-fetched snapshot
+    // applyApprovalNoticeGames matches against, so looking a case up in it
+    // gives the correct "before" state for the change without an extra
+    // store.find() round trip.
+    const updateFn = async (id, patch) => {
+      const existing = cases.find((c) => c.id === id) || null;
+      const fullPatch = { ...patch };
+      if (existing && existing.pagcorStage !== patch.pagcorStage) fullPatch.pagcorStageChangedAt = new Date().toISOString();
+      const row = await store.update('cases', id, fullPatch);
+      if (row) await notifyCaseStageChange(row, existing, user);
+      return row;
+    };
+    const result = await pagcorCheck.applyApprovalNoticeGames(cases, extracted.games, updateFn);
     sendJson(res, 200, { ...result, approvalDate: extracted.approvalDate || null, noticeReference: extracted.noticeReference || null });
   } catch (err) {
     sendJson(res, 500, { error: err.message });
@@ -673,7 +719,13 @@ router.post('/api/cases/import/preview', async (req, res, params, body) => {
   if (!user) return;
   try {
     const buffer = decodeBase64File(body.fileContentBase64);
-    const sheets = caseImport.preview(buffer, body.fileName);
+    // Pass the currently-configured checklist items through so the preview
+    // (and, more importantly, the commit below) auto-detect spreadsheet
+    // columns matching whatever items are configured in Settings > Required
+    // Document Settings right now, not just the original hardcoded 3 — see
+    // DEFAULT_CHECKLIST_ITEMS / detectColumns in server/import.js.
+    const checklistItems = getChecklistItems(await getSystemSettings());
+    const sheets = caseImport.preview(buffer, body.fileName, checklistItems);
     sendJson(res, 200, { sheets });
   } catch (err) {
     sendJson(res, 400, { error: err.message });
@@ -720,6 +772,7 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     return sendJson(res, 400, { error: err.message });
   }
   const errors = [];
+  const checklistItems = getChecklistItems(await getSystemSettings());
 
   // Stage 1: parse every included sheet into rows, tagged with the sheet
   // name they came from (for error messages).
@@ -727,7 +780,7 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   for (const s of sheetSettings) {
     if (!s || s.include === false) continue;
     try {
-      const rows = caseImport.buildCasesForSheet(buffer, body.fileName, s.name, { provider: s.provider, pagcorStage: s.pagcorStage });
+      const rows = caseImport.buildCasesForSheet(buffer, body.fileName, s.name, { provider: s.provider, pagcorStage: s.pagcorStage }, checklistItems);
       rows.forEach((row) => allRows.push({ row, sheetName: s.name }));
     } catch (err) {
       errors.push(`${s.name}: ${err.message}`);
@@ -738,7 +791,7 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   // — e.g. a Provider's own pending-list tab AND the master "APPROVED" tab,
   // once that game has actually been approved (the Provider tab just never
   // got updated). Tiffany confirmed: treat that as ONE case, using the
-  // APPROVED-tab version (final LOA Approved stage), not two separate
+  // APPROVED-tab version (final Approved stage), not two separate
   // records for the same game — so an isApprovedRow entry always wins a
   // same-key collision, whichever sheet order they were parsed in.
   const byKey = new Map();
@@ -855,33 +908,13 @@ router.post('/api/cases/:id/notes', async (req, res, params, body) => {
   sendJson(res, 201, note);
 });
 
-// Contracts ---------------------------------------------------------------
-crudRoutes({
-  base: '/api/contracts', moduleName: 'contracts', collection: 'contracts',
-  onCreate: async (body) => ({ ...body, contractNumber: body.contractNumber || await store.nextNumber('contract', 'CTR') }),
-});
-
-router.get('/api/contracts/:id/versions', async (req, res, params) => {
-  const user = await requirePerm(req, res, 'contracts', 'view');
-  if (!user) return;
-  sendJson(res, 200, (await store.all('contractVersions')).filter((v) => v.contractId === params.id));
-});
-
-router.post('/api/contracts/:id/versions', async (req, res, params, body) => {
-  const user = await requirePerm(req, res, 'contracts', 'edit');
-  if (!user) return;
-  const existing = (await store.all('contractVersions')).filter((v) => v.contractId === params.id);
-  const filePath = await storage.saveBase64File(body.fileName, body.fileContentBase64);
-  const version = await store.insert('contractVersions', {
-    contractId: params.id,
-    versionNo: existing.length + 1,
-    uploadedBy: user.id,
-    fileName: body.fileName || null,
-    filePath,
-    notes: body.notes || '',
-  });
-  sendJson(res, 201, version);
-});
+// Note: the Contract Management module/UI was removed at Tiffany's request
+// (2026-08-11) — there is no longer a dedicated /api/contracts CRUD or
+// versions API. Existing `contracts`/`contractVersions` records are kept
+// in the database untouched; they're still readable via /api/lookups
+// (contractName() in app.js) so Tasks/Documents can keep their existing
+// "Related Contract" field working, they're just no longer manageable
+// through their own screen.
 
 // Documents -----------------------------------------------------------------
 crudRoutes({
@@ -1024,6 +1057,7 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params) => {
 
   try {
     const documents = [];
+    const comparedDocIds = [];
     for (const doc of relatedDocs) {
       const buffer = await storage.readFile(doc.filePath);
       if (!buffer) continue; // file record exists but bytes missing in storage — skip rather than fail the whole check
@@ -1032,6 +1066,7 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params) => {
         fileName: doc.title || doc.fileName,
         fileContentBase64: `data:${bareMimeType};base64,${buffer.toString('base64')}`,
       });
+      comparedDocIds.push(doc.id);
     }
     if (documents.length < 2) {
       return sendJson(res, 404, { error: 'The related documents\' file content could not be found in storage, so they cannot be compared.' });
@@ -1042,6 +1077,20 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params) => {
       gameId: kase.gameId,
       documents,
     });
+
+    // Persist so the Case Detail "Download All Documents" gate (see
+    // GET /api/cases/:id/download-all below) can require a passed AI check
+    // without re-running Gemini on every page load. documentIds records
+    // exactly which documents were compared, so a later upload/replace/
+    // removal can be detected as making this result stale — see
+    // isConsistencyCheckStale below.
+    const lastConsistencyCheck = {
+      overallStatus: result.overallStatus || null,
+      checkedAt: new Date().toISOString(),
+      documentIds: comparedDocIds,
+    };
+    await store.update('cases', params.id, { lastConsistencyCheck });
+
     sendJson(res, 200, { ...result, documentsCompared: documents.length });
   } catch (err) {
     sendJson(res, 400, { error: err.message });
@@ -1095,12 +1144,161 @@ router.post('/api/documents/check-consistency', async (req, res, params, body) =
   }
 });
 
+// A stored lastConsistencyCheck is only trustworthy for the exact set of
+// documents it compared — if a document was uploaded, replaced, or removed
+// from the case since (see showCaseDocumentUploadModal / Document Center),
+// the previously "ready" verdict no longer reflects what's actually on file.
+// Compares the stored documentIds against the case's current
+// relatedCaseId-linked, file-bearing documents (order-independent) to decide
+// whether a fresh AI check is required before the download-all gate opens.
+function isConsistencyCheckStale(kase, currentDocs) {
+  const last = kase.lastConsistencyCheck;
+  if (!last || !Array.isArray(last.documentIds)) return true;
+  const currentIds = currentDocs.map((d) => d.id).sort();
+  const lastIds = [...last.documentIds].sort();
+  if (currentIds.length !== lastIds.length) return true;
+  return currentIds.some((id, i) => id !== lastIds[i]);
+}
+
+// Strip characters that are illegal (or awkward) in a filename on Windows/
+// macOS/most zip tools, since these become entry names inside the .zip and,
+// for the folder name, part of the downloaded file's own filename.
+function safeFileSegment(name) {
+  return String(name || '').replace(/[\\/:*?"<>|]/g, '-').trim() || 'file';
+}
+
+// One-click "Download All Documents" for a Case — bundles every document
+// linked to this case (relatedCaseId) into a single .zip, but only once the
+// AI Parameter Consistency Check (POST /api/cases/:id/check-consistency
+// above) last came back "ready" — every required document type present,
+// every tracked parameter present, nothing mismatched — for the CURRENT set
+// of documents (not stale — see isConsistencyCheckStale). This used to also
+// require a separate manually-maintained PAGCOR Checklist to be fully
+// checked off; that checklist was removed at Tiffany's request once the AI
+// check's own documentCompleteness section started covering "which required
+// documents are missing" automatically, making the manual checklist
+// redundant. Uses zip-lite.js's dependency-free ZIP writer, same reasoning
+// as xlsx-lite.js: this sandbox has no npm registry access, so a package
+// like archiver/jszip can't be installed.
+router.get('/api/cases/:id/download-all', async (req, res, params) => {
+  const user = await requirePerm(req, res, 'cases', 'view');
+  if (!user) return;
+  const kase = await store.find('cases', params.id);
+  if (!kase) return sendJson(res, 404, { error: 'Case not found' });
+
+  const allDocs = await store.all('documents');
+  const relatedDocs = allDocs.filter((d) => d.relatedCaseId === params.id && d.filePath);
+  if (relatedDocs.length === 0) {
+    return sendJson(res, 400, { error: 'This case has no uploaded documents yet.' });
+  }
+
+  if (!kase.lastConsistencyCheck || kase.lastConsistencyCheck.overallStatus !== 'ready') {
+    return sendJson(res, 400, { error: 'Please run the AI Parameter Consistency Check and confirm it comes back with no anomalies before downloading.' });
+  }
+  if (isConsistencyCheckStale(kase, relatedDocs)) {
+    return sendJson(res, 400, { error: 'Documents have changed since the last AI Parameter Consistency Check. Please re-run the check and confirm no anomalies before downloading.' });
+  }
+
+  try {
+    const folderName = safeFileSegment(`${kase.caseNumber || kase.id} - ${kase.title || kase.gameTitle || 'Case'}`);
+    const usedNames = new Set();
+    const files = [];
+    for (const doc of relatedDocs) {
+      const buffer = await storage.readFile(doc.filePath);
+      if (!buffer) continue; // file record exists but bytes missing in storage — skip rather than fail the whole download
+      const baseName = safeFileSegment(doc.fileName || doc.title || `document-${doc.id}`);
+      let name = baseName;
+      let n = 2;
+      while (usedNames.has(name)) {
+        const dot = baseName.lastIndexOf('.');
+        name = dot > 0 ? `${baseName.slice(0, dot)} (${n})${baseName.slice(dot)}` : `${baseName} (${n})`;
+        n += 1;
+      }
+      usedNames.add(name);
+      files.push({ name: `${folderName}/${name}`, data: buffer });
+    }
+    if (!files.length) {
+      return sendJson(res, 404, { error: 'This case\'s document files could not be found in storage.' });
+    }
+    const zipBuffer = zipLite.buildZip(files);
+    res.writeHead(200, {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${folderName.replace(/"/g, '')}.zip"`,
+    });
+    res.end(zipBuffer);
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
+// Knowledge Base ------------------------------------------------------------
+// A repository of reference material (PAGCOR Guidelines/Circulars, company
+// SOPs, application forms, etc.) plus a company-approved FAQ list — see the
+// "Knowledge Base" module in Tiffany's Game Submission Management System
+// Proposal doc. This is deliberately just the storage/organization piece
+// (upload, categorize, version, Draft/Pending Review/Active/Archived
+// status) — no AI Q&A search over it yet. The proposal's stated purpose is
+// so a future AI (e.g. the Telegram Partner Assistant, if that's ever
+// built) has an approved source to cite instead of guessing; this alone is
+// also directly useful today as a searchable, organized reference the legal
+// team can browse.
+//
+// kbDocuments supports two kinds of entry, both sharing one collection: an
+// actual uploaded file (fileName/filePath, same storage.saveBase64File
+// pattern as /api/documents below), or a pointer to an external official
+// source (sourceUrl) — most of the real PAGCOR reference material Tiffany
+// gave us to seed this with (see server/seed.js) is the latter: links to
+// PAGCOR's own regulatory pages rather than files we'd host ourselves.
+crudRoutes({
+  base: '/api/kb-documents', moduleName: 'knowledgeBase', collection: 'kbDocuments',
+  onCreate: async (body, user) => {
+    const { fileContentBase64, ...rest } = body;
+    const filePath = fileContentBase64 ? await storage.saveBase64File(body.fileName, fileContentBase64) : null;
+    return { ...rest, filePath, uploadedBy: user.id };
+  },
+  onUpdate: async (body) => {
+    const { fileContentBase64, ...rest } = body;
+    if (!fileContentBase64) return rest;
+    return { ...rest, filePath: await storage.saveBase64File(body.fileName, fileContentBase64) };
+  },
+});
+
+router.get('/api/kb-documents/:id/download', async (req, res, params) => {
+  const user = await requirePerm(req, res, 'knowledgeBase', 'view');
+  if (!user) return;
+  const doc = await store.find('kbDocuments', params.id);
+  if (!doc || !doc.filePath) return sendJson(res, 404, { error: 'File not available' });
+  const buffer = await storage.readFile(doc.filePath);
+  if (!buffer) return sendJson(res, 404, { error: 'File missing in storage' });
+  res.writeHead(200, {
+    'Content-Type': mimeFor(doc.fileName || doc.filePath),
+    'Content-Disposition': `attachment; filename="${(doc.fileName || 'download').replace(/"/g, '')}"`,
+  });
+  res.end(buffer);
+});
+
+// Company-approved FAQ entries — separate from kbDocuments since these are
+// short Q&A text written directly in the system, not a source document.
+crudRoutes({
+  base: '/api/kb-faqs', moduleName: 'knowledgeBase', collection: 'kbFaqs',
+  onCreate: async (body, user) => ({ ...body, createdBy: user.id }),
+});
+
 // Tasks -----------------------------------------------------------------
+// "Personal" tasks are only visible to their creator/assignee (or an Admin) —
+// "Team" tasks stay visible to anyone with Tasks-module view permission.
+async function filterPersonalTasks(rows, user) {
+  const role = await store.find('roles', user.roleId);
+  if (role && role.name === 'Admin') return rows;
+  return rows.filter((t) => t.type !== 'personal' || t.createdBy === user.id || t.assigneeId === user.id);
+}
+
 crudRoutes({
   base: '/api/tasks', moduleName: 'tasks', collection: 'tasks',
   onCreate: async (body, user) => ({ ...body, createdBy: user.id }),
   afterCreate: async (row, user) => notifyTaskAssignee(row, null, user),
   afterUpdate: async (row, user, id, existing) => notifyTaskAssignee(row, existing, user),
+  filterList: filterPersonalTasks,
 });
 
 // Calendar Events ---------------------------------------------------------
@@ -1272,30 +1470,134 @@ router.get('/api/settings', async (req, res) => {
 router.put('/api/settings', async (req, res, params, body) => {
   const user = await requirePerm(req, res, 'settings', 'edit');
   if (!user) return;
-  await getSystemSettings(); // ensure the row exists before patching it
+  const current = await getSystemSettings(); // also ensures the row exists before patching it
   const patch = {};
   if (body.followUpDays !== undefined) {
     const days = Number(body.followUpDays);
     if (!Number.isFinite(days) || days <= 0) return sendJson(res, 400, { error: 'Follow-up window must be a positive number of days.' });
     patch.followUpDays = days;
   }
-  if (body.requiredDocumentChecklist !== undefined) {
-    if (!Array.isArray(body.requiredDocumentChecklist) || body.requiredDocumentChecklist.some((i) => !i || !String(i.label || '').trim())) {
-      return sendJson(res, 400, { error: 'Each required document needs a label.' });
+  // Added 2026-08-18 — see checkAndSendFollowUpReminders below for what
+  // this actually drives. Empty string clears it back to "off" (null),
+  // same as leaving it unset; a non-empty value gets a light sanity check
+  // only (real validation is Resend rejecting a bad address at send time —
+  // no need to duplicate a full RFC 5322 email regex here).
+  if (body.reminderEmail !== undefined) {
+    const addr = String(body.reminderEmail || '').trim();
+    if (addr && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) {
+      return sendJson(res, 400, { error: 'That doesn\'t look like a valid email address.' });
     }
-    patch.requiredDocumentChecklist = body.requiredDocumentChecklist.map((i, idx) => ({
-      key: i.key || `doc${idx}`, label: String(i.label).trim(),
-    }));
+    patch.reminderEmail = addr || null;
   }
+  // Merged on top of the CURRENT row's notifications, not rebuilt from
+  // scratch — each Settings tab (Notification Settings / Telegram
+  // Notifications) only ever submits the 2-3 keys it actually renders, so
+  // rebuilding from just `body.notifications` would silently reset every
+  // OTHER tab's toggle back to its `!== false` default (true) on every
+  // save. This was a real bug: saving the plain Notification Settings tab
+  // (which never mentions notifyTelegramOnCaseStageChange) was silently
+  // re-enabling Telegram notifications even after someone had explicitly
+  // turned them off in the Telegram Notifications tab.
   if (body.notifications !== undefined) {
-    patch.notifications = {
-      notifyOnApprovalDecision: body.notifications.notifyOnApprovalDecision !== false,
-      notifyOnTaskAssignment: body.notifications.notifyOnTaskAssignment !== false,
-      notifyOnCaseStageChange: body.notifications.notifyOnCaseStageChange !== false,
-    };
+    const existingNotifications = current.notifications || {};
+    patch.notifications = { ...existingNotifications };
+    for (const key of ['notifyOnApprovalDecision', 'notifyOnTaskAssignment', 'notifyOnCaseStageChange', 'notifyTelegramOnCaseStageChange']) {
+      if (body.notifications[key] !== undefined) patch.notifications[key] = body.notifications[key] !== false;
+    }
+  }
+  // providerTelegramChatIds: a plain { "FC": "-1001234567890", ... } map,
+  // edited as a free-form list in Settings > Telegram Notifications (see
+  // renderTelegramSettingsTab in app.js) since Provider is just a free-text
+  // field on cases, not a fixed lookup table elsewhere in this app.
+  // Trimmed and blank-filtered here so an empty row left in the UI (or a
+  // provider name/chat ID that's all whitespace) never gets saved as a
+  // bogus mapping that would silently swallow that Provider's real
+  // notifications later.
+  if (body.providerTelegramChatIds !== undefined) {
+    if (typeof body.providerTelegramChatIds !== 'object' || body.providerTelegramChatIds === null || Array.isArray(body.providerTelegramChatIds)) {
+      return sendJson(res, 400, { error: 'providerTelegramChatIds must be an object.' });
+    }
+    const clean = {};
+    for (const [provider, chatId] of Object.entries(body.providerTelegramChatIds)) {
+      const p = String(provider || '').trim();
+      const c = String(chatId || '').trim();
+      if (p && c) clean[p] = c;
+    }
+    patch.providerTelegramChatIds = clean;
+  }
+  // checklistItems: an ordered [{key, label}, ...] list, edited in
+  // Settings > Required Document Settings (see
+  // renderChecklistSettingsTab in app.js). `key` is preserved as sent for
+  // an existing item (so renaming a label doesn't orphan every case's
+  // already-saved checkbox state under the old key) and auto-generated
+  // from the label for a brand-new item that doesn't have one yet. Blank
+  // labels are dropped silently (an empty row left in the UI). Keys are
+  // de-duplicated — two items that slugify to the same key (e.g. two rows
+  // both labeled "RTP Certification") would otherwise silently share one
+  // checkbox.
+  if (body.checklistItems !== undefined) {
+    if (!Array.isArray(body.checklistItems)) return sendJson(res, 400, { error: 'checklistItems must be an array.' });
+    const usedKeys = new Set();
+    const clean = [];
+    for (const raw of body.checklistItems) {
+      const label = String((raw && raw.label) || '').trim();
+      if (!label) continue;
+      let key = String((raw && raw.key) || '').trim() || slugifyChecklistKey(label);
+      let finalKey = key;
+      let n = 2;
+      while (usedKeys.has(finalKey)) { finalKey = `${key}${n}`; n++; }
+      usedKeys.add(finalKey);
+      clean.push({ key: finalKey, label });
+    }
+    patch.checklistItems = clean;
   }
   const updated = await store.update('settings', 'system', patch);
   sendJson(res, 200, updated);
 });
+
+// ---------------------------------------------------------------------------
+// Email reminder for due-today follow-ups (added 2026-08-18)
+// ---------------------------------------------------------------------------
+// Called on a timer from server.js (setInterval — this process has to stay
+// running for that to fire, which is why it's designed for the Render
+// deployment rather than a one-shot local `node server.js` session; see the
+// Go-Live Guide). Finds every auto-created "follow up N days later" task
+// (see syncDeadlineFollowUpTask above) whose due date is today, that isn't
+// already Completed, and that hasn't already been emailed — sends one email
+// per task via Resend (server/email.js) and stamps `followUpEmailSentAt` so
+// re-running this on the next tick (or the next day, if the task is still
+// open) doesn't send a duplicate. Deliberately keyed off calendar date only
+// (not a precise time-of-day), since this only runs hourly at best and "the
+// due date" has no meaningful hour attached to it anyway.
+//
+// Best-effort per task, same as notifyProviderTelegram above: one failed
+// send (bad address, Resend outage, RESEND_API_KEY not configured yet)
+// is logged and skipped, never allowed to block the rest of the batch or
+// throw out of the caller's setInterval tick.
+async function checkAndSendFollowUpReminders() {
+  const settings = await getSystemSettings();
+  if (!settings.reminderEmail) return; // not configured yet — nothing to do
+  if (!notificationsEnabled(settings, 'notifyOnFollowUpDueEmail')) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const tasks = await store.all('tasks');
+  const due = tasks.filter((t) => t.isDeadlineFollowUp && t.status !== 'Completed'
+    && t.dueDate === today && !t.followUpEmailSentAt);
+  if (!due.length) return;
+
+  for (const t of due) {
+    try {
+      await email.sendReminderEmail(
+        settings.reminderEmail,
+        `Legal Genie reminder: ${t.title}`,
+        `${t.description || t.title}\n\nOpen Legal Genie to view/update this follow-up: Task Management.`,
+      );
+      await store.update('tasks', t.id, { followUpEmailSentAt: new Date().toISOString() });
+    } catch (err) {
+      console.error(`[email] failed to send follow-up reminder for task ${t.id}:`, err.message);
+    }
+  }
+}
+router.runDueFollowUpReminders = checkAndSendFollowUpReminders;
 
 module.exports = router;

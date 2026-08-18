@@ -94,18 +94,6 @@ const MODULE_SCHEMAS = {
     },
     required: ['title'],
   },
-  contracts: {
-    label: 'contract',
-    properties: {
-      title: { type: 'string', description: 'A short contract title, e.g. "Supply Agreement — Acme Corp".' },
-      counterparty: { type: 'string', description: 'The other party\'s company/entity name.' },
-      type: { type: 'string', enum: ['License', 'Supply', 'Services', 'Employment', 'NDA', 'Other'] },
-      effectiveDate: { type: 'string', description: 'ISO date YYYY-MM-DD the contract takes/took effect, if mentioned. Omit if not mentioned.' },
-      expiryDate: { type: 'string', description: 'ISO date YYYY-MM-DD the contract expires/terminates, if mentioned. Omit if not mentioned.' },
-      status: { type: 'string', enum: ['Active', 'Expired', 'Terminated', 'Draft'] },
-    },
-    required: ['title'],
-  },
   documents: {
     label: 'document being filed into the document center',
     properties: {
@@ -535,10 +523,18 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, document
   // "Ready for Submission" banner always follows the same fixed rule: every
   // required document type must be present, every tracked parameter must
   // have a value somewhere, and no parameter may disagree across documents.
+  // Each array gets its own `.length > 0` guard, not just documentCompleteness
+  // — Array.prototype.every() vacuously returns true on an empty array, so
+  // without this, a malformed/truncated Gemini response that comes back
+  // with an empty parameterValidation or documentConsistency (schema
+  // non-compliance, an API hiccup, etc.) would silently report "ready" for
+  // a real PAGCOR filing without ever actually validating those sections.
   const overallStatus = (
     documentCompleteness.length > 0
     && documentCompleteness.every((d) => d.present)
+    && parameterValidation.length > 0
     && parameterValidation.every((p) => p.present)
+    && documentConsistency.length > 0
     && documentConsistency.every((c) => c.status === 'match')
   ) ? 'ready' : 'not_ready';
 

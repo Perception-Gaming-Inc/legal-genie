@@ -1,0 +1,4914 @@
+[
+  {
+    "id": "cef8ca26-5aa9-4628-bd73-248a8d6c4fe6",
+    "createdAt": "2026-08-05T03:18:17.055Z",
+    "title": "CAI SHEN FISHING",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "CAI SHEN FISHING",
+    "gameType": "Arcade-Type",
+    "gameId": "7003",
+    "gameVersion": "v3.193.0-h.2/vdf9b3fd",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0177",
+    "updatedAt": "2026-08-05T07:34:36.040Z"
+  },
+  {
+    "id": "c7ccab50-0b12-4195-b68f-0930e488821b",
+    "createdAt": "2026-08-05T03:18:17.056Z",
+    "title": "CAISHEN COMING",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "CAISHEN COMING",
+    "gameType": "Slots",
+    "gameId": "14084",
+    "gameVersion": "v3.193.0-h.2/vd975b03",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0178",
+    "updatedAt": "2026-08-05T07:34:36.041Z"
+  },
+  {
+    "id": "3f5cf893-25ce-47b8-b12c-d6464b03de5a",
+    "createdAt": "2026-08-05T03:18:17.057Z",
+    "title": "CAISHEN PARTY",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "CAISHEN PARTY",
+    "gameType": "Arcade-Type",
+    "gameId": "9011",
+    "gameVersion": "v3.193.0-h.2/v77f1f6d",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0179",
+    "updatedAt": "2026-08-05T07:34:36.042Z"
+  },
+  {
+    "id": "d88d0773-b264-446e-94dd-d564d55fc882",
+    "createdAt": "2026-08-05T03:18:17.059Z",
+    "title": "COOCOO FARM",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "COOCOO FARM",
+    "gameType": "Slots",
+    "gameId": "14083",
+    "gameVersion": "v3.193.0-h.2/v8fadca9",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0180",
+    "updatedAt": "2026-08-05T07:34:36.043Z"
+  },
+  {
+    "id": "b99bc8ec-e5ec-48d6-b11a-553cb39bcf11",
+    "createdAt": "2026-08-05T03:18:17.060Z",
+    "title": "DICE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DICE",
+    "gameType": "Arcade-Type",
+    "gameId": "9019",
+    "gameVersion": "v3.193.0-h.2/vae7137d",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0181",
+    "updatedAt": "2026-08-05T07:34:36.044Z"
+  },
+  {
+    "id": "06b51b15-44ce-4c8a-a484-2d7231ebd9f8",
+    "createdAt": "2026-08-05T03:18:17.061Z",
+    "title": "DOUBLE WILDS",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DOUBLE WILDS",
+    "gameType": "Slots",
+    "gameId": "14048",
+    "gameVersion": "v3.193.0-h.2/v10c18bf",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0182",
+    "updatedAt": "2026-08-05T07:34:36.045Z"
+  },
+  {
+    "id": "b93cd76c-c6fc-476c-ac7b-1bf30778f509",
+    "createdAt": "2026-08-05T03:18:17.063Z",
+    "title": "DRAGON",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGON",
+    "gameType": "Slots",
+    "gameId": "14010",
+    "gameVersion": "v3.193.0-h.2/vcc0a648",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0183",
+    "updatedAt": "2026-08-05T07:34:36.046Z"
+  },
+  {
+    "id": "cdc6387c-0a83-444f-9d4d-6010c2e53df8",
+    "createdAt": "2026-08-05T03:18:17.064Z",
+    "title": "DRAGON FISHING",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGON FISHING",
+    "gameType": "Arcade-Type",
+    "gameId": "7001",
+    "gameVersion": "v3.193.0-h.2/v8fcebb5",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0184",
+    "updatedAt": "2026-08-05T07:34:36.047Z"
+  },
+  {
+    "id": "bb206feb-13cd-4e6c-85f3-debe2d72794b",
+    "createdAt": "2026-08-05T03:18:17.065Z",
+    "title": "DRAGON FISHING II",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGON FISHING II",
+    "gameType": "Arcade-Type",
+    "gameId": "7002",
+    "gameVersion": "v3.193.0-h.2/v373eef6",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0185",
+    "updatedAt": "2026-08-05T07:34:36.048Z"
+  },
+  {
+    "id": "87337580-6317-4af8-ae7c-bb3b5dfe6b74",
+    "createdAt": "2026-08-05T03:18:17.067Z",
+    "title": "DRAGON MASTER",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGON MASTER",
+    "gameType": "Arcade-Type",
+    "gameId": "7006",
+    "gameVersion": "v3.193.0-h.2/v80b6061",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0186",
+    "updatedAt": "2026-08-05T07:34:36.049Z"
+  },
+  {
+    "id": "249ab938-97ba-410a-a8a4-386ec3b6bf63",
+    "createdAt": "2026-08-05T03:18:17.068Z",
+    "title": "DRAGON OF DEMONS",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGON OF DEMONS",
+    "gameType": "Arcade-Type",
+    "gameId": "7010",
+    "gameVersion": "v3.193.0-h.2/v0592a74",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0187",
+    "updatedAt": "2026-08-05T07:34:36.050Z"
+  },
+  {
+    "id": "dad9e4bc-5efd-4506-a74e-e04498908e4f",
+    "createdAt": "2026-08-05T03:18:17.069Z",
+    "title": "DRAGON SOAR - HYPER WILD",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGON SOAR - HYPER WILD",
+    "gameType": "Slots",
+    "gameId": "14092",
+    "gameVersion": "v3.193.0-h.2/v3f44f44",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0188",
+    "updatedAt": "2026-08-05T07:34:36.051Z"
+  },
+  {
+    "id": "45355a55-60ad-4bae-9cb0-866d00a74256",
+    "createdAt": "2026-08-05T03:18:17.071Z",
+    "title": "DRAGON WARRIOR",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGON WARRIOR",
+    "gameType": "Slots",
+    "gameId": "14008",
+    "gameVersion": "v3.193.0-h.2/v305ad65",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0189",
+    "updatedAt": "2026-08-05T07:34:36.052Z"
+  },
+  {
+    "id": "9943236b-f250-4d03-ab67-0941d5e46d0e",
+    "createdAt": "2026-08-05T03:18:17.072Z",
+    "title": "DRAGONS GATE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGONS GATE",
+    "gameType": "Slots",
+    "gameId": "14051",
+    "gameVersion": "v3.193.0-h.2/v230fa2f",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0190",
+    "updatedAt": "2026-08-05T07:34:36.053Z"
+  },
+  {
+    "id": "32f252dc-b235-44ff-a317-e7a4dcce9929",
+    "createdAt": "2026-08-05T03:18:17.073Z",
+    "title": "DRAGONS WORLD",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "DRAGONS WORLD",
+    "gameType": "Slots",
+    "gameId": "14035",
+    "gameVersion": "v3.193.0-h.2/v751bf3d",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0191",
+    "updatedAt": "2026-08-05T07:34:36.054Z"
+  },
+  {
+    "id": "f4b81db1-1365-4d56-b6ec-f643e574602c",
+    "createdAt": "2026-08-05T03:18:17.074Z",
+    "title": "ELEMENTAL LINK FIRE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "ELEMENTAL LINK FIRE",
+    "gameType": "Slots",
+    "gameId": "14080",
+    "gameVersion": "v3.193.0-h.2/v7253a8b",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0192",
+    "updatedAt": "2026-08-05T07:34:36.055Z"
+  },
+  {
+    "id": "58397495-3c21-453b-b468-565d537665ae",
+    "createdAt": "2026-08-05T03:18:17.075Z",
+    "title": "ELEMENTAL LINK WATER",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "ELEMENTAL LINK WATER",
+    "gameType": "Slots",
+    "gameId": "14082",
+    "gameVersion": "v3.193.0-h.2/v9abc401",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0193",
+    "updatedAt": "2026-08-05T07:34:36.056Z"
+  },
+  {
+    "id": "2d7079d5-7826-4994-bfdd-f1eb26720559",
+    "createdAt": "2026-08-05T03:18:17.077Z",
+    "title": "FIGHTER FIRE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FIGHTER FIRE",
+    "gameType": "Arcade-Type",
+    "gameId": "7008",
+    "gameVersion": "v3.193.0-h.2/v48a98b4",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0194",
+    "updatedAt": "2026-08-05T07:34:36.056Z"
+  },
+  {
+    "id": "5aec91d3-edef-45e6-9125-53db52757de2",
+    "createdAt": "2026-08-05T03:18:17.078Z",
+    "title": "FIREWORK BURST",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FIREWORK BURST",
+    "gameType": "Arcade-Type",
+    "gameId": "9015",
+    "gameVersion": "v3.193.0-h.2/v3102045",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0195",
+    "updatedAt": "2026-08-05T07:34:36.058Z"
+  },
+  {
+    "id": "1ada9dd9-9d98-4d0b-bed6-1763c421f302",
+    "createdAt": "2026-08-05T03:18:17.080Z",
+    "title": "FISHIN' FEVER X-HUGE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FISHIN' FEVER X-HUGE",
+    "gameType": "Slots",
+    "gameId": "14097",
+    "gameVersion": "v3.193.0-h.2/vb571c49",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0196",
+    "updatedAt": "2026-08-05T07:34:36.059Z"
+  },
+  {
+    "id": "4109665d-184d-41ca-8a3d-89b49b7495d8",
+    "createdAt": "2026-08-05T03:18:17.083Z",
+    "title": "FISHING DISCO",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FISHING DISCO",
+    "gameType": "Arcade-Type",
+    "gameId": "7007",
+    "gameVersion": "v3.193.0-h.2/v7d56992",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0197",
+    "updatedAt": "2026-08-05T07:34:36.060Z"
+  },
+  {
+    "id": "556294b7-8d3c-40ae-b414-66ae5c73f67a",
+    "createdAt": "2026-08-05T03:18:17.084Z",
+    "title": "FISHING YILUFA",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FISHING YILUFA",
+    "gameType": "Arcade-Type",
+    "gameId": "7005",
+    "gameVersion": "v3.193.0-h.2/v75db81f",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0198",
+    "updatedAt": "2026-08-05T07:34:36.060Z"
+  },
+  {
+    "id": "71544587-fdab-44ca-a633-05b106034c4d",
+    "createdAt": "2026-08-05T03:18:17.085Z",
+    "title": "FLIRTING SCHOLAR TANG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FLIRTING SCHOLAR TANG",
+    "gameType": "Slots",
+    "gameId": "8002",
+    "gameVersion": "v3.193.0-h.2/v6a7c907",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0199",
+    "updatedAt": "2026-08-05T07:34:36.061Z"
+  },
+  {
+    "id": "e0ac0b4e-3e81-425c-9767-109f9fd82000",
+    "createdAt": "2026-08-05T03:18:17.086Z",
+    "title": "FORMOSA BEAR",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FORMOSA BEAR",
+    "gameType": "Slots",
+    "gameId": "8006",
+    "gameVersion": "v3.193.0-h.2/v0898bc1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0200",
+    "updatedAt": "2026-08-05T07:34:36.062Z"
+  },
+  {
+    "id": "4bff9e02-3495-428d-ae22-9f1524bdbc55",
+    "createdAt": "2026-08-05T03:18:17.088Z",
+    "title": "FORTUNE HORSE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FORTUNE HORSE",
+    "gameType": "Slots",
+    "gameId": "8050",
+    "gameVersion": "v3.193.0-h.2/vf0fc17d",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0201",
+    "updatedAt": "2026-08-05T07:34:36.063Z"
+  },
+  {
+    "id": "9dba9faa-7ab9-4120-a5ff-7435c65421e1",
+    "createdAt": "2026-08-05T03:18:17.089Z",
+    "title": "FORTUNE JEWEL",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FORTUNE JEWEL",
+    "gameType": "Slots",
+    "gameId": "14095",
+    "gameVersion": "v3.193.0-h.2/vff8ef23",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0202",
+    "updatedAt": "2026-08-05T07:34:36.064Z"
+  },
+  {
+    "id": "0c257da7-b885-418a-be6d-b24fef2394d1",
+    "createdAt": "2026-08-05T03:18:17.091Z",
+    "title": "FORTUNE NEKO",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FORTUNE NEKO",
+    "gameType": "Slots",
+    "gameId": "14075",
+    "gameVersion": "v3.193.0-h.2/vfe6bac1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0203",
+    "updatedAt": "2026-08-05T07:34:36.065Z"
+  },
+  {
+    "id": "b73756f4-22f1-44b0-aef0-1f81d0cab270",
+    "createdAt": "2026-08-05T03:18:17.092Z",
+    "title": "FORTUNE TREASURE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FORTUNE TREASURE",
+    "gameType": "Slots",
+    "gameId": "14039",
+    "gameVersion": "v3.193.0-h.2/v08fac86",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0204",
+    "updatedAt": "2026-08-05T07:34:36.066Z"
+  },
+  {
+    "id": "efad942f-0168-46dc-b7fd-9d8652427a6f",
+    "createdAt": "2026-08-05T03:18:17.093Z",
+    "title": "FOUR TREASURES",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FOUR TREASURES",
+    "gameType": "Slots",
+    "gameId": "8019",
+    "gameVersion": "v3.193.0-h.2/va1a3eb8",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0205",
+    "updatedAt": "2026-08-05T07:34:36.067Z"
+  },
+  {
+    "id": "2ec89106-07be-44a4-b881-8f65d400554e",
+    "createdAt": "2026-08-05T03:18:17.095Z",
+    "title": "FRUITY BONANZA",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FRUITY BONANZA",
+    "gameType": "Slots",
+    "gameId": "14085",
+    "gameVersion": "v3.193.0-h.2/vb7d264b",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0206",
+    "updatedAt": "2026-08-05T07:34:36.068Z"
+  },
+  {
+    "id": "fff7e382-dc8c-427c-967b-d08bc496104c",
+    "createdAt": "2026-08-05T03:18:17.096Z",
+    "title": "FRUITY BONANZA COMBO",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FRUITY BONANZA COMBO",
+    "gameType": "Slots",
+    "gameId": "14098",
+    "gameVersion": "v3.193.0-h.2/v5be4aeb",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0207",
+    "updatedAt": "2026-08-05T07:34:36.069Z"
+  },
+  {
+    "id": "e151194a-f93d-44e3-bc09-d329a3bf2468",
+    "createdAt": "2026-08-05T03:18:17.097Z",
+    "title": "FUNKY KING KONG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "FUNKY KING KONG",
+    "gameType": "Slots",
+    "gameId": "14044",
+    "gameVersion": "v3.193.0-h.2/vecd0265",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0208",
+    "updatedAt": "2026-08-05T07:34:36.070Z"
+  },
+  {
+    "id": "896f91e7-72a0-4eb3-a6e2-ba88b17a8996",
+    "createdAt": "2026-08-05T03:18:17.099Z",
+    "title": "GALAXY BURST",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "GALAXY BURST",
+    "gameType": "Arcade-Type",
+    "gameId": "9013",
+    "gameVersion": "v3.193.0-h.2/ve590152",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0209",
+    "updatedAt": "2026-08-05T07:34:36.072Z"
+  },
+  {
+    "id": "ba160f84-1b36-49fc-b661-4460ffafe0b6",
+    "createdAt": "2026-08-05T03:18:17.100Z",
+    "title": "GLAMOROUS GIRL",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "GLAMOROUS GIRL",
+    "gameType": "Slots",
+    "gameId": "14067",
+    "gameVersion": "v3.193.0-h.2/v17606c7",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0210",
+    "updatedAt": "2026-08-05T07:34:36.073Z"
+  },
+  {
+    "id": "fec92fff-305c-4c92-9b65-bbf422874cb4",
+    "createdAt": "2026-08-05T03:18:17.102Z",
+    "title": "GOAL",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "GOAL",
+    "gameType": "Arcade-Type",
+    "gameId": "9016",
+    "gameVersion": "v3.193.0-h.2/vcda979c",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0211",
+    "updatedAt": "2026-08-05T07:34:36.074Z"
+  },
+  {
+    "id": "e66e1e95-d1a3-4482-a765-7d31d64bb5d4",
+    "createdAt": "2026-08-05T03:18:17.103Z",
+    "title": "GOLAIFU",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "GOLAIFU",
+    "gameType": "Slots",
+    "gameId": "14034",
+    "gameVersion": "v3.193.0-h.2/ve431ae2",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0212",
+    "updatedAt": "2026-08-05T07:34:36.075Z"
+  },
+  {
+    "id": "d1b70b2e-283e-4a0f-bb69-4fcc392d3ed8",
+    "createdAt": "2026-08-05T03:18:17.105Z",
+    "title": "GOLDEN DISCO",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "GOLDEN DISCO",
+    "gameType": "Slots",
+    "gameId": "14043",
+    "gameVersion": "v3.193.0-h.2/v1f5a643",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0213",
+    "updatedAt": "2026-08-05T07:34:36.076Z"
+  },
+  {
+    "id": "ef0680aa-2cea-4f17-a967-e9aa83af3115",
+    "createdAt": "2026-08-05T03:18:17.106Z",
+    "title": "HILO",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "HILO",
+    "gameType": "Table",
+    "gameId": "9017",
+    "gameVersion": "v3.193.0-h.2/vac663cf",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0214",
+    "updatedAt": "2026-08-05T07:34:36.077Z"
+  },
+  {
+    "id": "3fcaa43a-ce6f-4dc3-803a-509cc8a9ed07",
+    "createdAt": "2026-08-05T03:18:17.107Z",
+    "title": "KINGSMAN",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "KINGSMAN",
+    "gameType": "Slots",
+    "gameId": "14016",
+    "gameVersion": "v3.193.0-h.2/vee0cb1a",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0215",
+    "updatedAt": "2026-08-05T07:34:36.078Z"
+  },
+  {
+    "id": "c6cebb14-4139-4a62-acfa-3382a4fdd22e",
+    "createdAt": "2026-08-05T03:18:17.109Z",
+    "title": "KOI TRIO",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "KOI TRIO",
+    "gameType": "Slots",
+    "gameId": "14100",
+    "gameVersion": "v3.193.0-h.2/v329a070",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0216",
+    "updatedAt": "2026-08-05T07:34:36.079Z"
+  },
+  {
+    "id": "b10eb61d-e7dc-4fc0-acab-a6eb28dec320",
+    "createdAt": "2026-08-05T03:18:17.110Z",
+    "title": "KONG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "KONG",
+    "gameType": "Slots",
+    "gameId": "14055",
+    "gameVersion": "v3.193.0-h.2/v8931f69",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0217",
+    "updatedAt": "2026-08-05T07:34:36.080Z"
+  },
+  {
+    "id": "f27ab64d-18b0-41c9-8d30-facadbfe0705",
+    "createdAt": "2026-08-05T03:18:17.112Z",
+    "title": "LANTERN WEALTH",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "LANTERN WEALTH",
+    "gameType": "Slots",
+    "gameId": "14060",
+    "gameVersion": "v3.193.0-h.2/v01e28cd",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0218",
+    "updatedAt": "2026-08-05T07:34:36.081Z"
+  },
+  {
+    "id": "9f96c9b4-a3df-4259-b9d0-ce8dc53df0a9",
+    "createdAt": "2026-08-05T03:18:17.113Z",
+    "title": "LEGENDARY 5",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "LEGENDARY 5",
+    "gameType": "Slots",
+    "gameId": "15012",
+    "gameVersion": "v3.193.0-h.2/vfd2b9f0",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0219",
+    "updatedAt": "2026-08-05T07:34:36.082Z"
+  },
+  {
+    "id": "700c9bc3-7800-4bf1-8266-e49af2ebb00a",
+    "createdAt": "2026-08-05T03:18:17.114Z",
+    "title": "LUCKY COLOR GAME",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "LUCKY COLOR GAME",
+    "gameType": "Table",
+    "gameId": "9010",
+    "gameVersion": "v3.193.0-h.2/v3353a52",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0220",
+    "updatedAt": "2026-08-05T07:34:36.083Z"
+  },
+  {
+    "id": "c7d370a6-3274-4549-a153-e4c0fc9feedf",
+    "createdAt": "2026-08-05T03:18:17.116Z",
+    "title": "LUCKY DIAMOND",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "LUCKY DIAMOND",
+    "gameType": "Slots",
+    "gameId": "14054",
+    "gameVersion": "v3.193.0-h.2/v993fe3e",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0221",
+    "updatedAt": "2026-08-05T07:34:36.084Z"
+  },
+  {
+    "id": "4815ea2f-7534-4e5f-b2b3-5d9d3947fb62",
+    "createdAt": "2026-08-05T03:18:17.118Z",
+    "title": "LUCKY DRAGONS",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "LUCKY DRAGONS",
+    "gameType": "Slots",
+    "gameId": "8001",
+    "gameVersion": "v3.193.0-h.2/v78106fc",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0222",
+    "updatedAt": "2026-08-05T07:34:36.085Z"
+  },
+  {
+    "id": "c55d0580-816b-4215-bd05-6627fe019a1e",
+    "createdAt": "2026-08-05T03:18:17.119Z",
+    "title": "LUCKY ELEPHANT X-HUGE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "LUCKY ELEPHANT X-HUGE",
+    "gameType": "Slots",
+    "gameId": "14096",
+    "gameVersion": "v3.207.4/vd5a151d",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0223",
+    "updatedAt": "2026-08-05T07:34:36.086Z"
+  },
+  {
+    "id": "b01014b8-8e02-466c-97ca-4248c87e2e9e",
+    "createdAt": "2026-08-05T03:18:17.122Z",
+    "title": "LUCKY SEVEN",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "LUCKY SEVEN",
+    "gameType": "Slots",
+    "gameId": "14027",
+    "gameVersion": "v3.193.0-h.2/v2bbcc8e",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0224",
+    "updatedAt": "2026-08-05T07:34:36.087Z"
+  },
+  {
+    "id": "5dd2ddab-8d12-46e2-a42a-6894cb5598a3",
+    "createdAt": "2026-08-05T03:18:17.123Z",
+    "title": "MAGIC ACE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MAGIC ACE",
+    "gameType": "Slots",
+    "gameId": "14088",
+    "gameVersion": "v3.193.0-h.2/vfb233fa",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0225",
+    "updatedAt": "2026-08-05T07:34:36.088Z"
+  },
+  {
+    "id": "4d0847d1-a8a1-4a39-8307-9bf1313d7ca6",
+    "createdAt": "2026-08-05T03:18:17.125Z",
+    "title": "MAGIC ACE WILD LOCK",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MAGIC ACE WILD LOCK",
+    "gameType": "Slots",
+    "gameId": "14093",
+    "gameVersion": "v3.193.0-h.2/v05d1c4e",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0226",
+    "updatedAt": "2026-08-05T07:34:36.089Z"
+  },
+  {
+    "id": "163dae55-09e9-47eb-961c-cac7a05bc01b",
+    "createdAt": "2026-08-05T03:18:17.126Z",
+    "title": "MAHJONG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MAHJONG",
+    "gameType": "Slots",
+    "gameId": "8022",
+    "gameVersion": "v3.193.0-h.2/vbf2cf1e",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0227",
+    "updatedAt": "2026-08-05T07:34:36.090Z"
+  },
+  {
+    "id": "8ad1c5eb-f9a2-4f4f-a1ed-1c5b28e4dfb0",
+    "createdAt": "2026-08-05T03:18:17.132Z",
+    "title": "MARVELOUS IV",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MARVELOUS IV",
+    "gameType": "Slots",
+    "gameId": "14059",
+    "gameVersion": "v3.193.0-h.2/vc945be0",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0228",
+    "updatedAt": "2026-08-05T07:34:36.091Z"
+  },
+  {
+    "id": "10ecb0f5-ca7e-407a-872f-ab9d1191dc71",
+    "createdAt": "2026-08-05T03:18:17.137Z",
+    "title": "MAYA GOLD CRAZY",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MAYA GOLD CRAZY",
+    "gameType": "Slots",
+    "gameId": "14061",
+    "gameVersion": "v3.193.0-h.2/vbcfc0a6",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0229",
+    "updatedAt": "2026-08-05T07:34:36.092Z"
+  },
+  {
+    "id": "4a4e82f0-0cf7-4ecc-a19e-c1fff9e3b29d",
+    "createdAt": "2026-08-05T03:18:17.146Z",
+    "title": "MINER BABE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MINER BABE",
+    "gameType": "Slots",
+    "gameId": "14046",
+    "gameVersion": "v3.193.0-h.2/vd94418e",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0230",
+    "updatedAt": "2026-08-05T07:34:36.093Z"
+  },
+  {
+    "id": "69bafcab-7a6b-4fd1-b10d-b038c5cb2283",
+    "createdAt": "2026-08-05T03:18:17.151Z",
+    "title": "MINES",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MINES",
+    "gameType": "Arcade-Type",
+    "gameId": "9014",
+    "gameVersion": "v3.193.0-h.2/v911d1ff",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0231",
+    "updatedAt": "2026-08-05T07:34:36.094Z"
+  },
+  {
+    "id": "3faca68a-5ff9-470c-926a-df410da0af13",
+    "createdAt": "2026-08-05T03:18:17.152Z",
+    "title": "MINES 2",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MINES 2",
+    "gameType": "Arcade-Type",
+    "gameId": "9021",
+    "gameVersion": "v3.193.0-h.2/vcf78199",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0232",
+    "updatedAt": "2026-08-05T07:34:36.095Z"
+  },
+  {
+    "id": "e13842a9-8a83-4064-8f9e-3144b921e02c",
+    "createdAt": "2026-08-05T03:18:17.154Z",
+    "title": "MJOLNIR",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MJOLNIR",
+    "gameType": "Slots",
+    "gameId": "14041",
+    "gameVersion": "v3.193.0-h.2/vc73d840",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0233",
+    "updatedAt": "2026-08-05T07:34:36.096Z"
+  },
+  {
+    "id": "5c18774e-88d4-4a9b-b94f-5a6853fe9014",
+    "createdAt": "2026-08-05T03:18:17.156Z",
+    "title": "MOLE CRASH",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MOLE CRASH",
+    "gameType": "Arcade-Type",
+    "gameId": "9020",
+    "gameVersion": "v3.193.0-h.2/v37c91d1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0234",
+    "updatedAt": "2026-08-05T07:34:36.097Z"
+  },
+  {
+    "id": "d38d0081-3513-48cf-9707-8a9676c0c07e",
+    "createdAt": "2026-08-05T03:18:17.157Z",
+    "title": "MONEYBAGS MAN",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MONEYBAGS MAN",
+    "gameType": "Slots",
+    "gameId": "14047",
+    "gameVersion": "v3.193.0-h.2/vbede50e",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0235",
+    "updatedAt": "2026-08-05T07:34:36.097Z"
+  },
+  {
+    "id": "ed6486aa-c2e8-4f2a-9799-8e44e7faacbd",
+    "createdAt": "2026-08-05T03:18:17.159Z",
+    "title": "MONEYBAGS MAN 2",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MONEYBAGS MAN 2",
+    "gameType": "Slots",
+    "gameId": "14079",
+    "gameVersion": "v3.193.0-h.2/vca1d5cf",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0236",
+    "updatedAt": "2026-08-05T07:34:36.099Z"
+  },
+  {
+    "id": "4fabf183-08c5-477e-b5a7-4d8ccbc0db09",
+    "createdAt": "2026-08-05T03:18:17.161Z",
+    "title": "MOONLIGHT TREASURE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "MOONLIGHT TREASURE",
+    "gameType": "Slots",
+    "gameId": "8015",
+    "gameVersion": "v3.193.0-h.2/va89bf4a",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0237",
+    "updatedAt": "2026-08-05T07:34:36.100Z"
+  },
+  {
+    "id": "270780a1-2f52-4ba8-9ce1-596bd6c38ad2",
+    "createdAt": "2026-08-05T03:18:17.163Z",
+    "title": "NAPOLEON",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "NAPOLEON",
+    "gameType": "Slots",
+    "gameId": "8018",
+    "gameVersion": "v3.193.0-h.2/v05e69dd",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0238",
+    "updatedAt": "2026-08-05T07:34:36.101Z"
+  },
+  {
+    "id": "568a621d-655f-436f-9f61-74683263e458",
+    "createdAt": "2026-08-05T03:18:17.164Z",
+    "title": "NEW YEAR",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "NEW YEAR",
+    "gameType": "Slots",
+    "gameId": "8017",
+    "gameVersion": "v3.193.0-h.2/v5084c2d",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0239",
+    "updatedAt": "2026-08-05T07:34:36.102Z"
+  },
+  {
+    "id": "abb88d18-bbbb-4455-a615-2fa540cd3101",
+    "createdAt": "2026-08-05T03:18:17.167Z",
+    "title": "OLYMPIAN TEMPLE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "OLYMPIAN TEMPLE",
+    "gameType": "Slots",
+    "gameId": "8023",
+    "gameVersion": "v3.193.0-h.2/va33db12",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0240",
+    "updatedAt": "2026-08-05T07:34:36.103Z"
+  },
+  {
+    "id": "a2b50c4d-ce21-477b-8b80-878eff7a3180",
+    "createdAt": "2026-08-05T03:18:17.168Z",
+    "title": "OLYMPIG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "OLYMPIG",
+    "gameType": "Slots",
+    "gameId": "6001",
+    "gameVersion": "v3.193.0-h.2/v1084234",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0241",
+    "updatedAt": "2026-08-05T07:34:36.104Z"
+  },
+  {
+    "id": "129e2556-a54e-41d9-9bc8-644a846c32a5",
+    "createdAt": "2026-08-05T03:18:17.170Z",
+    "title": "OPEN SESAME",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "OPEN SESAME",
+    "gameType": "Slots",
+    "gameId": "8020",
+    "gameVersion": "v3.193.0-h.2/v3cd6108",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0242",
+    "updatedAt": "2026-08-05T07:34:36.105Z"
+  },
+  {
+    "id": "3eedca7f-16fd-4ee0-993c-c08ea4c1a15f",
+    "createdAt": "2026-08-05T03:18:17.172Z",
+    "title": "OPEN SESAME II",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "OPEN SESAME II",
+    "gameType": "Slots",
+    "gameId": "8048",
+    "gameVersion": "v3.193.0-h.2/vb65e11f",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0243",
+    "updatedAt": "2026-08-05T07:34:36.106Z"
+  },
+  {
+    "id": "80018f58-bebe-4ceb-a394-4ba8dac25a10",
+    "createdAt": "2026-08-05T03:18:17.173Z",
+    "title": "OPEN SESAME MEGA",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "OPEN SESAME MEGA",
+    "gameType": "Slots",
+    "gameId": "14086",
+    "gameVersion": "v3.193.0-h.2/vd8c3c29",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0244",
+    "updatedAt": "2026-08-05T07:34:36.107Z"
+  },
+  {
+    "id": "35c440ba-f1f3-4e88-8392-72cb922d3e4a",
+    "createdAt": "2026-08-05T03:18:17.175Z",
+    "title": "ORIENT ANIMALS",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "ORIENT ANIMALS",
+    "gameType": "Slots",
+    "gameId": "14029",
+    "gameVersion": "v3.193.0-h.2/v61b4430",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0245",
+    "updatedAt": "2026-08-05T07:34:36.108Z"
+  },
+  {
+    "id": "98252ab9-e0ef-4eb1-8422-6df161d3739b",
+    "createdAt": "2026-08-05T03:18:17.176Z",
+    "title": "PIGGY BANK",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "PIGGY BANK",
+    "gameType": "Slots",
+    "gameId": "14091",
+    "gameVersion": "v3.193.0-h.2/v35d6f36",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0246",
+    "updatedAt": "2026-08-05T07:34:36.109Z"
+  },
+  {
+    "id": "dfae011d-1c6c-4e76-badc-253e64406105",
+    "createdAt": "2026-08-05T03:18:17.178Z",
+    "title": "PLINKO",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "PLINKO",
+    "gameType": "Arcade-Type",
+    "gameId": "9018",
+    "gameVersion": "v3.193.0-h.2/v7a4b644",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0247",
+    "updatedAt": "2026-08-05T07:34:36.110Z"
+  },
+  {
+    "id": "fe32b928-e156-413e-b6d7-a6c3f09bacac",
+    "createdAt": "2026-08-05T03:18:17.179Z",
+    "title": "POKER RACING",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "POKER RACING",
+    "gameType": "Table",
+    "gameId": "18022",
+    "gameVersion": "v3.193.0-h.2/v8fcebb5",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0248",
+    "updatedAt": "2026-08-05T07:34:36.111Z"
+  },
+  {
+    "id": "e3fb7289-0a5a-4101-a2f7-7ab79ecb780b",
+    "createdAt": "2026-08-05T03:18:17.181Z",
+    "title": "POP POP CANDY",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "POP POP CANDY",
+    "gameType": "Slots",
+    "gameId": "14087",
+    "gameVersion": "v3.193.0-h.2/vc7d6855",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0249",
+    "updatedAt": "2026-08-05T07:34:36.112Z"
+  },
+  {
+    "id": "efc9591d-54f7-4aef-9761-5f77cc8e0da9",
+    "createdAt": "2026-08-05T03:18:17.182Z",
+    "title": "POP POP CANDY 1000",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "POP POP CANDY 1000",
+    "gameType": "Slots",
+    "gameId": "14099",
+    "gameVersion": "v3.193.0-h.2/v331b4ef",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0250",
+    "updatedAt": "2026-08-05T07:34:36.113Z"
+  },
+  {
+    "id": "bb6cc3e2-56fa-46cb-891d-dd906b21b628",
+    "createdAt": "2026-08-05T03:18:17.184Z",
+    "title": "PROSPERITY TIGER",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "PROSPERITY TIGER",
+    "gameType": "Slots",
+    "gameId": "14068",
+    "gameVersion": "v3.193.0-h.2/v7d223c8",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0251",
+    "updatedAt": "2026-08-05T07:34:36.114Z"
+  },
+  {
+    "id": "aaf89990-61a8-4bef-acd8-6b73b9e3f414",
+    "createdAt": "2026-08-05T03:18:17.185Z",
+    "title": "PUSOY",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "PUSOY",
+    "gameType": "Table",
+    "gameId": "18024",
+    "gameVersion": "v3.193.0-h.2/v373eef6",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0252",
+    "updatedAt": "2026-08-05T07:34:36.115Z"
+  },
+  {
+    "id": "667a0b52-5625-45ad-b46c-1b407e3daaba",
+    "createdAt": "2026-08-05T03:18:17.187Z",
+    "title": "PUSOY RUSH",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "PUSOY RUSH",
+    "gameType": "Table",
+    "gameId": "18027",
+    "gameVersion": "v3.193.0-h.2/v369f4f9",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0253",
+    "updatedAt": "2026-08-05T07:34:36.116Z"
+  },
+  {
+    "id": "8f051c07-4efc-41e5-8708-7adb5ce1b711",
+    "createdAt": "2026-08-05T03:18:17.188Z",
+    "title": "RAGNAROK : THOR VS LOKI",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "RAGNAROK : THOR VS LOKI",
+    "gameType": "Slots",
+    "gameId": "14101",
+    "gameVersion": "v3.193.0-h.2/vc690972",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0254",
+    "updatedAt": "2026-08-05T07:34:36.117Z"
+  },
+  {
+    "id": "a3ceb163-2f2c-47f7-bca2-273e1afb91bf",
+    "createdAt": "2026-08-05T03:18:17.190Z",
+    "title": "ROOSTER IN LOVE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "ROOSTER IN LOVE",
+    "gameType": "Slots",
+    "gameId": "15001",
+    "gameVersion": "v3.193.0-h.2/v52e5ef6",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0255",
+    "updatedAt": "2026-08-05T07:34:36.118Z"
+  },
+  {
+    "id": "08430273-591c-4a2a-809b-29d759909314",
+    "createdAt": "2026-08-05T03:18:17.191Z",
+    "title": "SHADE DRAGONS FISHING",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "SHADE DRAGONS FISHING",
+    "gameType": "Arcade-Type",
+    "gameId": "7004",
+    "gameVersion": "v3.193.0-h.2/v369f4f9",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0256",
+    "updatedAt": "2026-08-05T07:34:36.119Z"
+  },
+  {
+    "id": "7e378067-b0b7-4d16-a882-50e9d79022eb",
+    "createdAt": "2026-08-05T03:18:17.193Z",
+    "title": "SPINDRIFT",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "SPINDRIFT",
+    "gameType": "Slots",
+    "gameId": "14050",
+    "gameVersion": "v3.193.0-h.2/v28947dd",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0257",
+    "updatedAt": "2026-08-05T07:34:36.120Z"
+  },
+  {
+    "id": "269fec89-ad85-4cd5-8d44-45b724b0121f",
+    "createdAt": "2026-08-05T03:18:17.195Z",
+    "title": "SPINDRIFT 2",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "SPINDRIFT 2",
+    "gameType": "Slots",
+    "gameId": "14053",
+    "gameVersion": "v3.193.0-h.2/v81a708a",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0258",
+    "updatedAt": "2026-08-05T07:34:36.121Z"
+  },
+  {
+    "id": "07c311b1-57a5-4aa8-ae79-0dfd4bbee586",
+    "createdAt": "2026-08-05T03:18:17.196Z",
+    "title": "SUPER NIUBI",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "SUPER NIUBI",
+    "gameType": "Slots",
+    "gameId": "14036",
+    "gameVersion": "v3.193.0-h.2/v6ad93cf",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0259",
+    "updatedAt": "2026-08-05T07:34:36.122Z"
+  },
+  {
+    "id": "e862e099-0f48-4a99-8087-cfa5a8c02b93",
+    "createdAt": "2026-08-05T03:18:17.198Z",
+    "title": "SUPER NIUBI DELUXE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "SUPER NIUBI DELUXE",
+    "gameType": "Slots",
+    "gameId": "14045",
+    "gameVersion": "v3.193.0-h.2/vbd64b3d",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0260",
+    "updatedAt": "2026-08-05T07:34:36.123Z"
+  },
+  {
+    "id": "da3ad7ce-0f0f-4c95-b9c0-bd8b51d1e091",
+    "createdAt": "2026-08-05T03:18:17.199Z",
+    "title": "THE LLAMA ADVENTURE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "THE LLAMA ADVENTURE",
+    "gameType": "Slots",
+    "gameId": "8005",
+    "gameVersion": "v3.193.0-h.2/vcdc0c45",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0261",
+    "updatedAt": "2026-08-05T07:34:36.124Z"
+  },
+  {
+    "id": "e85264dd-62bd-41f6-add7-279a4f1ad49f",
+    "createdAt": "2026-08-05T03:18:17.201Z",
+    "title": "TONGITS",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "TONGITS",
+    "gameType": "Table",
+    "gameId": "18025",
+    "gameVersion": "v3.193.0-h.2/vdf9b3fd",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0262",
+    "updatedAt": "2026-08-05T07:34:36.125Z"
+  },
+  {
+    "id": "c6cc1674-7aa3-4f5a-a914-febaa5ea66da",
+    "createdAt": "2026-08-05T03:18:17.202Z",
+    "title": "TONGITS FIGHT",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "TONGITS FIGHT",
+    "gameType": "Table",
+    "gameId": "18028",
+    "gameVersion": "v3.193.0-h.2/v75db81f",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0263",
+    "updatedAt": "2026-08-05T07:34:36.126Z"
+  },
+  {
+    "id": "d0bbfeca-6a80-4f92-9cbd-b2071d901128",
+    "createdAt": "2026-08-05T03:18:17.204Z",
+    "title": "TONGITS RUSH",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "TONGITS RUSH",
+    "gameType": "Table",
+    "gameId": "18029",
+    "gameVersion": "v3.193.0-h.2/v80b6061",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0264",
+    "updatedAt": "2026-08-05T07:34:36.127Z"
+  },
+  {
+    "id": "2ed563c6-ab98-46dd-b51e-65fe324f7956",
+    "createdAt": "2026-08-05T03:18:17.205Z",
+    "title": "TREASURE BOWL",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "TREASURE BOWL",
+    "gameType": "Slots",
+    "gameId": "14042",
+    "gameVersion": "v3.193.0-h.2/va231e15",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0265",
+    "updatedAt": "2026-08-05T07:34:36.128Z"
+  },
+  {
+    "id": "df82a6b5-fdbf-412d-8ca9-7450655424cc",
+    "createdAt": "2026-08-05T03:18:17.207Z",
+    "title": "TRIPLE KING KONG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "TRIPLE KING KONG",
+    "gameType": "Slots",
+    "gameId": "14030",
+    "gameVersion": "v3.193.0-h.2/va802e1b",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0266",
+    "updatedAt": "2026-08-05T07:34:36.129Z"
+  },
+  {
+    "id": "4d09de25-082a-4cfb-ba44-918c4661bc0b",
+    "createdAt": "2026-08-05T03:18:17.209Z",
+    "title": "TRUMP CARD",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "TRUMP CARD",
+    "gameType": "Slots",
+    "gameId": "14077",
+    "gameVersion": "v3.193.0-h.2/vb919416",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0267",
+    "updatedAt": "2026-08-05T07:34:36.130Z"
+  },
+  {
+    "id": "0fc25cb5-84c6-48be-852d-b00b70f21631",
+    "createdAt": "2026-08-05T03:18:17.210Z",
+    "title": "WINNING MASK",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "WINNING MASK",
+    "gameType": "Slots",
+    "gameId": "8003",
+    "gameVersion": "v3.193.0-h.2/vc0b9d08",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0268",
+    "updatedAt": "2026-08-05T07:34:36.131Z"
+  },
+  {
+    "id": "9f1e66f1-a8e4-4ec0-8801-ca2d705bb114",
+    "createdAt": "2026-08-05T03:18:17.212Z",
+    "title": "WINNING MASK II",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "WINNING MASK II",
+    "gameType": "Slots",
+    "gameId": "8047",
+    "gameVersion": "v3.193.0-h.2/v9c1932b",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0269",
+    "updatedAt": "2026-08-05T07:34:36.132Z"
+  },
+  {
+    "id": "192d05b2-a0ff-4630-9b21-22d6e9aa2487",
+    "createdAt": "2026-08-05T03:18:17.213Z",
+    "title": "WONDER ELEPHANT",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "WONDER ELEPHANT",
+    "gameType": "Slots",
+    "gameId": "14058",
+    "gameVersion": "v3.193.0-h.2/ve311837",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0270",
+    "updatedAt": "2026-08-05T07:34:36.133Z"
+  },
+  {
+    "id": "97b0beae-a289-4bad-b36b-677010f684dc",
+    "createdAt": "2026-08-05T03:18:17.215Z",
+    "title": "WU KONG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "WU KONG",
+    "gameType": "Slots",
+    "gameId": "8004",
+    "gameVersion": "v3.193.0-h.2/v2940165",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0271",
+    "updatedAt": "2026-08-05T07:34:36.134Z"
+  },
+  {
+    "id": "e01f78c3-58b2-4ffc-ab43-886d27ba5c16",
+    "createdAt": "2026-08-05T03:18:17.216Z",
+    "title": "XIYANGYANG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "XIYANGYANG",
+    "gameType": "Slots",
+    "gameId": "8051",
+    "gameVersion": "v3.193.0-h.2/v1d69206",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0272",
+    "updatedAt": "2026-08-05T07:34:36.135Z"
+  },
+  {
+    "id": "bceb1316-8112-440b-ba51-cd06aed18973",
+    "createdAt": "2026-08-05T03:18:17.218Z",
+    "title": "BIRDS PARTY DELUXE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "In Progress",
+    "provider": "JDB",
+    "gameTitle": "BIRDS PARTY DELUXE",
+    "gameType": null,
+    "gameId": "14081",
+    "gameVersion": "v3.193 .0-h. 2/vb8ddd9a",
+    "withJackpot": null,
+    "pagcorStage": "Under PAGCOR Review",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0273"
+  },
+  {
+    "id": "3fd39c73-c6ce-4fd0-999e-33aec4afd821",
+    "createdAt": "2026-08-05T03:18:17.220Z",
+    "title": "PIGGY BANK TAPTAP",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "PIGGY BANK TAPTAP",
+    "gameType": null,
+    "gameId": "9024",
+    "gameVersion": "v3.215.3 / va6c0212",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0274",
+    "updatedAt": "2026-08-05T07:34:36.136Z"
+  },
+  {
+    "id": "d3617775-1cda-4971-8706-4917835267a3",
+    "createdAt": "2026-08-05T03:18:17.221Z",
+    "title": "SPIRIT TIDE LEGEND",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "SPIRIT TIDE LEGEND",
+    "gameType": null,
+    "gameId": "7009",
+    "gameVersion": "v3.193.0-h.2/v8799013",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: JDB). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0275",
+    "updatedAt": "2026-08-05T07:34:36.137Z"
+  },
+  {
+    "id": "ea6e2de7-af09-4fd0-bfb1-40820a922e1d",
+    "createdAt": "2026-08-05T03:18:17.223Z",
+    "title": "GOLDEN GOAL",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "GOLDEN GOAL",
+    "gameType": null,
+    "gameId": "14108",
+    "gameVersion": null,
+    "withJackpot": "No",
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet:  APPROVED ). Date received: 2026-05-18. Remarks: 46183.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0276"
+  },
+  {
+    "id": "a9d3e519-338f-458c-b1f8-beccec95634b",
+    "createdAt": "2026-08-05T03:18:17.225Z",
+    "title": "Voyage of Daring Queen X-Lock",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "Voyage of Daring Queen X-Lock",
+    "gameType": null,
+    "gameId": "14104",
+    "gameVersion": null,
+    "withJackpot": "No",
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet:  APPROVED ). Date received: January 07, 2026. Remarks: 46183.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0277"
+  },
+  {
+    "id": "05cecca3-06db-40e6-99eb-862700cef361",
+    "createdAt": "2026-08-05T03:18:17.227Z",
+    "title": "Voyage of Cryo Gunner X-Lock",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "Voyage of Cryo Gunner X-Lock",
+    "gameType": null,
+    "gameId": "14103",
+    "gameVersion": null,
+    "withJackpot": "No",
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet:  APPROVED ). Date received: January 07, 2026. Remarks: 46183.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0278"
+  },
+  {
+    "id": "fc99caa7-fb50-44e1-a796-ba7558ce4f78",
+    "createdAt": "2026-08-05T03:18:17.229Z",
+    "title": "Voyage of Blast Raider X-Lock",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "Voyage of Blast Raider X-Lock",
+    "gameType": null,
+    "gameId": "14102",
+    "gameVersion": null,
+    "withJackpot": "No",
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet:  APPROVED ). Date received: January 07, 2026. Remarks: 46183.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0279"
+  },
+  {
+    "id": "c956f2ca-b833-414d-b5c9-fbfdc06311f9",
+    "createdAt": "2026-08-05T03:18:17.230Z",
+    "title": "Para Po",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "Para Po",
+    "gameType": null,
+    "gameId": "9104",
+    "gameVersion": null,
+    "withJackpot": "No",
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet:  APPROVED ). Date received: March 18, 2026. Remarks: 46223.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0280"
+  },
+  {
+    "id": "4f3d24d9-f3e6-4fde-90ba-7072a32a9274",
+    "createdAt": "2026-08-05T03:18:17.232Z",
+    "title": "Samba Jewel",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "Samba Jewel",
+    "gameType": null,
+    "gameId": "14109",
+    "gameVersion": null,
+    "withJackpot": "No",
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet:  APPROVED ). Date received: March 10, 2026. Remarks: 46223.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0281"
+  },
+  {
+    "id": "4758dd1e-22c6-4004-a879-a24b9521b675",
+    "createdAt": "2026-08-05T03:18:17.234Z",
+    "title": "APOLLO",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "APOLLO",
+    "gameType": "Slots",
+    "gameId": "VP_230008_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0282",
+    "updatedAt": "2026-08-05T07:34:36.138Z"
+  },
+  {
+    "id": "d6b29e83-003a-4caf-9f30-4f6cf7beac06",
+    "createdAt": "2026-08-05T03:18:17.235Z",
+    "title": "AWAKENING AZTEC",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "AWAKENING AZTEC",
+    "gameType": "Slots",
+    "gameId": "VP_230027_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0283",
+    "updatedAt": "2026-08-05T07:34:36.139Z"
+  },
+  {
+    "id": "25c40a27-026d-412d-ae4e-8860c1b61cd2",
+    "createdAt": "2026-08-05T03:18:17.237Z",
+    "title": "BOOMBOOMMARMOT",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "BOOMBOOMMARMOT",
+    "gameType": "Slots",
+    "gameId": "VP_230016_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0284",
+    "updatedAt": "2026-08-05T07:34:36.140Z"
+  },
+  {
+    "id": "161be581-bf00-431f-954f-fc9ea12e1a1c",
+    "createdAt": "2026-08-05T03:18:17.239Z",
+    "title": "DEVIL'S BANK",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "DEVIL'S BANK",
+    "gameType": "Slots",
+    "gameId": "VP_230037_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0285",
+    "updatedAt": "2026-08-05T07:34:36.141Z"
+  },
+  {
+    "id": "a2ac6838-770b-46d6-b534-eb37e9685cff",
+    "createdAt": "2026-08-05T03:18:17.240Z",
+    "title": "DOUBLE ACE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "DOUBLE ACE",
+    "gameType": "Slots",
+    "gameId": "VP_230014_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0286",
+    "updatedAt": "2026-08-05T07:34:36.142Z"
+  },
+  {
+    "id": "67ab287a-cd7c-4df4-8eb6-ef96ae57662d",
+    "createdAt": "2026-08-05T03:18:17.242Z",
+    "title": "DRAGON KABOOM",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "DRAGON KABOOM",
+    "gameType": "Slots",
+    "gameId": "VP_230010_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0287",
+    "updatedAt": "2026-08-05T07:34:36.143Z"
+  },
+  {
+    "id": "987503d3-ef1e-497b-9c7c-43c7466157fe",
+    "createdAt": "2026-08-05T03:18:17.244Z",
+    "title": "FU LU SHOU",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "FU LU SHOU",
+    "gameType": "Slots",
+    "gameId": "VP_230011_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0288",
+    "updatedAt": "2026-08-05T07:34:36.144Z"
+  },
+  {
+    "id": "4944d52a-3cbf-4781-b22b-e1d4cbe4dfc5",
+    "createdAt": "2026-08-05T03:18:17.245Z",
+    "title": "GEMS OF RA",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "GEMS OF RA",
+    "gameType": "Slots",
+    "gameId": "VP_230026_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0289",
+    "updatedAt": "2026-08-05T07:34:36.145Z"
+  },
+  {
+    "id": "0fb94a1c-8e10-466c-8c99-500cc2cbcaef",
+    "createdAt": "2026-08-05T03:18:17.247Z",
+    "title": "GOD OF THE SUN",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "GOD OF THE SUN",
+    "gameType": "Slots",
+    "gameId": "VP_230017_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0290",
+    "updatedAt": "2026-08-05T07:34:36.146Z"
+  },
+  {
+    "id": "ab9fb675-754f-448e-8913-61d090c7a025",
+    "createdAt": "2026-08-05T03:18:17.249Z",
+    "title": "GOLDEN MAHJONG",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "GOLDEN MAHJONG",
+    "gameType": "Slots",
+    "gameId": "VP_230001_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0291",
+    "updatedAt": "2026-08-05T07:34:36.147Z"
+  },
+  {
+    "id": "b7ee6e93-51be-494d-ac91-69458f1b5301",
+    "createdAt": "2026-08-05T03:18:17.250Z",
+    "title": "KING ROYALE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "KING ROYALE",
+    "gameType": "Slots",
+    "gameId": "VP_230003_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0292",
+    "updatedAt": "2026-08-05T07:34:36.148Z"
+  },
+  {
+    "id": "e5003098-d1eb-4b51-849f-00217d5c434a",
+    "createdAt": "2026-08-05T03:18:17.252Z",
+    "title": "LUCKY DARUMA",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "LUCKY DARUMA",
+    "gameType": "Slots",
+    "gameId": "VP_230034_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0293",
+    "updatedAt": "2026-08-05T07:34:36.149Z"
+  },
+  {
+    "id": "bb71e8e2-cbd3-4301-90db-11446ab9d526",
+    "createdAt": "2026-08-05T03:18:17.254Z",
+    "title": "LUCKY DARUMA 2",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "LUCKY DARUMA 2",
+    "gameType": "Slots",
+    "gameId": "VP_230035_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0294",
+    "updatedAt": "2026-08-05T07:34:36.150Z"
+  },
+  {
+    "id": "86101e06-5933-41de-8684-fecca98efb4a",
+    "createdAt": "2026-08-05T03:18:17.256Z",
+    "title": "LUCKY TOAD",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "LUCKY TOAD",
+    "gameType": "Slots",
+    "gameId": "VP_230018_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0295",
+    "updatedAt": "2026-08-05T07:34:36.151Z"
+  },
+  {
+    "id": "a0a08815-1471-494c-9ed3-0a12c7fe7c35",
+    "createdAt": "2026-08-05T03:18:17.257Z",
+    "title": "LUCKY WHEEL",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "LUCKY WHEEL",
+    "gameType": "Slots",
+    "gameId": "VP_230025_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0296",
+    "updatedAt": "2026-08-05T07:34:36.152Z"
+  },
+  {
+    "id": "2f05a60f-67fe-4447-b17a-286c747b86fd",
+    "createdAt": "2026-08-05T03:18:17.259Z",
+    "title": "MAGIC CIRCUS",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "MAGIC CIRCUS",
+    "gameType": "Slots",
+    "gameId": "VP_230019_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0297",
+    "updatedAt": "2026-08-05T07:34:36.153Z"
+  },
+  {
+    "id": "ae2b6e82-364f-4d8d-a5f0-6af61cb2e885",
+    "createdAt": "2026-08-05T03:18:17.261Z",
+    "title": "MUSHROOM PARTY",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "MUSHROOM PARTY",
+    "gameType": "Slots",
+    "gameId": "VP_230029_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0298",
+    "updatedAt": "2026-08-05T07:34:36.154Z"
+  },
+  {
+    "id": "1df8e9ac-3de2-42ae-b2f0-eee1b24407dc",
+    "createdAt": "2026-08-05T03:18:17.263Z",
+    "title": "PENGUIN SMASH",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "PENGUIN SMASH",
+    "gameType": "Slots",
+    "gameId": "VP_230022_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0299",
+    "updatedAt": "2026-08-05T07:34:36.155Z"
+  },
+  {
+    "id": "f186b668-0d8c-4291-96de-3577d8c40cbd",
+    "createdAt": "2026-08-05T03:18:17.264Z",
+    "title": "PINATA PARTY",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "PINATA PARTY",
+    "gameType": "Slots",
+    "gameId": "VP_230023_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0300",
+    "updatedAt": "2026-08-05T07:34:36.156Z"
+  },
+  {
+    "id": "c4109b0f-b469-453c-8a01-880afad854b2",
+    "createdAt": "2026-08-05T03:18:17.266Z",
+    "title": "PYRAMID",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "PYRAMID",
+    "gameType": "Slots",
+    "gameId": "VP_230021_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0301",
+    "updatedAt": "2026-08-05T07:34:36.157Z"
+  },
+  {
+    "id": "408663ac-5c41-4d4e-b021-2620e3fe764c",
+    "createdAt": "2026-08-05T03:18:17.268Z",
+    "title": "QUEEN'S TREASURES",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "QUEEN'S TREASURES",
+    "gameType": "Slots",
+    "gameId": "VP_230028_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0302",
+    "updatedAt": "2026-08-05T07:34:36.158Z"
+  },
+  {
+    "id": "a7ff76fe-85c6-4874-acdf-e2fe539ca46d",
+    "createdAt": "2026-08-05T03:18:17.270Z",
+    "title": "ROMAN GLORY",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "ROMAN GLORY",
+    "gameType": "Slots",
+    "gameId": "VP_230020_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0303",
+    "updatedAt": "2026-08-05T07:34:36.159Z"
+  },
+  {
+    "id": "6cf297a0-abd6-485f-9b98-62a8b1931973",
+    "createdAt": "2026-08-05T03:18:17.271Z",
+    "title": "SUN ARCHER",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "SUN ARCHER",
+    "gameType": "Slots",
+    "gameId": "VP_230030_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0304",
+    "updatedAt": "2026-08-05T07:34:36.160Z"
+  },
+  {
+    "id": "1ed700c3-7621-4e57-8251-1a565d55113a",
+    "createdAt": "2026-08-05T03:18:17.273Z",
+    "title": "SUPER CROWN",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "SUPER CROWN",
+    "gameType": "Slots",
+    "gameId": "VP_230015_1",
+    "gameVersion": "v2.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0305",
+    "updatedAt": "2026-08-05T07:34:36.161Z"
+  },
+  {
+    "id": "9092f785-cf10-4b8c-a953-5968cc000cc8",
+    "createdAt": "2026-08-05T03:18:17.275Z",
+    "title": "TAICHI",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "TAICHI",
+    "gameType": "Slots",
+    "gameId": "VP_230005_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0306",
+    "updatedAt": "2026-08-05T07:34:36.162Z"
+  },
+  {
+    "id": "dd4ef35d-8fad-429d-9ed1-0cb29eace364",
+    "createdAt": "2026-08-05T03:18:17.277Z",
+    "title": "THE QIN DYNASTY",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "THE QIN DYNASTY",
+    "gameType": "Slots",
+    "gameId": "VP_230024_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0307",
+    "updatedAt": "2026-08-05T07:34:36.163Z"
+  },
+  {
+    "id": "ff5ba467-d238-4c10-a16e-7ea75c99b5db",
+    "createdAt": "2026-08-05T03:18:17.279Z",
+    "title": "WILD COIN PLUNDER",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "Vertex Play",
+    "gameTitle": "WILD COIN PLUNDER",
+    "gameType": "Slots",
+    "gameId": "VP_230036_1",
+    "gameVersion": "v1.1",
+    "withJackpot": null,
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet: VERTEX PLAY). Remarks: COMPLAINT.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0308",
+    "updatedAt": "2026-08-05T07:34:36.164Z"
+  },
+  {
+    "id": "a8c13209-0fcc-42cf-af97-c585bd8ce17a",
+    "createdAt": "2026-08-05T03:18:17.281Z",
+    "title": "SuperNiubiFortuneX-huge",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "JDB",
+    "gameTitle": "SuperNiubiFortuneX-huge",
+    "gameType": null,
+    "gameId": "14107",
+    "gameVersion": null,
+    "withJackpot": "No",
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet:  APPROVED ). Date received: March 6, 2026. Remarks: 46223.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0309"
+  },
+  {
+    "id": "d3466413-a008-49e5-99b5-dcddbbd93cc4",
+    "createdAt": "2026-08-05T03:18:17.284Z",
+    "title": "CATLA_S MONEY MACHINE",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Closed",
+    "provider": "FC",
+    "gameTitle": "CATLA_S MONEY MACHINE",
+    "gameType": null,
+    "gameId": "22080",
+    "gameVersion": null,
+    "withJackpot": "No",
+    "pagcorStage": "LOA Approved",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": true
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": true
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": true
+      }
+    ],
+    "description": "Imported from Excel (sheet:  APPROVED ). Date received: 2026-05-13. Remarks: 46226.",
+    "ownerId": "763d03fd-c1f4-417b-9c06-338033ae2ee4",
+    "caseNumber": "CASE-0310"
+  },
+  {
+    "id": "5425ddbb-cdc5-4fa5-a6d0-d084cc9e48c1",
+    "createdAt": "2026-08-06T09:32:53.408Z",
+    "provider": "JDB",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Open",
+    "title": "PAGCOR game submission - PARA PO",
+    "gameTitle": "PARA PO",
+    "gameId": "9104",
+    "gameType": "Arcade-Type",
+    "gameVersion": "v4.0.23/v112b2e1",
+    "caseNumber": "CASE-0311",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "done": false
+      },
+      {
+        "key": "parameter",
+        "done": false
+      },
+      {
+        "key": "rtpCertification",
+        "done": false
+      }
+    ],
+    "pagcorStage": "Preparing Documents",
+    "pagcorStageChangedAt": "2026-08-06T09:32:53.406Z",
+    "updatedAt": "2026-08-06T09:33:12.313Z"
+  },
+  {
+    "id": "8f6862ea-1bbc-49fb-9ddc-a2e755666dec",
+    "createdAt": "2026-08-06T09:32:53.554Z",
+    "provider": "JDB",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Open",
+    "title": "PAGCOR game submission - SUPER NIUBI FORTUNE X-HUGE",
+    "gameTitle": "SUPER NIUBI FORTUNE X-HUGE",
+    "gameId": "14107",
+    "gameType": "Slots",
+    "gameVersion": "v4.0.11/vad8375c",
+    "caseNumber": "CASE-0312",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": false
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": false
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": false
+      }
+    ],
+    "pagcorStage": "Preparing Documents",
+    "pagcorStageChangedAt": "2026-08-06T09:32:53.554Z"
+  },
+  {
+    "id": "cdc916a9-bb86-4760-8328-4339de359d48",
+    "createdAt": "2026-08-06T09:32:53.691Z",
+    "provider": "JDB",
+    "type": "Regulatory",
+    "priority": "Medium",
+    "status": "Open",
+    "title": "PAGCOR game submission - SAMBA JEWEL",
+    "gameTitle": "SAMBA JEWEL",
+    "gameId": "14109",
+    "gameType": "Slots",
+    "gameVersion": "v4.0.20/vb13b0bc",
+    "caseNumber": "CASE-0313",
+    "pagcorChecklist": [
+      {
+        "key": "gameManual",
+        "label": "Game Manual",
+        "done": false
+      },
+      {
+        "key": "parameter",
+        "label": "Parameter",
+        "done": false
+      },
+      {
+        "key": "rtpCertification",
+        "label": "RTP Certification",
+        "done": false
+      }
+    ],
+    "pagcorStage": "Preparing Documents",
+    "pagcorStageChangedAt": "2026-08-06T09:32:53.691Z"
+  }
+]

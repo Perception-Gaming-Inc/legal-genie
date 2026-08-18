@@ -7,8 +7,12 @@
  * generous radius), in the spirit of Linear / Notion / Stripe Dashboard.
  * ------------------------------------------------------------------------- */
 * { box-sizing: border-box; }
+/* Every font-size in this file and style.css is in rem, i.e. relative to
+   this root size (not to body's own font-size) — shrinking text app-wide
+   is one number here rather than editing every rule. */
+html { font-size: 15px; }
 body {
-  font-family: "Carlito", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: "Poppins", "Carlito", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: .95rem;
   line-height: 1.55;
   color: #111827;
@@ -16,10 +20,10 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-a { color: #4f46e5; }
+a { color: var(--lms-primary, #2563eb); }
 code { background: #f1f3f5; padding: .1rem .3rem; border-radius: .25rem; }
 hr { border: none; border-top: 1px solid #e5e7eb; margin: .75rem 0; }
-h5 { margin: 0; font-weight: 700; letter-spacing: -.01em; }
+h5, h6 { margin: 0; font-weight: 700; letter-spacing: -.01em; }
 
 /* Layout / flex utilities ------------------------------------------------ */
 .d-flex { display: flex !important; }
@@ -28,8 +32,9 @@ h5 { margin: 0; font-weight: 700; letter-spacing: -.01em; }
 .flex-shrink-0 { flex-shrink: 0 !important; }
 .align-items-center { align-items: center !important; }
 .justify-content-between { justify-content: space-between !important; }
-.gap-2 { gap: .5rem !important; }
-.gap-3 { gap: 1rem !important; }
+.gap-1 { gap: .4rem !important; }
+.gap-2 { gap: .6rem !important; }
+.gap-3 { gap: 1.1rem !important; }
 .w-100 { width: 100% !important; }
 .h-100 { height: 100% !important; }
 
@@ -38,9 +43,18 @@ h5 { margin: 0; font-weight: 700; letter-spacing: -.01em; }
 .row.g-3 > [class^="col-"] { padding: 0.6rem; }
 .row > [class^="col-"] { padding: 0 0.6rem; }
 .col-md-3 { flex: 0 0 25%; max-width: 25%; }
+/* col-md-4 and col-lg-6 were used in app.js's Dashboard (the 3 stat cards
+   and the Today's To-Dos / Recently Updated Cases two-column row) but had
+   no matching rule here — same class of bug as case-detail-header-row's
+   align-items-start fix. Without a width rule those cards fell back to
+   shrink-wrapping their own content instead of splitting the row evenly,
+   which is why there was a big empty gap next to them. */
+.col-md-4 { flex: 0 0 33.3333%; max-width: 33.3333%; }
 .col-md-6 { flex: 0 0 50%; max-width: 50%; }
+.col-lg-6 { flex: 0 0 50%; max-width: 50%; }
+.col-lg-12 { flex: 0 0 100%; max-width: 100%; }
 @media (max-width: 768px) {
-  .col-md-3, .col-md-6 { flex: 0 0 100%; max-width: 100%; }
+  .col-md-3, .col-md-4, .col-md-6, .col-lg-6 { flex: 0 0 100%; max-width: 100%; }
 }
 
 /* Spacing ------------------------------------------------------------------ */
@@ -78,7 +92,7 @@ h5 { margin: 0; font-weight: 700; letter-spacing: -.01em; }
 .text-end { text-align: right !important; }
 .text-secondary { color: #6b7280 !important; }
 .text-danger { color: #dc2626 !important; }
-.text-primary { color: #4f46e5 !important; }
+.text-primary { color: var(--lms-primary, #2563eb) !important; }
 .text-warning { color: #b45309 !important; }
 .text-dark { color: #111827 !important; }
 .text-light { color: #f9fafb !important; }
@@ -129,7 +143,7 @@ h5 { margin: 0; font-weight: 700; letter-spacing: -.01em; }
   border: 1px solid transparent; border-top-left-radius: 8px; border-top-right-radius: 8px;
   background: none; padding: .55rem 1rem; color: #6b7280; cursor: pointer; font-weight: 500; font-size: .88rem;
 }
-.nav-tabs .nav-link.active { color: #4f46e5; background: #fff; border-color: #e5e7eb #e5e7eb #fff; font-weight: 700; }
+.nav-tabs .nav-link.active { color: var(--lms-primary, #2563eb); background: #fff; border-color: #e5e7eb #e5e7eb #fff; font-weight: 700; }
 a.nav-link { text-decoration: none; display: block; }
 
 /* Badges (base structural rule; color variants in style.css) --------------- */
@@ -145,19 +159,19 @@ a.nav-link { text-decoration: none; display: block; }
 
 /* Buttons -------------------------------------------------------------- */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
-  padding: .5rem 1rem; font-size: .875rem; font-weight: 600; border-radius: 8px; border: 1px solid transparent;
+  display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
+  padding: .55rem 1.1rem; font-size: .9rem; font-weight: 600; border-radius: 9px; border: 1px solid transparent;
   cursor: pointer; background: #f3f4f6; color: #111827; line-height: 1.2;
   transition: background .12s ease, border-color .12s ease, filter .12s ease;
 }
 .btn:hover { filter: brightness(0.98); }
-.btn-sm { padding: .32rem .65rem; font-size: .8rem; border-radius: 7px; }
-.btn-primary { background: #4f46e5; color: #fff; }
-.btn-primary:hover { background: #4338ca; filter: none; }
+.btn-sm { padding: .42rem .85rem; font-size: .82rem; border-radius: 8px; }
+.btn-primary { background: var(--lms-primary, #2563eb); color: #fff; }
+.btn-primary:hover { background: var(--lms-primary-hover, #1d4ed8); filter: none; }
 .btn-secondary { background: #6b7280; color: #fff; }
 .btn-success { background: #16a34a; color: #fff; }
 .btn-danger { background: #dc2626; color: #fff; }
-.btn-link { background: none; color: #4f46e5; padding: 0; }
+.btn-link { background: none; color: var(--lms-primary, #2563eb); padding: 0; }
 .btn-outline-secondary { background: #fff; border-color: #d1d5db; color: #374151; }
 .btn-outline-secondary:hover { background: #f9fafb; border-color: #9ca3af; }
 .btn-outline-danger { background: #fff; border-color: #fecaca; color: #dc2626; }
@@ -175,9 +189,9 @@ a.nav-link { text-decoration: none; display: block; }
   width: 100%; padding: .55rem .75rem; border: 1px solid #d1d5db; border-radius: 8px; font-size: .88rem; background: #fff;
   color: #111827;
 }
-.form-control:focus, .form-select:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+.form-control:focus, .form-select:focus { outline: none; border-color: var(--lms-primary, #2563eb); box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
 .form-check { display: flex; align-items: center; gap: .4rem; }
-.form-check-input { width: 1.05rem; height: 1.05rem; accent-color: #4f46e5; }
+.form-check-input { width: 1.05rem; height: 1.05rem; accent-color: var(--lms-primary, #2563eb); }
 
 /* Modal ---------------------------------------------------------------- */
 .modal { position: fixed; inset: 0; z-index: 1050; display: none; }
@@ -204,7 +218,7 @@ a.nav-link { text-decoration: none; display: block; }
 .spinner-border {
   display: inline-block; width: 1.6rem; height: 1.6rem; border: .2em solid currentColor;
   border-right-color: transparent; border-radius: 50%; animation: spin .75s linear infinite; vertical-align: middle;
-  color: #4f46e5;
+  color: var(--lms-primary, #2563eb);
 }
 .spinner-border-sm { width: 1rem; height: 1rem; border-width: .16em; }
 @keyframes spin { to { transform: rotate(360deg); } }

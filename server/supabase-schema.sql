@@ -8,10 +8,26 @@ create table if not exists records (
   id text not null,
   data jsonb not null,
   created_at timestamptz default now(),
+  -- version: added 2026-08-12 for optimistic-locking updates (see
+  -- server/store.js's update()) — every write is conditioned on
+  -- `version = <the version this request last read>`, so two concurrent
+  -- edits to the same record can't silently overwrite one another anymore.
+  -- Defaults to 1 so this column works for brand-new installs running this
+  -- file for the first time; an EXISTING database (created before this
+  -- column existed) needs the separate `alter table` migration a few lines
+  -- down, since `create table if not exists` does nothing to a table that
+  -- already exists.
+  version integer not null default 1,
   primary key (collection, id)
 );
 
 create index if not exists idx_records_collection on records (collection);
+
+-- One-time migration for a database that already had this schema applied
+-- before the `version` column existed above — safe/idempotent to run even
+-- if the column is already there (e.g. on a brand-new install where the
+-- create table above just added it already).
+alter table records add column if not exists version integer not null default 1;
 
 create table if not exists counters (
   seq text primary key,

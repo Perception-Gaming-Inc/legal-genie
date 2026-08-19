@@ -8,7 +8,6 @@ const pagcor = require('./pagcor');
 const pagcorCheck = require('./pagcor-check');
 const caseImport = require('./import');
 const telegram = require('./telegram');
-const email = require('./email');
 const { mimeFor } = require('./mime');
 const zipLite = require('./zip-lite');
 
@@ -83,19 +82,19 @@ async function getSystemSettings() {
         notifyOnTaskAssignment: true,
         notifyOnCaseStageChange: true,
         notifyTelegramOnCaseStageChange: true,
-        // Added 2026-08-18 alongside reminderEmail below — whether the
-        // due-today follow-up email actually goes out (see
-        // checkAndSendFollowUpReminders near the bottom of this file).
-        notifyOnFollowUpDueEmail: true,
+        // Added 2026-08-18, at Tiffany's request — whether the due-today
+        // follow-up reminder is sent via Telegram, straight to the
+        // follow-up task's Assignee (using the Telegram Chat ID on their
+        // own User record — see checkAndSendFollowUpReminders). An earlier
+        // Resend-based email version of this (notifyOnFollowUpDueEmail /
+        // settings.reminderEmail) was tried first, hit Resend's sandbox
+        // "can only send to your own signup email" limit, and was removed
+        // entirely (not just disabled) once Telegram replaced it — Telegram
+        // has no domain-verification requirement and is naturally per-user.
+        notifyOnFollowUpDueTelegram: true,
       },
       providerTelegramChatIds: {},
       checklistItems: pagcor.PAGCOR_CHECKLIST_ITEMS,
-      // Added 2026-08-18: where the "follow up N days later" reminder
-      // email (see checkAndSendFollowUpReminders below) gets sent. Null
-      // until Tiffany enters one in Settings > Submission Settings — no
-      // email is sent while this is empty, same "off until configured"
-      // pattern as providerTelegramChatIds above.
-      reminderEmail: null,
     });
   }
   return settings;
@@ -178,17 +177,52 @@ async function notifyProviderTelegram(row, settings) {
   }
 }
 
-// Notifies a task's Assignee when they're newly assigned (a fresh task, or
-// an existing one whose Assignee just changed to them) — gated by Settings
-// > Notification Settings > "Notify on task assignment". `existing` is null
-// for a brand-new task (see crudRoutes' afterCreate).
-async function notifyTaskAssignee(row, existing, actingUser) {
-  if (!row || !row.assigneeId) return;
-  const changed = !existing || existing.assigneeId !== row.assigneeId;
-  if (!changed || row.assigneeId === actingUser.id) return;
+// Reads a task's assignee(s) as an array regardless of which shape the
+// stored row actually has: brand-new/edited tasks (added 2026-08-18, at
+// Tiffany's request — "一筆任務可以指派給多個負責人") carry the real list in
+// `assigneeIds`, while older tasks (and the auto-created follow-up task from
+// syncDeadlineFollowUpTask below) only ever had the single `assigneeId`.
+// Centralizing this in one place means every consumer (Dashboard's
+// myTasks, filterPersonalTasks, notifyTaskAssignees, the Telegram/email
+// follow-up reminder below) treats both shapes identically instead of each
+// re-deriving its own fallback.
+function taskAssigneeIds(t) {
+  if (Array.isArray(t.assigneeIds)) return t.assigneeIds.filter(Boolean);
+  return t.assigneeId ? [t.assigneeId] : [];
+}
+
+// Normalizes whichever of assigneeId/assigneeIds a Task Management request
+// body actually sent into BOTH keys: `assigneeIds` (the real list) and
+// `assigneeId` (kept in sync as assigneeIds[0], the "primary" assignee) so
+// every older piece of code that still only reads a single assigneeId
+// keeps working unchanged. Only touches these two keys when the request
+// body actually mentions either one — a PUT that's only changing e.g.
+// `status` must not blank out the existing assignees.
+function normalizeTaskAssignees(body) {
+  if (body.assigneeIds === undefined && body.assigneeId === undefined) return body;
+  const ids = Array.isArray(body.assigneeIds)
+    ? body.assigneeIds.filter(Boolean)
+    : (body.assigneeId ? [body.assigneeId] : []);
+  return { ...body, assigneeIds: ids, assigneeId: ids[0] || null };
+}
+
+// Notifies each newly-added Assignee on a task (a fresh task, or an existing
+// one that just gained them as an assignee) — gated by Settings >
+// Notification Settings > "Notify on task assignment". `existing` is null
+// for a brand-new task (see crudRoutes' afterCreate). Someone who was
+// already an assignee before this save isn't re-notified, and nobody is
+// notified about adding themselves.
+async function notifyTaskAssignees(row, existing, actingUser) {
+  if (!row) return;
+  const newIds = taskAssigneeIds(row);
+  if (!newIds.length) return;
+  const oldIds = new Set(existing ? taskAssigneeIds(existing) : []);
   const settings = await getSystemSettings();
   if (!notificationsEnabled(settings, 'notifyOnTaskAssignment')) return;
-  await notifyUser(row.assigneeId, 'task_assigned', `You were assigned to task "${row.title}"`, row.id, 'task');
+  for (const uid of newIds) {
+    if (oldIds.has(uid) || uid === actingUser.id) continue;
+    await notifyUser(uid, 'task_assigned', `You were assigned to task "${row.title}"`, row.id, 'task');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +352,7 @@ router.get('/api/dashboard/summary', async (req, res) => {
     store.all('notifications'), store.all('approvals'),
   ]);
 
-  const myTasks = tasks.filter((t) => t.assigneeId === user.id && t.status !== 'Completed');
+  const myTasks = tasks.filter((t) => taskAssigneeIds(t).includes(user.id) && t.status !== 'Completed');
   const allPendingTasks = tasks.filter((t) => t.status !== 'Completed');
 
   // "Today's To-Dos" — my own not-yet-completed tasks due today or earlier
@@ -560,6 +594,7 @@ async function syncDeadlineFollowUpTask(caseRow) {
       title,
       description: `Case "${caseRow.title}" has a Submit Date of ${caseRow.deadline}. This reminder was created automatically ${followUpDays} days later to follow up on progress.`,
       assigneeId: caseRow.ownerId || null,
+      assigneeIds: caseRow.ownerId ? [caseRow.ownerId] : [],
       type: 'team',
       status: 'To-Do',
       dueDate: followUpDate,
@@ -997,39 +1032,14 @@ router.post('/api/documents/:id/replace-file', async (req, res, params, body) =>
   sendJson(res, 200, updated);
 });
 
-// "AI summary" — reads the document's already-stored file straight from
-// Supabase Storage (same bytes /download serves) and asks Gemini for a
-// short summary + key facts. Pure read-only convenience: this never writes
-// anything, and never judges the document as correct/complete/compliant —
-// see server/ai.js's summarizeDocument for why that's a deliberate scope
-// boundary rather than an oversight.
-router.post('/api/documents/:id/summarize', async (req, res, params) => {
-  const user = await requirePerm(req, res, 'documents', 'view');
-  if (!user) return;
-  const doc = await store.find('documents', params.id);
-  if (!doc) return sendJson(res, 404, { error: 'Document not found' });
-  if (!doc.filePath) return sendJson(res, 400, { error: 'This document has no attached file, so an AI summary cannot be generated.' });
-  const buffer = await storage.readFile(doc.filePath);
-  if (!buffer) return sendJson(res, 404, { error: 'File missing in storage' });
-  try {
-    // mimeFor() can return "text/plain; charset=utf-8" (fine as an HTTP
-    // Content-Type header, which is all it's normally used for — see the
-    // /download route above) but a data: URL's own syntax only allows a
-    // bare "type/subtype" before the first ";base64," marker, and
-    // server/ai.js's parseDataUrl() only strips the ";base64," suffix, not
-    // a "; charset=..." parameter in the middle — so the full value would
-    // fail to parse there. Strip any parameters off before building the
-    // data: URL; the actual bytes are unaffected either way.
-    const bareMimeType = mimeFor(doc.fileName || doc.filePath).split(';')[0].trim();
-    const result = await ai.summarizeDocument({
-      fileName: doc.fileName,
-      fileContentBase64: `data:${bareMimeType};base64,${buffer.toString('base64')}`,
-    });
-    sendJson(res, 200, result);
-  } catch (err) {
-    sendJson(res, 400, { error: err.message });
-  }
-});
+// The "AI Summarize" per-document button (used to live here as
+// POST /api/documents/:id/summarize) was removed 2026-08-18 at Tiffany's
+// request — Document Center should just manage files, no AI on that page.
+// Document Center's AI Smart-Fill on upload (extractFields(), used by
+// POST /api/ai/extract/documents above) was deliberately kept — only this
+// summarize button was removed. server/ai.js's summarizeDocument() is still
+// defined there but no longer called from anywhere; left in place rather
+// than deleted in case this is wanted back later — it's inert either way.
 
 // AI cross-document parameter consistency check — for a given case, reads
 // every Document Center file linked to it (via each document's
@@ -1037,8 +1047,9 @@ router.post('/api/documents/:id/summarize', async (req, res, params) => {
 // fields()) and asks Gemini to flag any key parameter (Game ID, Game
 // Manual version, Min/Max Bet, RTP%, etc.) that's stated differently across
 // them. Lives here rather than under /api/cases because it reads document
-// bytes from Supabase Storage, same as /summarize above. Read-only, and
-// (like summarizeDocument) never judges correctness/compliance — only
+// bytes straight from Supabase Storage (same as the now-removed
+// /summarize route used to). Read-only, and (like server/ai.js's
+// summarizeDocument) never judges correctness/compliance — only
 // whether values agree across documents. Requires 'cases' view permission
 // since it's initiated from the case detail page, not the Document Center.
 router.post('/api/cases/:id/check-consistency', async (req, res, params) => {
@@ -1290,14 +1301,15 @@ crudRoutes({
 async function filterPersonalTasks(rows, user) {
   const role = await store.find('roles', user.roleId);
   if (role && role.name === 'Admin') return rows;
-  return rows.filter((t) => t.type !== 'personal' || t.createdBy === user.id || t.assigneeId === user.id);
+  return rows.filter((t) => t.type !== 'personal' || t.createdBy === user.id || taskAssigneeIds(t).includes(user.id));
 }
 
 crudRoutes({
   base: '/api/tasks', moduleName: 'tasks', collection: 'tasks',
-  onCreate: async (body, user) => ({ ...body, createdBy: user.id }),
-  afterCreate: async (row, user) => notifyTaskAssignee(row, null, user),
-  afterUpdate: async (row, user, id, existing) => notifyTaskAssignee(row, existing, user),
+  onCreate: async (body, user) => ({ ...normalizeTaskAssignees(body), createdBy: user.id }),
+  onUpdate: async (body) => normalizeTaskAssignees(body),
+  afterCreate: async (row, user) => notifyTaskAssignees(row, null, user),
+  afterUpdate: async (row, user, id, existing) => notifyTaskAssignees(row, existing, user),
   filterList: filterPersonalTasks,
 });
 
@@ -1477,18 +1489,6 @@ router.put('/api/settings', async (req, res, params, body) => {
     if (!Number.isFinite(days) || days <= 0) return sendJson(res, 400, { error: 'Follow-up window must be a positive number of days.' });
     patch.followUpDays = days;
   }
-  // Added 2026-08-18 — see checkAndSendFollowUpReminders below for what
-  // this actually drives. Empty string clears it back to "off" (null),
-  // same as leaving it unset; a non-empty value gets a light sanity check
-  // only (real validation is Resend rejecting a bad address at send time —
-  // no need to duplicate a full RFC 5322 email regex here).
-  if (body.reminderEmail !== undefined) {
-    const addr = String(body.reminderEmail || '').trim();
-    if (addr && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) {
-      return sendJson(res, 400, { error: 'That doesn\'t look like a valid email address.' });
-    }
-    patch.reminderEmail = addr || null;
-  }
   // Merged on top of the CURRENT row's notifications, not rebuilt from
   // scratch — each Settings tab (Notification Settings / Telegram
   // Notifications) only ever submits the 2-3 keys it actually renders, so
@@ -1501,7 +1501,7 @@ router.put('/api/settings', async (req, res, params, body) => {
   if (body.notifications !== undefined) {
     const existingNotifications = current.notifications || {};
     patch.notifications = { ...existingNotifications };
-    for (const key of ['notifyOnApprovalDecision', 'notifyOnTaskAssignment', 'notifyOnCaseStageChange', 'notifyTelegramOnCaseStageChange']) {
+    for (const key of ['notifyOnApprovalDecision', 'notifyOnTaskAssignment', 'notifyOnCaseStageChange', 'notifyTelegramOnCaseStageChange', 'notifyOnFollowUpDueTelegram']) {
       if (body.notifications[key] !== undefined) patch.notifications[key] = body.notifications[key] !== false;
     }
   }
@@ -1556,46 +1556,183 @@ router.put('/api/settings', async (req, res, params, body) => {
 });
 
 // ---------------------------------------------------------------------------
-// Email reminder for due-today follow-ups (added 2026-08-18)
+// Telegram group Q&A bot (added 2026-08-19, at Tiffany's request)
+// ---------------------------------------------------------------------------
+// Reverse-lookup of providerTelegramChatIds (Provider name -> chat ID,
+// edited in Settings > Telegram Notifications): given an incoming Telegram
+// chat ID, which Provider (if any) does it belong to. Returns null for any
+// chat not in that map — a stranger's DM to the bot, or a group nobody's
+// configured yet — so the webhook handler below can silently ignore it
+// rather than guessing.
+function findProviderForChatId(settings, chatId) {
+  const entries = Object.entries(settings.providerTelegramChatIds || {});
+  const match = entries.find(([, id]) => String(id) === String(chatId));
+  return match ? match[0] : null;
+}
+
+// One-time admin action: tells Telegram where to deliver incoming messages
+// (the webhook route just below) for this bot. Requires 'settings' edit
+// permission — same gate as everything else on the Settings pages — since
+// running this points the bot at whatever server made the call, which
+// matters if this is ever run from the wrong environment by mistake. Only
+// works when called against a real public HTTPS deployment (the deployed
+// Vercel site) — Telegram rejects a localhost URL outright, so running this
+// against a local `node server.js` will fail with a clear error rather than
+// silently registering something broken.
+router.post('/api/telegram/register-webhook', async (req, res) => {
+  const user = await requirePerm(req, res, 'settings', 'edit');
+  if (!user) return;
+  const url = process.env.PUBLIC_APP_URL;
+  if (!url) {
+    return sendJson(res, 400, {
+      error: 'Set PUBLIC_APP_URL (e.g. https://galaticlegal-genie.vercel.app) as an environment variable on this deployment first, then try again.',
+    });
+  }
+  try {
+    const result = await telegram.setWebhook(`${url.replace(/\/$/, '')}/api/telegram/webhook`, process.env.TELEGRAM_WEBHOOK_SECRET);
+    sendJson(res, 200, result);
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
+// Telegram calls this for every message posted anywhere the bot is present
+// (once register-webhook above has been run) — a Provider's group, or a
+// private DM to the bot. No login/session exists here (Telegram is calling
+// directly, not a browser with a Legal Genie session), so this route is
+// deliberately NOT behind requirePerm; instead, when TELEGRAM_WEBHOOK_SECRET
+// is configured, the X-Telegram-Bot-Api-Secret-Token header (which only
+// Telegram itself sends, once registered via setWebhook above) is checked
+// so a stranger who finds this URL can't feed it fake messages.
+//
+// Always responds 200 quickly regardless of outcome — Telegram retries a
+// webhook that doesn't get a fast 2xx, and a retry storm over an unrelated
+// DM or an ignorable group is exactly the noise this guards against.
+// Real work only happens for a message: (a) in a chat that's a known
+// Provider's group (see findProviderForChatId — a stranger's DM or an
+// unconfigured group is silently ignored), and (b) that server/ai.js's
+// answerGroupQuestion() decides is actually a question about that
+// Provider's cases (see that function's own conservative-by-design
+// shouldRespond gate) — everything else in the group (ordinary
+// conversation) is read and silently skipped, never replied to.
+router.post('/api/telegram/webhook', async (req, res, params, body) => {
+  if (process.env.TELEGRAM_WEBHOOK_SECRET) {
+    const headerSecret = req.headers['x-telegram-bot-api-secret-token'];
+    if (headerSecret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
+      return sendJson(res, 401, { error: 'Unauthorized' });
+    }
+  }
+  const msg = body && body.message;
+  // Deliberately AWAITED, not fire-and-forget, even though it delays the
+  // 200 response back to Telegram — on Vercel, this whole request handler
+  // is a serverless function that gets frozen/torn down once a response is
+  // sent, so any "background" work kicked off after sendJson() below would
+  // have no guarantee of ever actually finishing. Gemini + Telegram calls
+  // normally complete well within a few seconds, comfortably inside
+  // Telegram's own webhook timeout.
+  if (msg && msg.text && msg.chat) {
+    try {
+      const settings = await getSystemSettings();
+      const provider = findProviderForChatId(settings, msg.chat.id);
+      if (provider) {
+        const allCases = await store.all('cases');
+        const providerCases = allCases.filter((c) => String(c.provider || '').trim().toLowerCase() === provider.trim().toLowerCase());
+        const result = await ai.answerGroupQuestion({ providerName: provider, question: msg.text, cases: providerCases });
+        if (result && result.shouldRespond && result.answer) {
+          await telegram.sendTelegramMessage(String(msg.chat.id), result.answer, { replyToMessageId: msg.message_id });
+        }
+      } // else: not a known Provider group/DM — nothing to do
+    } catch (err) {
+      console.error('[telegram webhook] failed to process incoming message:', err.message);
+    }
+  }
+  sendJson(res, 200, { ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Telegram reminder for due-today follow-ups (added 2026-08-18)
 // ---------------------------------------------------------------------------
 // Called on a timer from server.js (setInterval — this process has to stay
 // running for that to fire, which is why it's designed for the Render
 // deployment rather than a one-shot local `node server.js` session; see the
 // Go-Live Guide). Finds every auto-created "follow up N days later" task
 // (see syncDeadlineFollowUpTask above) whose due date is today, that isn't
-// already Completed, and that hasn't already been emailed — sends one email
-// per task via Resend (server/email.js) and stamps `followUpEmailSentAt` so
+// already Completed, and that hasn't already been notified — sends one
+// Telegram message per recipient and stamps `followUpReminderSentAt` so
 // re-running this on the next tick (or the next day, if the task is still
 // open) doesn't send a duplicate. Deliberately keyed off calendar date only
 // (not a precise time-of-day), since this only runs hourly at best and "the
 // due date" has no meaningful hour attached to it anyway.
 //
-// Best-effort per task, same as notifyProviderTelegram above: one failed
-// send (bad address, Resend outage, RESEND_API_KEY not configured yet)
-// is logged and skipped, never allowed to block the rest of the batch or
-// throw out of the caller's setInterval tick.
+// Best-effort per message, same as notifyProviderTelegram above: one failed
+// send (bad chat ID, Telegram outage, TELEGRAM_BOT_TOKEN not configured
+// yet) is logged and skipped, never allowed to block the rest of the batch
+// or throw out of the caller's setInterval tick.
+//
+// This originally sent via Resend email (server/email.js) instead, but hit
+// Resend's sandbox restriction (can only email the Resend account's own
+// signup address until a real domain is verified). Tiffany asked for
+// Telegram instead — reusing the same bot already set up for
+// notifyProviderTelegram above — since it's naturally per-user (each task's
+// Assignee sets their own Chat ID on their User record — see Settings >
+// Users) and has no domain-verification requirement. The email path was
+// kept briefly as an optional fallback channel, then removed entirely
+// 2026-08-18 (still the same day) at Tiffany's request once Telegram alone
+// covered the need — see git history for that version if email ever needs
+// to come back.
+//
+// Combines same-run reminders into one message rather than firing one
+// message per due task: all of a Telegram recipient's due tasks for this
+// run go out as a single message to their chat ID. This only merges tasks
+// that become due in the SAME check (today, not yet sent) — it does not
+// batch across days or wait to accumulate more.
 async function checkAndSendFollowUpReminders() {
   const settings = await getSystemSettings();
-  if (!settings.reminderEmail) return; // not configured yet — nothing to do
-  if (!notificationsEnabled(settings, 'notifyOnFollowUpDueEmail')) return;
+  if (!notificationsEnabled(settings, 'notifyOnFollowUpDueTelegram')) return;
 
   const today = new Date().toISOString().slice(0, 10);
-  const tasks = await store.all('tasks');
+  const [tasks, users] = await Promise.all([store.all('tasks'), store.all('users')]);
   const due = tasks.filter((t) => t.isDeadlineFollowUp && t.status !== 'Completed'
-    && t.dueDate === today && !t.followUpEmailSentAt);
+    && t.dueDate === today && !t.followUpReminderSentAt);
   if (!due.length) return;
 
+  const taskLine = (t) => `• ${t.title}${t.description ? ` — ${t.description}` : ''}`;
+  // A single due task reads as a normal reminder; 2+ read as a bulleted
+  // digest, so a quiet day still gets the same friendly one-line message it
+  // always did instead of an oddly-formatted "1 follow-up" digest.
+  const combinedBody = (list) => (list.length === 1
+    ? (list[0].description || list[0].title)
+    : list.map(taskLine).join('\n'));
+  const footer = '\n\nOpen Legal Genie to view/update: Task Management.';
+
+  const sentTaskIds = new Set();
+  const groups = new Map(); // telegramChatId -> tasks[] due for that chat this run
   for (const t of due) {
-    try {
-      await email.sendReminderEmail(
-        settings.reminderEmail,
-        `Legal Genie reminder: ${t.title}`,
-        `${t.description || t.title}\n\nOpen Legal Genie to view/update this follow-up: Task Management.`,
-      );
-      await store.update('tasks', t.id, { followUpEmailSentAt: new Date().toISOString() });
-    } catch (err) {
-      console.error(`[email] failed to send follow-up reminder for task ${t.id}:`, err.message);
+    // A task can now have more than one Assignee (added 2026-08-18) — each
+    // assignee who has their own Telegram Chat ID configured gets this
+    // task included in their own combined message.
+    for (const uid of taskAssigneeIds(t)) {
+      const assignee = users.find((u) => u.id === uid);
+      if (!assignee || !assignee.telegramChatId) continue;
+      const list = groups.get(assignee.telegramChatId) || [];
+      list.push(t);
+      groups.set(assignee.telegramChatId, list);
     }
+  }
+  for (const [chatId, group] of groups) {
+    const heading = group.length === 1
+      ? `⏰ Legal Genie reminder: ${group[0].title}`
+      : `⏰ Legal Genie: ${group.length} follow-ups due today`;
+    try {
+      await telegram.sendTelegramMessage(chatId, `${heading}\n\n${combinedBody(group)}${footer}`);
+      group.forEach((t) => sentTaskIds.add(t.id));
+    } catch (err) {
+      console.error(`[telegram] failed to send follow-up reminder to chat ${chatId}:`, err.message);
+    }
+  }
+
+  for (const id of sentTaskIds) {
+    await store.update('tasks', id, { followUpReminderSentAt: new Date().toISOString() });
   }
 }
 router.runDueFollowUpReminders = checkAndSendFollowUpReminders;

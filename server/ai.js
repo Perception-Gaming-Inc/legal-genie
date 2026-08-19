@@ -839,4 +839,78 @@ async function extractFields({ module, text, fileName, fileContentBase64 }) {
   }
 }
 
-module.exports = { extractFields, extractApprovalNotice, summarizeDocument, checkDocumentConsistency, extractCaseFromDocuments, MODULE_SCHEMAS, toGeminiResponseSchema };
+// ---------------------------------------------------------------------------
+// Telegram group Q&A bot (added 2026-08-19, at Tiffany's request)
+// ---------------------------------------------------------------------------
+// Every message posted in a Provider's Telegram group (the same group
+// notifyProviderTelegram in routes.js already posts PAGCOR Stage updates
+// into) gets run through this — it decides for itself whether the message
+// was actually a question the bot should answer (about that Provider's
+// cases: status, stage, documents, timelines) versus ordinary chit-chat
+// between people, and only replies when it's confident it's the former.
+// Deliberately conservative (shouldRespond defaults toward false) since a
+// bot that jumps into unrelated conversation with a wrong or irrelevant
+// reply is worse than one that occasionally misses a real question — see
+// server/routes.js's telegram webhook handler for how this is wired up.
+const GROUP_QA_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    shouldRespond: {
+      type: 'BOOLEAN',
+      description: 'true ONLY if this message is clearly a question directed at the assistant about this Provider\'s case(s) in the system — status, PAGCOR stage, required documents, submit/approval dates, rejection reasons, etc. false for greetings, small talk, messages clearly directed at another person, or anything not answerable from the case data given. When genuinely unsure, prefer false.',
+    },
+    answer: {
+      type: 'STRING',
+      description: 'A short, direct, friendly reply, in the same language the question was asked in, based ONLY on the case data provided below — never invent a stage, date, or document status not present in that data. Empty string when shouldRespond is false.',
+    },
+  },
+  required: ['shouldRespond', 'answer'],
+};
+
+/**
+ * @param {{providerName: string, question: string, cases: Array<object>}} input
+ * @returns {Promise<{shouldRespond: boolean, answer: string}>}
+ */
+async function answerGroupQuestion({ providerName, question, cases }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not configured on the server.');
+  if (!question || !String(question).trim()) throw new Error('No message text to answer.');
+
+  const caseLines = (Array.isArray(cases) ? cases : []).map((c) => {
+    const bits = [
+      `Stage=${c.pagcorStage || c.status || 'Unknown'}`,
+      `Submit Date=${c.deadline || 'N/A'}`,
+      c.gameId ? `Game ID=${c.gameId}` : null,
+      c.withJackpot ? `With Jackpot=${c.withJackpot}` : null,
+      c.pagcorStage === 'Rejected' && c.rejectionReason ? `Rejection Reason=${c.rejectionReason}` : null,
+    ].filter(Boolean).join(', ');
+    return `- ${c.gameTitle || c.title}${c.caseNumber ? ` (Case ${c.caseNumber})` : ''}: ${bits}`;
+  });
+
+  const requestBody = {
+    systemInstruction: {
+      parts: [{
+        text:
+          'You are a helpful assistant embedded in a Telegram group chat between a legal/regulatory team and one of ' +
+          'their game Providers, for tracking PAGCOR game submissions. You are shown ONE message from the group and ' +
+          'a list of this Provider\'s current cases from the internal tracking system. First decide whether the ' +
+          'message is genuinely a question directed at you about these cases (status, stage, required documents, ' +
+          'dates, rejection reasons) — if it looks like ordinary conversation between people, a greeting, or ' +
+          'something you cannot answer from the case data given, set shouldRespond to false and leave answer empty. ' +
+          'Never guess or invent information not present in the case data. Keep answers short and friendly.',
+      }],
+    },
+    contents: [{
+      parts: [{
+        text:
+          `Provider: ${providerName}\n\n` +
+          `This Provider's cases on file:\n${caseLines.length ? caseLines.join('\n') : '(no cases on file for this Provider yet)'}\n\n` +
+          `Group message: "${question}"`,
+      }],
+    }],
+    generationConfig: { responseMimeType: 'application/json', responseSchema: GROUP_QA_SCHEMA },
+  };
+  return callGemini(requestBody);
+}
+
+module.exports = { extractFields, extractApprovalNotice, summarizeDocument, checkDocumentConsistency, extractCaseFromDocuments, answerGroupQuestion, MODULE_SCHEMAS, toGeminiResponseSchema };

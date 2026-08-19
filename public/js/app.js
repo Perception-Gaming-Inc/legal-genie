@@ -479,6 +479,24 @@ function fieldInputHtml(f, value) {
     const opts = f.options.map((o) => `<option value="${escapeHtml(o.value)}" ${String(o.value) === String(val) ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('');
     return `<select class="form-select" name="${f.name}" ${req}>${f.allowEmpty ? '<option value="">— None —</option>' : ''}${opts}</select>`;
   }
+  // Added 2026-08-18 (Task Management's Assignee field, at Tiffany's
+  // request — "一筆任務可以指派給多個負責人") — a checkbox list rather than a
+  // native <select multiple>, since a multi-select's "hold Cmd/Ctrl to pick
+  // more than one" interaction isn't discoverable and is easy to
+  // accidentally clear. Reads back in showFormModal's submit handler via
+  // querySelectorAll('[name="..."]:checked'), not form.elements[name] —
+  // several checkboxes sharing one `name` don't behave like a single form
+  // control there. `required` isn't enforced as an HTML attribute here
+  // (checkbox groups don't support that natively); showFormModal checks
+  // "at least one checked" itself before calling onSubmit.
+  if (f.type === 'multiselect') {
+    const selected = new Set((Array.isArray(val) ? val : []).map(String));
+    return `<div class="border rounded p-2" style="max-height:180px;overflow:auto;">${(f.options || []).map((o) => `
+      <div class="form-check">
+        <input type="checkbox" class="form-check-input" name="${f.name}" value="${escapeHtml(o.value)}" ${selected.has(String(o.value)) ? 'checked' : ''}>
+        <label class="form-check-label">${escapeHtml(o.label)}</label>
+      </div>`).join('') || '<div class="small text-secondary">No options available.</div>'}</div>`;
+  }
   if (f.type === 'textarea') {
     return `<textarea class="form-control" name="${f.name}" rows="${f.rows || 3}" ${req} ${placeholder}>${escapeHtml(val)}</textarea>`;
   }
@@ -649,7 +667,7 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
       const form = modalEl.querySelector('#modalForm');
       let filledCount = 0;
       for (const f of fields) {
-        if (f.controlsSection || extracted[f.name] === undefined || extracted[f.name] === null || extracted[f.name] === '') continue;
+        if (f.controlsSection || f.type === 'multiselect' || extracted[f.name] === undefined || extracted[f.name] === null || extracted[f.name] === '') continue;
         const el = form.elements[f.name];
         if (!el) continue;
         el.value = extracted[f.name];
@@ -751,6 +769,13 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
     const data = {};
     for (const f of fields) {
       if (f.controlsSection) continue; // UI-only section toggle, not a real record field
+      if (f.type === 'multiselect') {
+        // Several checkboxes share this `name` — form.elements[name] gives
+        // back a RadioNodeList that doesn't behave like a normal control, so
+        // read the checked ones directly instead (see fieldInputHtml above).
+        data[f.name] = Array.from(form.querySelectorAll(`[name="${f.name}"]:checked`)).map((n) => n.value);
+        continue;
+      }
       const el = form.elements[f.name];
       if (!el) continue;
       if (f.type === 'checkbox') data[f.name] = el.checked;
@@ -761,6 +786,14 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
         }
       } else if (f.type === 'number') data[f.name] = el.value === '' ? null : Number(el.value);
       else data[f.name] = el.value;
+    }
+    // Checkbox groups can't enforce HTML `required` the way a normal input
+    // does — check "at least one selected" by hand instead, same error
+    // surface a real required-field failure would hit.
+    const missingMultiselect = fields.find((f) => f.type === 'multiselect' && f.required && !(data[f.name] || []).length);
+    if (missingMultiselect) {
+      modalEl.querySelector('#modalError').textContent = `${missingMultiselect.label} is required — select at least one.`;
+      return;
     }
     // Multi-game bundle: if a checklist is showing (see runAiAssist above)
     // and at least one game is checked, this one uploaded file becomes N
@@ -1751,7 +1784,12 @@ function taskFormFields() {
   return [
     { name: 'title', label: 'Title', required: true },
     { name: 'description', label: 'Description', type: 'textarea' },
-    { name: 'assigneeId', label: 'Assignee', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
+    // Changed 2026-08-18 from a single-select `assigneeId` to a multiselect
+    // `assigneeIds`, at Tiffany's request — a task can now be given to more
+    // than one person at once. `assigneeId` (first of the list) is still
+    // kept in sync server-side for older code that only knows a single
+    // assignee (see server/routes.js's normalizeTaskAssignees).
+    { name: 'assigneeIds', label: 'Assignee(s)', type: 'multiselect', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
     { name: 'type', label: 'Type', type: 'select', options: [{ value: 'personal', label: 'Personal' }, { value: 'team', label: 'Team' }], required: true },
     { name: 'status', label: 'Status', type: 'select', options: ['To-Do', 'In Progress', 'Completed'].map((v) => ({ value: v, label: v })), required: true },
     { name: 'dueDate', label: 'Due Date', type: 'date' },
@@ -3134,30 +3172,10 @@ async function renderDocuments(content) {
         downloadAuthedFile(`/api/documents/${b.dataset.docId}/versions/${b.dataset.versionId}/download`, b.dataset.filename);
       }));
     }));
-    content.querySelectorAll('.btn-summarize').forEach((btn) => btn.addEventListener('click', async () => {
-      const item = rowDocs.find((d) => d.id === btn.dataset.id);
-      const originalHtml = btn.innerHTML;
-      btn.disabled = true;
-      btn.innerHTML = '…';
-      try {
-        const result = await Api.post(`/api/documents/${item.id}/summarize`, {});
-        showInfoModal({
-          title: `AI Summary – ${item.title}`,
-          bodyHtml: `
-            <p>${escapeHtml(result.summary || '')}</p>
-            ${(result.keyPoints || []).length
-              ? `<ul class="mb-0">${result.keyPoints.map((k) => `<li>${escapeHtml(k)}</li>`).join('')}</ul>`
-              : ''}
-            <p class="small text-secondary mt-3 mb-0">This is an AI-generated summary based on the document content, for quick reference only — the original document remains the source of truth.</p>
-          `,
-        });
-      } catch (err) {
-        toast(err.message, 'danger');
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = originalHtml;
-      }
-    }));
+    // The "AI Summarize" per-document button used to be wired up here —
+    // removed 2026-08-18 at Tiffany's request (Document Center should just
+    // manage files, no AI on that page). Document Center's AI Smart-Fill on
+    // upload was deliberately kept; only this summarize button was removed.
   };
 
   // Provider/Game Title text doesn't always come out byte-identical —
@@ -3309,7 +3327,6 @@ async function renderDocuments(content) {
                 <td class="text-nowrap">${fmtDate(d.createdAt)}</td>
                 <td class="text-end">
                   ${d.filePath ? `<button class="btn btn-sm btn-outline-secondary btn-preview-doc" data-id="${d.id}" title="Preview">${Icon('eye')}</button>` : ''}
-                  ${d.filePath ? `<button class="btn btn-sm btn-outline-primary btn-summarize" data-id="${d.id}" title="AI Summarize">${Icon('sparkle')}</button>` : ''}
                   ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-replace-doc" data-id="${d.id}" title="Replace File">${Icon('upload')}</button>` : ''}
                   ${d.filePath ? `<button class="btn btn-sm btn-outline-secondary btn-doc-history" data-id="${d.id}" title="Version History">${Icon('history')}</button>` : ''}
                   ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${d.id}">${Icon('edit')}</button>` : ''}
@@ -3344,6 +3361,15 @@ async function renderDocuments(content) {
 function isTaskOverdue(t) {
   const todayStr = new Date().toISOString().slice(0, 10);
   return t.status !== 'Completed' && t.dueDate && t.dueDate < todayStr;
+}
+
+// Mirrors server/routes.js's taskAssigneeIds — reads a task's assignee(s) as
+// an array regardless of whether it's a new/edited task (real `assigneeIds`
+// list) or an older/auto-created one that only ever had a single
+// `assigneeId` (e.g. syncDeadlineFollowUpTask's follow-up task).
+function taskAssigneeIdsUi(t) {
+  if (Array.isArray(t.assigneeIds)) return t.assigneeIds.filter(Boolean);
+  return t.assigneeId ? [t.assigneeId] : [];
 }
 
 // The 4 stat tiles above the task table (see renderTasks) — count + tone +
@@ -3396,7 +3422,7 @@ async function renderTasks(content) {
               <tr>
                 <td>${escapeHtml(t.title)}${caseName(t.relatedCaseId) ? `<div class="small text-secondary">${escapeHtml(caseName(t.relatedCaseId))}</div>` : ''}</td>
                 <td><span class="badge text-bg-light border text-capitalize">${escapeHtml(t.type)}</span></td>
-                <td>${escapeHtml(userName(t.assigneeId))}</td>
+                <td>${escapeHtml((taskAssigneeIdsUi(t).map(userName).join(', ')) || '—')}</td>
                 <td class="text-nowrap">${fmtDate(t.dueDate)}</td>
                 <td>${badge(t.status)}${isTaskOverdue(t) ? ` ${badge('Overdue')}` : ''}</td>
                 <td class="text-end">
@@ -3422,7 +3448,7 @@ async function renderTasks(content) {
     showFormModal({ title: 'New Task', fields: fields(), initial: { type: 'personal', status: 'To-Do' },
       onSubmit: async (data) => {
         const created = await Api.post('/api/tasks', data);
-        if (data.assigneeId) {
+        if (data.assigneeIds && data.assigneeIds.length) {
           try { await Api.post(`/api/notifications/${created.id}/read`); } catch (e) { /* not applicable */ }
         }
         toast('Task created'); route();
@@ -3430,7 +3456,11 @@ async function renderTasks(content) {
   });
   content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
     const item = filteredTasks.find((t) => t.id === btn.dataset.id);
-    showFormModal({ title: 'Edit Task', fields: fields(), initial: item,
+    // The multiselect field needs a real `assigneeIds` array to pre-check
+    // the right boxes — older/auto-created tasks only have `assigneeId`,
+    // so fall back to wrapping that single value the same way
+    // taskAssigneeIdsUi does.
+    showFormModal({ title: 'Edit Task', fields: fields(), initial: { ...item, assigneeIds: taskAssigneeIdsUi(item) },
       onSubmit: async (data) => { await Api.put(`/api/tasks/${item.id}`, data); toast('Task updated'); route(); } });
   }));
   content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async () => {
@@ -3795,6 +3825,16 @@ async function renderUsersTab(body) {
     { name: 'departmentId', label: 'Department', type: 'select', options: depts.map((d) => ({ value: d.id, label: d.name })) },
     { name: 'roleId', label: 'Role', type: 'select', options: roles.map((r) => ({ value: r.id, label: r.name })), required: true },
     { name: 'status', label: 'Status', type: 'select', options: [{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }] },
+    // Added 2026-08-18 — lets follow-up reminders (see server/routes.js's
+    // checkAndSendFollowUpReminders) be delivered to THIS user's own
+    // Telegram, instead of everyone sharing one reminder email address.
+    // To get this: message the Legal Genie bot on Telegram directly (search
+    // for it by the username Tiffany set up with @BotFather), send it any
+    // message (e.g. /start), then visit
+    // https://api.telegram.org/bot<token>/getUpdates in a browser — look for
+    // "chat":{"id": ...} under your own message. A personal chat ID is a
+    // plain positive number (unlike a group's, which is negative).
+    { name: 'telegramChatId', label: 'Telegram Chat ID (optional — for follow-up reminders; see Settings > Notification Settings for how to get it)' },
     { name: 'password', label: isNew ? 'Temporary Password' : 'Reset Password (leave blank to keep current)' },
   ];
   if (canCreate) body.querySelector('#btnCreate').addEventListener('click', () => {
@@ -3897,7 +3937,7 @@ async function renderNotificationSettingsTab(body) {
     { key: 'notifyOnApprovalDecision', label: 'Notify on Approval Decision', hint: 'Notify the requester when their approval request is approved or rejected.' },
     { key: 'notifyOnTaskAssignment', label: 'Notify on Task Assignment', hint: 'Notify a user when they are assigned (or reassigned) to a task.' },
     { key: 'notifyOnCaseStageChange', label: 'Notify on Case Status Change', hint: 'Notify a case\'s Owner when its PAGCOR Stage changes.' },
-    { key: 'notifyOnFollowUpDueEmail', label: 'Email Me on Follow-up Due Date', hint: 'Send an email (via Resend — see Settings > Submission Settings for the address, and server/email.js for one-time setup) on the day an auto-created follow-up reminder comes due.' },
+    { key: 'notifyOnFollowUpDueTelegram', label: 'Telegram Me on Follow-up Due Date', hint: 'Send a Telegram message on the day an auto-created follow-up reminder comes due — sent to the follow-up task\'s Assignee, using the "Telegram Chat ID" set on their own User record (Settings > Users). Setup: message the Legal Genie bot on Telegram, send it any message (e.g. /start), then visit https://api.telegram.org/bot<token>/getUpdates in a browser and look for "chat":{"id": ...} under your own message — enter that number as your Telegram Chat ID.' },
   ];
   body.innerHTML = `
     <div class="card stat-card"><div class="card-body">
@@ -3943,11 +3983,6 @@ async function renderSubmissionSettingsTab(body) {
           <input type="number" min="1" class="form-control" id="followUpDays" value="${settings.followUpDays || 30}" ${canEdit ? '' : 'disabled'}>
           <div class="small text-secondary mt-1">How many days after a case's Submit Date to automatically create a follow-up reminder, and how long a case can sit in "For Review" / "On Process" before it's flagged on the Dashboard.</div>
         </div>
-        <div class="mb-3" style="max-width:320px;">
-          <label class="form-label">Reminder Email</label>
-          <input type="email" class="form-control" id="reminderEmail" value="${escapeHtml(settings.reminderEmail || '')}" placeholder="you@example.com" ${canEdit ? '' : 'disabled'}>
-          <div class="small text-secondary mt-1">Where the "follow-up due today" email goes (Notification Settings > "Email Me on Follow-up Due Date" must also be on). Requires RESEND_API_KEY to be configured on the server — see server/email.js. Leave blank to turn email reminders off.</div>
-        </div>
         ${canEdit ? `<button type="submit" class="btn btn-primary">Save</button>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
       </form>
     </div></div>`;
@@ -3955,9 +3990,8 @@ async function renderSubmissionSettingsTab(body) {
   body.querySelector('#submissionSettingsForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const followUpDays = Number(body.querySelector('#followUpDays').value);
-    const reminderEmail = body.querySelector('#reminderEmail').value.trim();
     try {
-      await Api.put('/api/settings', { followUpDays, reminderEmail });
+      await Api.put('/api/settings', { followUpDays });
       toast('Submission settings saved');
     } catch (err) {
       toast(err.message, 'danger');

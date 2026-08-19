@@ -343,4 +343,4 @@ function buildCasesForSheet(buffer, fileName, sheetName, settings, checklistItem
   return out;
 }
 
-module.exports = { preview, buildCasesForSheet, detectColumns, mapRow };
+module.exports = { preview, buildCasesForSheet, detectColumns, mapRow, statusForStage };

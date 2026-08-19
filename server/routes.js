@@ -427,6 +427,42 @@ router.get('/api/dashboard/summary', async (req, res) => {
   const settings = await getSystemSettings();
   const followUpDays = Number.isFinite(settings.followUpDays) && settings.followUpDays > 0 ? settings.followUpDays : 30;
 
+  // Flattens PAGCOR cases into one entry per game — a multi-game case
+  // (Phase 2 model) contributes one entry per game in `games[]`, using that
+  // game's own pagcorStage/pagcorStageChangedAt; an older flat single-game
+  // case (or one still coming from a path that hasn't been rewritten)
+  // contributes exactly one entry, same as before Phase 2. Every
+  // stage-grouped Dashboard view below (the PAGCOR Kanban board, the
+  // follow-up reminder list) is built from this same flat list so a
+  // multi-game case's individual games show up wherever a single-game
+  // case's own stage always did, instead of being invisible because the
+  // case itself has no single top-level pagcorStage.
+  function pagcorGameEntries(list) {
+    const out = [];
+    for (const c of list) {
+      if (!c.provider) continue;
+      if (Array.isArray(c.games)) {
+        for (const g of c.games) {
+          out.push({
+            caseId: c.id, caseNumber: c.caseNumber, caseTitle: c.title, provider: c.provider,
+            gameTitle: g.gameTitle, pagcorStage: g.pagcorStage,
+            stageSince: g.pagcorStageChangedAt || c.createdAt,
+            createdAt: c.createdAt,
+          });
+        }
+      } else {
+        out.push({
+          caseId: c.id, caseNumber: c.caseNumber, caseTitle: c.title, provider: c.provider,
+          gameTitle: c.gameTitle, pagcorStage: c.pagcorStage,
+          stageSince: c.pagcorStageChangedAt || c.createdAt,
+          createdAt: c.createdAt,
+        });
+      }
+    }
+    return out;
+  }
+  const pagcorEntries = pagcorGameEntries(cases);
+
   // Follow-up reminder — flags games that have been sitting in "For Review"
   // or "On Process" for followUpDays+ with nobody having followed up (i.e.
   // the Stage itself hasn't changed). This came directly from legal's
@@ -436,20 +472,19 @@ router.get('/api/dashboard/summary', async (req, res) => {
   // crudRoutes' onCreate/onUpdate for cases in this file).
   const FOLLOW_UP_STAGES = ['For Review', 'On Process'];
   const followUpCutoff = new Date(today.getTime() - followUpDays * 86400000);
-  const followUps = cases
-    .filter((c) => FOLLOW_UP_STAGES.includes(c.pagcorStage))
-    .map((c) => ({ ...c, _stageSince: c.pagcorStageChangedAt || c.createdAt }))
-    .filter((c) => c._stageSince && new Date(c._stageSince) <= followUpCutoff)
-    .sort((a, b) => new Date(a._stageSince) - new Date(b._stageSince))
-    .map((c) => ({
-      id: c.id,
-      caseNumber: c.caseNumber,
-      title: c.title,
-      gameTitle: c.gameTitle,
-      provider: c.provider,
-      pagcorStage: c.pagcorStage,
-      stageSince: c._stageSince,
-      daysSince: Math.floor((today - new Date(c._stageSince)) / 86400000),
+  const followUps = pagcorEntries
+    .filter((e) => FOLLOW_UP_STAGES.includes(e.pagcorStage))
+    .filter((e) => e.stageSince && new Date(e.stageSince) <= followUpCutoff)
+    .sort((a, b) => new Date(a.stageSince) - new Date(b.stageSince))
+    .map((e) => ({
+      id: e.caseId,
+      caseNumber: e.caseNumber,
+      title: e.caseTitle,
+      gameTitle: e.gameTitle,
+      provider: e.provider,
+      pagcorStage: e.pagcorStage,
+      stageSince: e.stageSince,
+      daysSince: Math.floor((today - new Date(e.stageSince)) / 86400000),
     }));
 
   const myNotifications = notifications
@@ -468,19 +503,21 @@ router.get('/api/dashboard/summary', async (req, res) => {
   // can hold hundreds of games — the client links out to the filtered Case
   // Management list for the rest instead of rendering them all here.
   const PAGCOR_BOARD_SAMPLE_SIZE = 5;
-  const pagcorCases = cases.filter((c) => c.provider);
   const pagcorBoard = pagcor.PAGCOR_STAGE_OPTIONS.map((stage) => {
-    const inStage = pagcorCases
-      .filter((c) => c.pagcorStage === stage)
+    const inStage = pagcorEntries
+      .filter((e) => e.pagcorStage === stage)
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     return {
       stage,
       count: inStage.length,
-      sample: inStage.slice(0, PAGCOR_BOARD_SAMPLE_SIZE).map((c) => ({
-        id: c.id,
-        caseNumber: c.caseNumber,
-        title: c.title,
-        provider: c.provider,
+      sample: inStage.slice(0, PAGCOR_BOARD_SAMPLE_SIZE).map((e) => ({
+        id: e.caseId,
+        caseNumber: e.caseNumber,
+        // Multi-game case: label with both the case title and this specific
+        // game's title, so two different games under the same Provider case
+        // don't render as indistinguishable cards on the board.
+        title: e.gameTitle && e.gameTitle !== e.caseTitle ? `${e.caseTitle} — ${e.gameTitle}` : e.caseTitle,
+        provider: e.provider,
       })),
     };
   });
@@ -732,11 +769,20 @@ crudRoutes({
 // mirrors what editing a single case's Stage field alone does (it doesn't
 // auto-recompute status/checklist either; those are only auto-set once, at
 // creation time — see crudRoutes' onCreate above).
+// Multi-game case: `body.gameIds` (optional) narrows this to specific games
+// within a selected case — e.g. only the 2 games (of 5) in a case that just
+// got approved — instead of every game in that case. Any selected case
+// without a matching entry in `gameIds` (or a legacy flat case, or
+// `gameIds` omitted entirely) falls back to applying the new Stage to every
+// game in that case, same as bulk stage update always did for a whole case.
 router.post('/api/cases/bulk-update-stage', async (req, res, params, body) => {
   const user = await requirePerm(req, res, 'cases', 'edit');
   if (!user) return;
   const ids = Array.isArray(body.ids) ? body.ids : [];
   const { pagcorStage } = body;
+  // caseId -> array of gameIds to target within that case (optional —
+  // absent/empty means "every game in this case", see header comment).
+  const gameIdsByCase = body.gameIds && typeof body.gameIds === 'object' ? body.gameIds : {};
   if (!ids.length) return sendJson(res, 400, { error: 'Please select at least one case.' });
   if (!pagcor.PAGCOR_STAGE_OPTIONS.includes(pagcorStage)) {
     return sendJson(res, 400, { error: `Invalid PAGCOR Stage: ${pagcorStage}` });
@@ -746,8 +792,28 @@ router.post('/api/cases/bulk-update-stage', async (req, res, params, body) => {
   for (const id of ids) {
     try {
       const existing = await store.find('cases', id);
-      const patch = { pagcorStage };
-      if (existing && existing.pagcorStage !== pagcorStage) patch.pagcorStageChangedAt = new Date().toISOString();
+      if (!existing) { errors.push(`${id}: not found`); continue; }
+      const now = new Date().toISOString();
+      let patch;
+      if (Array.isArray(existing.games)) {
+        // A key present in gameIds for this case (even an empty array — every
+        // game unchecked in the bulk modal) means "target exactly this set",
+        // as opposed to the key being absent entirely, which means "every
+        // game" (see header comment). An explicit empty list has nothing to
+        // update, so skip this case without writing or counting it.
+        if (Array.isArray(gameIdsByCase[id]) && gameIdsByCase[id].length === 0) continue;
+        const targetIds = Array.isArray(gameIdsByCase[id]) ? new Set(gameIdsByCase[id]) : null;
+        patch = {
+          games: existing.games.map((g) => {
+            if (targetIds && !targetIds.has(g.id)) return g;
+            if (g.pagcorStage === pagcorStage) return g;
+            return { ...g, pagcorStage, pagcorStageChangedAt: now };
+          }),
+        };
+      } else {
+        patch = { pagcorStage };
+        if (existing.pagcorStage !== pagcorStage) patch.pagcorStageChangedAt = now;
+      }
       const row = await store.update('cases', id, patch);
       if (row) { updated++; await notifyCaseStageChange(row, existing, user); }
       else errors.push(`${id}: not found`);
@@ -950,27 +1016,80 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   }
   const collapsedByGameIdDedup = allRows.length - byKey.size - collapsedByCrossSheetDedup;
 
-  // Stage 3: skip anything that's already a Case from an earlier import run
-  // (or was hand-created with the same Provider + Game Title) — this is
-  // what protects against accidentally re-running the same import twice,
-  // since this is an additive bulk-create, not an upsert. Also re-applies
-  // Stage 2.5's same-Provider-and-Game-ID-with-similar-title check against
-  // EXISTING cases, not just this commit's own rows — otherwise importing,
-  // say, the APPROVED sheet today and a Provider's own sheet next week would
-  // re-create the CATLA/Super-Niubi-style near-duplicates that a single
-  // combined commit already merges (see Stage 2.5's comment above).
-  const existingCases = (await store.all('cases')).filter((c) => c.provider);
-  const existingKeys = new Set(existingCases.map(importDedupKey));
+  // Stage 3: group surviving rows into multi-game Cases, one per Provider —
+  // Provider lives at the case level, each game inside tracks its own
+  // PAGCOR stage/checklist independently (see the multi-game Case model,
+  // Phase 1). Re-running an import (e.g. weekly) should ADD any newly-found
+  // games into that Provider's existing case rather than creating a
+  // duplicate Provider case or a duplicate game entry, so both "case
+  // already exists" and "game already exists in that case" are checked
+  // before anything is written. Pre-Phase-2 (legacy flat, single-game)
+  // cases are left completely untouched — never migrated, never appended
+  // to — only ever checked so a game already recorded on one of them isn't
+  // re-imported as a duplicate elsewhere.
+  const existingCases = await store.all('cases');
+  const legacyFlatCases = existingCases.filter((c) => c.provider && !Array.isArray(c.games));
+  const existingKeys = new Set(legacyFlatCases.map(importDedupKey));
   const existingByProviderGameId = new Map();
-  for (const c of existingCases) {
+  for (const c of legacyFlatCases) {
     const gid = (c.gameId || '').trim();
     if (!gid) continue;
     const pgKey = `${(c.provider || '').trim().toLowerCase()}|${gid.toLowerCase()}`;
     if (!existingByProviderGameId.has(pgKey)) existingByProviderGameId.set(pgKey, []);
     existingByProviderGameId.get(pgKey).push(c);
   }
-  let created = 0;
+  // One multi-game case per Provider is the target shape going forward — if
+  // more than one already exists for the same Provider (shouldn't normally
+  // happen), new games land on whichever this Map happens to keep, which is
+  // fine since this is just an import-target choice, not data loss.
+  const multiGameCasesByProvider = new Map();
+  for (const c of existingCases) {
+    if (!c.provider || !Array.isArray(c.games)) continue;
+    const key = c.provider.trim().toLowerCase();
+    if (!multiGameCasesByProvider.has(key)) multiGameCasesByProvider.set(key, c);
+  }
+
+  function rowMatchesExistingGame(row, games) {
+    return (games || []).some((g) => {
+      if (row.gameId && g.gameId && row.gameId.trim().toLowerCase() === g.gameId.trim().toLowerCase()
+          && titlesLikelySameGame(g.gameTitle, row.gameTitle)) return true;
+      return (g.gameTitle || '').trim().toLowerCase() === (row.gameTitle || row.title || '').trim().toLowerCase();
+    });
+  }
+
+  function rowToGame(row) {
+    return {
+      id: crypto.randomUUID(),
+      gameTitle: row.gameTitle,
+      gameId: row.gameId,
+      gameVersion: row.gameVersion,
+      gameType: row.gameType,
+      withJackpot: row.withJackpot,
+      jackpotTestingDate: null,
+      jackpotReportSubmitted: null,
+      testingScreenshotsSubmitted: null,
+      pagcorStage: row.pagcorStage,
+      pagcorStageChangedAt: row.pagcorStageChangedAt,
+      checklist: row.checklist,
+      rejectionReason: null,
+      submissionAttempt: null,
+      loaExpiryDate: null,
+    };
+  }
+
+  // Case-level status when it's entirely composed of imported games: open
+  // until every game inside is done (mirrors the natural reading of "is
+  // this case still active").
+  function caseStatusFromGames(games) {
+    if (!games.length) return 'Open';
+    const statuses = games.map((g) => caseImport.statusForStage(g.pagcorStage));
+    if (statuses.every((s) => s === 'Closed')) return 'Closed';
+    if (statuses.some((s) => s === 'In Progress')) return 'In Progress';
+    return 'Open';
+  }
+
   let skippedExisting = 0;
+  const groups = new Map(); // providerKey -> { providerDisplay, rows: [] }
   for (const { row, sheetName } of byKey.values()) {
     const key = importDedupKey(row);
     if (existingKeys.has(key)) { skippedExisting++; continue; }
@@ -980,22 +1099,61 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
       skippedExisting++;
       continue;
     }
-    try {
-      const caseNumber = await store.nextNumber('case', 'CASE');
-      const { isApprovedRow, ...caseFields } = row; // internal-only flag, not a Case field
-      await store.insert('cases', { ...caseFields, ownerId: user.id, caseNumber });
-      created++;
-      existingKeys.add(key);
-      if (pgKey) {
-        if (!existingByProviderGameId.has(pgKey)) existingByProviderGameId.set(pgKey, []);
-        existingByProviderGameId.get(pgKey).push(row);
+    const providerKey = (row.provider || '').trim().toLowerCase();
+    if (!groups.has(providerKey)) groups.set(providerKey, { providerDisplay: row.provider, rows: [] });
+    groups.get(providerKey).rows.push({ row, sheetName });
+  }
+
+  let casesCreated = 0;
+  let casesUpdated = 0;
+  let gamesAdded = 0;
+  for (const [providerKey, group] of groups) {
+    const existingCase = multiGameCasesByProvider.get(providerKey);
+    const newGames = [];
+    for (const { row } of group.rows) {
+      if (rowMatchesExistingGame(row, existingCase ? existingCase.games : null) || rowMatchesExistingGame(row, newGames)) {
+        skippedExisting++;
+        continue;
       }
+      newGames.push(rowToGame(row));
+    }
+    if (!newGames.length) continue;
+    try {
+      if (existingCase) {
+        const mergedGames = [...existingCase.games, ...newGames];
+        await store.update('cases', existingCase.id, {
+          games: mergedGames,
+          status: caseStatusFromGames(mergedGames),
+        });
+        casesUpdated++;
+        multiGameCasesByProvider.set(providerKey, { ...existingCase, games: mergedGames });
+      } else {
+        const caseNumber = await store.nextNumber('case', 'CASE');
+        const createdCase = await store.insert('cases', {
+          title: `${group.providerDisplay} — Game Submissions`,
+          type: 'Regulatory',
+          priority: 'Medium',
+          status: caseStatusFromGames(newGames),
+          provider: group.providerDisplay,
+          description: 'Imported from Excel.',
+          ownerId: user.id,
+          caseNumber,
+          games: newGames,
+        });
+        casesCreated++;
+        multiGameCasesByProvider.set(providerKey, createdCase);
+      }
+      gamesAdded += newGames.length;
     } catch (err) {
-      errors.push(`${sheetName} / ${row.title}: ${err.message}`);
+      errors.push(`${group.providerDisplay}: ${err.message}`);
     }
   }
+
   sendJson(res, 200, {
-    created,
+    created: gamesAdded,
+    casesCreated,
+    casesUpdated,
+    gamesAdded,
     skipped: collapsedByCrossSheetDedup + collapsedByGameIdDedup + skippedExisting,
     errors,
     gameIdConflicts,
@@ -1118,17 +1276,59 @@ router.post('/api/documents/:id/replace-file', async (req, res, params, body) =>
 // summarizeDocument) never judges correctness/compliance — only
 // whether values agree across documents. Requires 'cases' view permission
 // since it's initiated from the case detail page, not the Document Center.
-router.post('/api/cases/:id/check-consistency', async (req, res, params) => {
+// Matches a document to a specific game within a multi-game case. Prefers
+// `relatedGameId` — the game's own stable id, stamped on every document
+// uploaded through the case detail page's per-game upload flow (see
+// showCaseDocumentUploadModal in app.js) — so a document uploaded for Game A
+// is never treated as Game B's just because two games happen to share a
+// title, and stays correctly linked even if a game is later renamed. Older
+// documents (uploaded before this field existed, or filed some other way)
+// fall back to matching gameTitle case-insensitively/trimmed, the same way
+// Document Center's own folder navigation already groups files by game. A
+// game with no title and no id on any document never matches anything
+// (nothing to safely compare against).
+function normMatchKey(s) {
+  return String(s || '').trim().toLowerCase();
+}
+function docsForGame(relatedDocs, game) {
+  if (!game) return [];
+  const byId = game.id ? relatedDocs.filter((d) => d.relatedGameId === game.id) : [];
+  if (byId.length) return byId;
+  const gt = normMatchKey(game.gameTitle);
+  if (!gt) return [];
+  return relatedDocs.filter((d) => !d.relatedGameId && normMatchKey(d.gameTitle) === gt);
+}
+
+router.post('/api/cases/:id/check-consistency', async (req, res, params, body) => {
   const user = await requirePerm(req, res, 'cases', 'view');
   if (!user) return;
   const kase = await store.find('cases', params.id);
   if (!kase) return sendJson(res, 404, { error: 'Case not found' });
 
   const allDocs = await store.all('documents');
-  const relatedDocs = allDocs.filter((d) => d.relatedCaseId === params.id && d.filePath);
+  const caseDocs = allDocs.filter((d) => d.relatedCaseId === params.id && d.filePath);
+
+  // Multi-game case: documents from different games must never be compared
+  // to each other, so this always runs scoped to exactly one game — the
+  // caller (a per-game "AI Parameter Consistency Check" button, see
+  // renderCaseDetail in app.js) must say which one.
+  let targetGame = null;
+  let relatedDocs = caseDocs;
+  if (Array.isArray(kase.games)) {
+    const gameId = body && body.gameId;
+    if (!gameId) {
+      return sendJson(res, 400, { error: 'This case has multiple games — please run the AI Parameter Consistency Check from a specific game.' });
+    }
+    targetGame = kase.games.find((g) => g.id === gameId);
+    if (!targetGame) return sendJson(res, 404, { error: 'Game not found on this case.' });
+    relatedDocs = docsForGame(caseDocs, targetGame);
+  }
+
   if (relatedDocs.length < 2) {
     return sendJson(res, 400, {
-      error: 'This case needs at least 2 documents in Document Center with "Related Case" set to it (and a file attached) before an AI parameter consistency check can run.',
+      error: targetGame
+        ? `Game "${targetGame.gameTitle || '(untitled)'}" needs at least 2 documents in Document Center (matching this game's title, with a file attached) before an AI parameter consistency check can run.`
+        : 'This case needs at least 2 documents in Document Center with "Related Case" set to it (and a file attached) before an AI parameter consistency check can run.',
     });
   }
 
@@ -1150,8 +1350,8 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params) => {
     }
     const result = await ai.checkDocumentConsistency({
       caseTitle: kase.title,
-      gameTitle: kase.gameTitle,
-      gameId: kase.gameId,
+      gameTitle: targetGame ? targetGame.gameTitle : kase.gameTitle,
+      gameId: targetGame ? targetGame.gameId : kase.gameId,
       documents,
     });
 
@@ -1160,13 +1360,20 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params) => {
     // without re-running Gemini on every page load. documentIds records
     // exactly which documents were compared, so a later upload/replace/
     // removal can be detected as making this result stale — see
-    // isConsistencyCheckStale below.
+    // isConsistencyCheckStale below. Multi-game case: this lives on the
+    // specific game inside `games[]` that was checked, not on the case
+    // itself — each game's "ready to download" state is independent.
     const lastConsistencyCheck = {
       overallStatus: result.overallStatus || null,
       checkedAt: new Date().toISOString(),
       documentIds: comparedDocIds,
     };
-    await store.update('cases', params.id, { lastConsistencyCheck });
+    if (targetGame) {
+      const newGames = kase.games.map((g) => (g.id === targetGame.id ? { ...g, lastConsistencyCheck } : g));
+      await store.update('cases', params.id, { games: newGames });
+    } else {
+      await store.update('cases', params.id, { lastConsistencyCheck });
+    }
 
     sendJson(res, 200, { ...result, documentsCompared: documents.length });
   } catch (err) {
@@ -1228,13 +1435,45 @@ router.post('/api/documents/check-consistency', async (req, res, params, body) =
 // Compares the stored documentIds against the case's current
 // relatedCaseId-linked, file-bearing documents (order-independent) to decide
 // whether a fresh AI check is required before the download-all gate opens.
-function isConsistencyCheckStale(kase, currentDocs) {
-  const last = kase.lastConsistencyCheck;
-  if (!last || !Array.isArray(last.documentIds)) return true;
+function isCheckStale(check, currentDocs) {
+  if (!check || !Array.isArray(check.documentIds)) return true;
   const currentIds = currentDocs.map((d) => d.id).sort();
-  const lastIds = [...last.documentIds].sort();
+  const lastIds = [...check.documentIds].sort();
   if (currentIds.length !== lastIds.length) return true;
   return currentIds.some((id, i) => id !== lastIds[i]);
+}
+function isConsistencyCheckStale(kase, currentDocs) {
+  return isCheckStale(kase.lastConsistencyCheck, currentDocs);
+}
+
+// Case-level "is this case ready to download" gate. Multi-game case: ready
+// only once EVERY game that actually has 2+ filed documents has its own
+// passed, non-stale check — a game with fewer than 2 docs is left out of
+// the gate entirely (nothing to have checked yet), same as the case-level
+// gate always let a case with <2 total docs through this specific check
+// (download still separately requires at least 1 filed doc — see the route).
+function caseDownloadGateStatus(kase, relatedDocs) {
+  if (Array.isArray(kase.games) && kase.games.length) {
+    for (const g of kase.games) {
+      const gameDocs = docsForGame(relatedDocs, g);
+      if (gameDocs.length < 2) continue;
+      const label = g.gameTitle || '(untitled game)';
+      if (!g.lastConsistencyCheck || g.lastConsistencyCheck.overallStatus !== 'ready') {
+        return { ok: false, error: `Please run the AI Parameter Consistency Check for game "${label}" and confirm no anomalies before downloading.` };
+      }
+      if (isCheckStale(g.lastConsistencyCheck, gameDocs)) {
+        return { ok: false, error: `Documents for game "${label}" have changed since its last AI Parameter Consistency Check. Please re-run it before downloading.` };
+      }
+    }
+    return { ok: true };
+  }
+  if (!kase.lastConsistencyCheck || kase.lastConsistencyCheck.overallStatus !== 'ready') {
+    return { ok: false, error: 'Please run the AI Parameter Consistency Check and confirm it comes back with no anomalies before downloading.' };
+  }
+  if (isConsistencyCheckStale(kase, relatedDocs)) {
+    return { ok: false, error: 'Documents have changed since the last AI Parameter Consistency Check. Please re-run the check and confirm no anomalies before downloading.' };
+  }
+  return { ok: true };
 }
 
 // Strip characters that are illegal (or awkward) in a filename on Windows/
@@ -1269,12 +1508,8 @@ router.get('/api/cases/:id/download-all', async (req, res, params) => {
     return sendJson(res, 400, { error: 'This case has no uploaded documents yet.' });
   }
 
-  if (!kase.lastConsistencyCheck || kase.lastConsistencyCheck.overallStatus !== 'ready') {
-    return sendJson(res, 400, { error: 'Please run the AI Parameter Consistency Check and confirm it comes back with no anomalies before downloading.' });
-  }
-  if (isConsistencyCheckStale(kase, relatedDocs)) {
-    return sendJson(res, 400, { error: 'Documents have changed since the last AI Parameter Consistency Check. Please re-run the check and confirm no anomalies before downloading.' });
-  }
+  const gate = caseDownloadGateStatus(kase, relatedDocs);
+  if (!gate.ok) return sendJson(res, 400, { error: gate.error });
 
   try {
     const folderName = safeFileSegment(`${kase.caseNumber || kase.id} - ${kase.title || kase.gameTitle || 'Case'}`);

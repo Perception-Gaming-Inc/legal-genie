@@ -52,24 +52,50 @@ function normalizeTitleForMatch(title) {
 // narrows to exactly one case. Anything that resolves to zero or 2+
 // candidate cases is reported back as unmatched/ambiguous instead of being
 // guessed at, so the user can resolve it themselves.
+// Multi-game case (Phase 2): flattens every case into one candidate entry
+// per game — a legacy flat case contributes one entry with `game: null`
+// (its own fields ARE the game), a multi-game case contributes one entry
+// per item in `games[]` — so a notice game can match a specific game inside
+// a multi-game Provider case, not just a whole (necessarily single-game)
+// case as before.
+function candidateEntries(cases) {
+  const out = [];
+  for (const c of cases) {
+    if (Array.isArray(c.games)) {
+      for (const g of c.games) out.push({ case: c, game: g });
+    } else {
+      out.push({ case: c, game: null });
+    }
+  }
+  return out;
+}
+
 async function applyApprovalNoticeGames(cases, noticeGames, updateFn) {
   const updatedCases = [];
   const alreadyApproved = [];
   const skippedRejected = [];
   const unmatched = [];
   const ambiguous = [];
+  const entries = candidateEntries(cases);
 
   for (const g of noticeGames || []) {
     const gameId = g.gameId ? String(g.gameId).trim() : '';
     let candidates = [];
     if (gameId) {
-      candidates = cases.filter((c) => c.gameId && String(c.gameId).trim().toUpperCase() === gameId.toUpperCase());
+      candidates = entries.filter((e) => {
+        const cid = e.game ? e.game.gameId : e.case.gameId;
+        return cid && String(cid).trim().toUpperCase() === gameId.toUpperCase();
+      });
     }
     if (!candidates.length && g.gameTitle) {
       const normTitle = normalizeTitleForMatch(g.gameTitle);
-      candidates = cases.filter((c) => normalizeTitleForMatch(c.title) === normTitle || normalizeTitleForMatch(c.gameTitle) === normTitle);
+      candidates = entries.filter((e) => {
+        const caseTitle = e.game ? null : e.case.title;
+        const gameTitle = e.game ? e.game.gameTitle : e.case.gameTitle;
+        return (caseTitle && normalizeTitleForMatch(caseTitle) === normTitle) || normalizeTitleForMatch(gameTitle) === normTitle;
+      });
       if (candidates.length > 1 && g.provider) {
-        const narrowed = candidates.filter((c) => normalizeProviderKey(c.provider) === normalizeProviderKey(g.provider));
+        const narrowed = candidates.filter((e) => normalizeProviderKey(e.case.provider) === normalizeProviderKey(g.provider));
         if (narrowed.length) candidates = narrowed;
       }
     }
@@ -81,23 +107,33 @@ async function applyApprovalNoticeGames(cases, noticeGames, updateFn) {
     if (candidates.length > 1) {
       ambiguous.push({
         gameTitle: g.gameTitle, gameId: g.gameId, provider: g.provider,
-        matchedCaseNumbers: candidates.map((c) => c.caseNumber),
+        matchedCaseNumbers: candidates.map((e) => e.case.caseNumber),
       });
       continue;
     }
 
-    const c = candidates[0];
-    if (c.pagcorStage === 'Approved') {
-      alreadyApproved.push({ caseNumber: c.caseNumber, title: c.title, gameId: c.gameId });
+    const { case: c, game } = candidates[0];
+    const currentStage = game ? game.pagcorStage : c.pagcorStage;
+    const currentGameId = game ? game.gameId : c.gameId;
+    const currentTitle = game ? game.gameTitle : c.title;
+    if (currentStage === 'Approved') {
+      alreadyApproved.push({ caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId });
       continue;
     }
-    if (c.pagcorStage === 'Rejected') {
-      skippedRejected.push({ caseNumber: c.caseNumber, title: c.title, gameId: c.gameId });
+    if (currentStage === 'Rejected') {
+      skippedRejected.push({ caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId });
       continue;
     }
-    const oldStage = c.pagcorStage || 'Pending Documents';
-    await updateFn(c.id, { pagcorStage: 'Approved', status: 'Closed' });
-    updatedCases.push({ caseNumber: c.caseNumber, title: c.title, gameId: c.gameId, provider: c.provider, oldStage, newStage: 'Approved' });
+    const oldStage = currentStage || 'Pending Documents';
+    if (game) {
+      const newGames = c.games.map((gg) => (gg.id === game.id
+        ? { ...gg, pagcorStage: 'Approved', pagcorStageChangedAt: new Date().toISOString() }
+        : gg));
+      await updateFn(c.id, { games: newGames });
+    } else {
+      await updateFn(c.id, { pagcorStage: 'Approved', status: 'Closed' });
+    }
+    updatedCases.push({ caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId, provider: c.provider, oldStage, newStage: 'Approved' });
   }
 
   return { updatedCases, alreadyApproved, skippedRejected, unmatched, ambiguous };

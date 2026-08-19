@@ -1686,7 +1686,12 @@ async function showImportCasesModal() {
       const errorMsg = result.errors && result.errors.length ? `, ${result.errors.length} error(s) (see the browser console)` : '';
       const conflictMsg = result.gameIdConflicts && result.gameIdConflicts.length
         ? `; ⚠️ ${result.gameIdConflicts.length} Game ID group(s) share an ID but look like different games and were not auto-merged — see the browser console` : '';
-      toast(`Created ${result.created} case(s)${skippedMsg}${errorMsg}${conflictMsg}`);
+      const gamesAdded = result.gamesAdded != null ? result.gamesAdded : result.created;
+      const caseSummary = [];
+      if (result.casesCreated) caseSummary.push(`${result.casesCreated} new case(s)`);
+      if (result.casesUpdated) caseSummary.push(`${result.casesUpdated} existing case(s) updated`);
+      const caseSummaryMsg = caseSummary.length ? ` across ${caseSummary.join(' and ')}` : '';
+      toast(`Imported ${gamesAdded} game(s)${caseSummaryMsg}${skippedMsg}${errorMsg}${conflictMsg}`);
       if (result.errors && result.errors.length) console.warn('Import errors:', result.errors);
       if (result.gameIdConflicts && result.gameIdConflicts.length) console.warn('Game ID conflicts (not auto-merged):', result.gameIdConflicts);
       route();
@@ -2147,17 +2152,46 @@ async function renderCaseDetail(content, id) {
   // at Tiffany's request since the AI check's own documentCompleteness
   // section already covers "what's missing".)
   const filedDocs = relatedDocs.filter((d) => d.filePath);
-  const lastCheck = item.lastConsistencyCheck;
-  const consistencyPassed = !!lastCheck && lastCheck.overallStatus === 'ready';
-  const consistencyStale = !lastCheck || !Array.isArray(lastCheck.documentIds)
-    || filedDocs.length !== lastCheck.documentIds.length
-    || filedDocs.some((d) => !lastCheck.documentIds.includes(d.id));
-  const downloadReady = filedDocs.length > 0 && consistencyPassed && !consistencyStale;
-  const downloadDisabledReason = !filedDocs.length
-    ? 'Upload at least one document before downloading.'
-    : (!consistencyPassed || consistencyStale)
-      ? 'Run the AI Parameter Consistency Check above and confirm no anomalies before downloading.'
-      : '';
+  const isMultiGameCase = Array.isArray(item.games);
+  function isCheckStaleClient(check, docs) {
+    if (!check || !Array.isArray(check.documentIds)) return true;
+    const currentIds = docs.map((d) => d.id).sort();
+    const lastIds = [...check.documentIds].sort();
+    if (currentIds.length !== lastIds.length) return true;
+    return currentIds.some((docId, i) => docId !== lastIds[i]);
+  }
+  function docsForGameClient(docs, game) {
+    if (!game) return [];
+    const byId = game.id ? docs.filter((d) => d.relatedGameId === game.id) : [];
+    if (byId.length) return byId;
+    const gt = ((game && game.gameTitle) || '').trim().toLowerCase();
+    if (!gt) return [];
+    return docs.filter((d) => !d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === gt);
+  }
+  let downloadReady = false;
+  let downloadDisabledReason = '';
+  if (!filedDocs.length) {
+    downloadDisabledReason = 'Upload at least one document before downloading.';
+  } else if (isMultiGameCase) {
+    // Ready only once every game with 2+ filed docs has its own passed,
+    // non-stale check — mirrors caseDownloadGateStatus in server/routes.js.
+    const blockedGame = (item.games || []).find((g) => {
+      const gDocs = docsForGameClient(filedDocs, g);
+      if (gDocs.length < 2) return false;
+      return !g.lastConsistencyCheck || g.lastConsistencyCheck.overallStatus !== 'ready' || isCheckStaleClient(g.lastConsistencyCheck, gDocs);
+    });
+    if (blockedGame) {
+      downloadDisabledReason = `Run the AI Parameter Consistency Check for game "${blockedGame.gameTitle || '(untitled game)'}" and confirm no anomalies before downloading.`;
+    } else {
+      downloadReady = true;
+    }
+  } else {
+    const lastCheck = item.lastConsistencyCheck;
+    const consistencyPassed = !!lastCheck && lastCheck.overallStatus === 'ready';
+    const consistencyStale = isCheckStaleClient(lastCheck, filedDocs);
+    downloadReady = consistencyPassed && !consistencyStale;
+    if (!downloadReady) downloadDisabledReason = 'Run the AI Parameter Consistency Check above and confirm no anomalies before downloading.';
+  }
 
   const field = (label, value) => `
     <div class="col-6 col-md-3 mb-3">
@@ -2177,6 +2211,7 @@ async function renderCaseDetail(content, id) {
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
           <h6 class="mb-0">${escapeHtml(g.gameTitle || `Game ${idx + 1}`)}</h6>
+          ${isMultiGameCase && item.provider ? `<button class="btn btn-outline-secondary btn-sm btn-check-game-consistency" data-game-id="${escapeHtml(g.id || '')}">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
         </div>
         <div class="small text-secondary mb-2">PAGCOR Review Progress${canEdit && g.pagcorStage !== 'Rejected' ? ' — click a stage to switch to it directly' : ''}</div>
         ${pagcorStageStepperHtml(g.pagcorStage, canEdit)}
@@ -2212,7 +2247,7 @@ async function renderCaseDetail(content, id) {
       </div>
       <div class="d-flex gap-2 case-header-actions">
         ${canUploadDocs ? `<button class="btn btn-outline-secondary btn-sm" id="btnUploadCaseDocs">${Icon('upload', 'me-1')}Upload Documents</button>` : ''}
-        ${item.provider ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
+        ${!isMultiGameCase && item.provider ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
         ${canDo('documents', 'view') && filedDocs.length ? `<button class="btn ${downloadReady ? 'btn-primary' : 'btn-outline-secondary'} btn-sm" id="btnDownloadAll" ${downloadReady ? '' : 'disabled'} title="${escapeHtml(downloadReady ? 'Download all of this case\'s documents as a .zip' : downloadDisabledReason)}">${Icon('download', 'me-1')}Download All Documents</button>` : ''}
         ${approvedGame ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
         ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnEditCase">${Icon('edit', 'me-1')}Edit</button>` : ''}
@@ -2262,7 +2297,7 @@ async function renderCaseDetail(content, id) {
   }));
 
   const uploadDocsBtn = content.querySelector('#btnUploadCaseDocs');
-  if (uploadDocsBtn) uploadDocsBtn.addEventListener('click', () => showCaseDocumentUploadModal(item, relatedDocs.length));
+  if (uploadDocsBtn) uploadDocsBtn.addEventListener('click', () => showCaseDocumentUploadModal(item, relatedDocs));
 
   // Only ever enabled (see downloadReady above) once every document is
   // uploaded and the AI Parameter Consistency Check has passed for the
@@ -2354,6 +2389,29 @@ async function renderCaseDetail(content, id) {
     }
   });
 
+  // Same AI check as the button above, but scoped to one game inside a
+  // multi-game case (see the per-game button in gameCardHtml) — documents
+  // from different games under the same Provider case must never be
+  // compared to each other, so this always passes gameId (see
+  // POST /api/cases/:id/check-consistency in server/routes.js).
+  content.querySelectorAll('.btn-check-game-consistency').forEach((btn) => btn.addEventListener('click', async () => {
+    const gameId = btn.dataset.gameId;
+    const game = games.find((g) => g.id === gameId);
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '…';
+    try {
+      const result = await Api.post(`/api/cases/${item.id}/check-consistency`, { gameId });
+      showConsistencyResultModal((game && game.gameTitle) || item.title, result);
+      await renderCaseDetail(content, id);
+    } catch (err) {
+      toast(err.message, 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }));
+
   // LOA-approval notification draft — legal's real pain point here was
   // manually re-typing (game title, Game ID, approval date, etc.) into a
   // Telegram message every time a game gets its LOA, which is slow and
@@ -2413,9 +2471,14 @@ async function renderCaseDetail(content, id) {
 // for review before anything is saved. Uploaded files are tagged with this
 // case's relatedCaseId/provider/gameTitle/gameId, so they land in the
 // right Document Center tab+game automatically — no separate filing step.
-// Once this case has 2+ documents with files, the same AI consistency
+// Once the target game has 2+ documents with files, the same AI consistency
 // check as the case detail page's own button auto-runs afterward.
-function showCaseDocumentUploadModal(item, existingDocCount) {
+// `relatedDocs` is every document already linked to this case (not just a
+// count — Phase 2 needs the actual rows to work out how many already belong
+// to whichever game gets picked below, see gameDocCount()).
+function showCaseDocumentUploadModal(item, relatedDocs) {
+  const games = caseGamesList(item);
+  const isMultiGameCase = Array.isArray(item.games);
   const modalId = 'caseUploadModal';
   let modalEl = document.getElementById(modalId);
   if (modalEl) modalEl.remove();
@@ -2432,6 +2495,13 @@ function showCaseDocumentUploadModal(item, existingDocCount) {
         </div>
         <div class="modal-body">
           <p class="small text-secondary">You can select multiple files at once. Provider / Game Title / Game ID are filled in automatically from this case — AI only needs to guess each file's Title / Category / Report Type, which you can edit before saving.</p>
+          ${isMultiGameCase && games.length > 1 ? `
+          <div class="mb-3">
+            <label class="small text-secondary">Which game are these documents for?</label>
+            <select class="form-select form-select-sm" id="caseUploadGameId">
+              ${games.map((g) => `<option value="${escapeHtml(g.id || '')}">${escapeHtml(g.gameTitle || '(untitled game)')}</option>`).join('')}
+            </select>
+          </div>` : ''}
           <input type="file" class="form-control mb-3" id="caseUploadFiles" multiple>
           <div id="caseUploadRows"></div>
           <div id="caseUploadMsg" class="small text-danger"></div>
@@ -2519,6 +2589,17 @@ function showCaseDocumentUploadModal(item, existingDocCount) {
       });
     if (!rows.length) { msgEl.textContent = 'Please select at least one document.'; return; }
 
+    // Which game these documents get stamped with — the selected option for
+    // a real multi-game case with more than one game, otherwise the case's
+    // single game (or its legacy flat fields, via caseGamesList).
+    const gameSelectEl = modalEl.querySelector('#caseUploadGameId');
+    const selectedGameId = gameSelectEl ? gameSelectEl.value : (games[0] && games[0].id);
+    const selectedGame = games.find((g) => g.id === selectedGameId) || games[0] || {};
+    const existingGameDocCount = isMultiGameCase
+      ? relatedDocs.filter((d) => d.filePath).filter((d) => (selectedGame.id && d.relatedGameId === selectedGame.id)
+        || (!d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === (selectedGame.gameTitle || '').trim().toLowerCase())).length
+      : relatedDocs.length;
+
     uploadBtn.disabled = true;
     let uploadedCount = 0;
     for (let i = 0; i < rows.length; i++) {
@@ -2526,8 +2607,13 @@ function showCaseDocumentUploadModal(item, existingDocCount) {
       try {
         await Api.post('/api/documents', {
           title: rows[i].title || rows[i].file.name, category: rows[i].category, reportType: rows[i].reportType,
-          provider: item.provider, gameTitle: item.gameTitle, gameId: item.gameId,
+          provider: item.provider, gameTitle: selectedGame.gameTitle, gameId: selectedGame.gameId,
           relatedCaseId: item.id,
+          // Stable link to this specific game (not just its title) — see
+          // docsForGame in server/routes.js for why this is preferred over
+          // matching by gameTitle text. Legacy flat cases have no real game
+          // id of their own to link to, so this is left unset for them.
+          relatedGameId: isMultiGameCase ? selectedGame.id : undefined,
           fileName: rows[i].file.name, fileContentBase64: rows[i].base64,
         });
         uploadedCount++;
@@ -2538,10 +2624,10 @@ function showCaseDocumentUploadModal(item, existingDocCount) {
     modal.hide();
     if (!uploadedCount) return;
     toast(`Uploaded ${uploadedCount}/${rows.length} document(s)`);
-    if (existingDocCount + uploadedCount >= 2) {
+    if (existingGameDocCount + uploadedCount >= 2) {
       try {
-        const result = await Api.post(`/api/cases/${item.id}/check-consistency`, {});
-        showConsistencyResultModal(item.title, result);
+        const result = await Api.post(`/api/cases/${item.id}/check-consistency`, isMultiGameCase ? { gameId: selectedGame.id } : {});
+        showConsistencyResultModal(selectedGame.gameTitle || item.title, result);
       } catch (err) {
         toast(`Automatic consistency check failed: ${err.message}`, 'danger');
       }
@@ -2725,6 +2811,14 @@ async function renderCases(content) {
     modalEl.id = modalId;
     modalEl.className = 'modal fade';
     modalEl.tabIndex = -1;
+    // Selected cases with more than one game get an expandable per-game
+    // checklist (default: every game checked) so the new Stage can target
+    // just some of a case's games — e.g. only the 2 (of 5) that actually got
+    // approved — instead of always applying to the whole case. A selected
+    // case with 0 or 1 games needs no such list; it's updated as a whole
+    // case exactly as bulk stage update always worked.
+    const selectedCases = Array.from(selectedIds).map((id) => cases.find((c) => c.id === id)).filter(Boolean);
+    const multiGameSelected = selectedCases.filter((c) => Array.isArray(c.games) && c.games.length > 1);
     modalEl.innerHTML = `
       <div class="modal-dialog">
         <div class="modal-content">
@@ -2733,10 +2827,22 @@ async function renderCases(content) {
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body">
-            <label class="form-label">Set all selected cases to:</label>
-            <select class="form-select" id="bulkStageSelect">
+            <label class="form-label">Set to:</label>
+            <select class="form-select mb-3" id="bulkStageSelect">
               ${PAGCOR_STAGE_OPTIONS.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
             </select>
+            ${multiGameSelected.length ? `
+            <div class="small text-secondary mb-2">${multiGameSelected.length} of the selected cases have more than one game — uncheck any game that shouldn't be updated (all are checked by default).</div>
+            ${multiGameSelected.map((c) => `
+              <div class="border rounded p-2 mb-2" data-bulk-case-id="${escapeHtml(c.id)}">
+                <div class="fw-semibold small mb-1">${escapeHtml(c.title)}</div>
+                ${c.games.map((g) => `
+                  <div class="form-check">
+                    <input class="form-check-input bulk-game-check" type="checkbox" value="${escapeHtml(g.id || '')}" id="bulkGame-${escapeHtml(g.id || '')}" checked>
+                    <label class="form-check-label small" for="bulkGame-${escapeHtml(g.id || '')}">${escapeHtml(g.gameTitle || '(untitled game)')} <span class="text-secondary">— currently ${escapeHtml(g.pagcorStage || '—')}</span></label>
+                  </div>`).join('')}
+              </div>`).join('')}
+            ` : `<label class="form-label small text-secondary d-block">This will set the Stage for every selected case (and, for any that have multiple games, every game inside it).</label>`}
           </div>
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -2751,11 +2857,21 @@ async function renderCases(content) {
     modalEl.querySelector('#bulkStageConfirmBtn').addEventListener('click', async () => {
       const btn = modalEl.querySelector('#bulkStageConfirmBtn');
       const pagcorStage = modalEl.querySelector('#bulkStageSelect').value;
+      // Only cases with a checkbox list actually narrow to specific games —
+      // for those, an unchecked game is left out of gameIds[caseId]; if
+      // every one of that case's checkboxes ends up checked, gameIds[caseId]
+      // still gets the full list, which the server treats identically to
+      // omitting it (see bulk-update-stage's header comment).
+      const gameIds = {};
+      modalEl.querySelectorAll('[data-bulk-case-id]').forEach((caseBlock) => {
+        const caseId = caseBlock.dataset.bulkCaseId;
+        gameIds[caseId] = Array.from(caseBlock.querySelectorAll('.bulk-game-check:checked')).map((cb) => cb.value);
+      });
       btn.disabled = true;
       const originalLabel = btn.textContent;
       btn.textContent = 'Updating…';
       try {
-        const result = await Api.post('/api/cases/bulk-update-stage', { ids: Array.from(selectedIds), pagcorStage });
+        const result = await Api.post('/api/cases/bulk-update-stage', { ids: Array.from(selectedIds), pagcorStage, gameIds });
         modal.hide();
         toast(`Updated PAGCOR Stage for ${result.updated} case(s)${result.errors && result.errors.length ? `, ${result.errors.length} error(s)` : ''}`);
         selectedIds.clear();
@@ -2812,12 +2928,29 @@ async function renderCases(content) {
     const header = ['Case #', 'Title', 'Type', 'Provider', 'Game Title', 'Game Type', 'Game ID', 'Game Version', 'With Jackpot',
       'PAGCOR Stage', 'Owner', 'Priority', 'Status', 'Date Received', 'Submit Date', 'LOA Expiry Date', 'Description'];
     const lines = [header.map(csvEscape).join(',')];
+    // Multi-game case: one row per game, so every game's own PAGCOR Stage/
+    // Game ID/etc. is actually visible in the export instead of only the
+    // first game's — case-level fields (Case #, Title, Provider, Owner,
+    // Priority, Status, Description) repeat on every row for that case, same
+    // as a legacy flat single-game case's one row already looked. LOA Expiry
+    // Date comes from the game (each game tracks its own), not the case.
     sortedFilteredCases().forEach((c) => {
-      lines.push([
-        c.caseNumber, c.title, c.type, c.provider || '', c.gameTitle || '', c.gameType || '', c.gameId || '', c.gameVersion || '', c.withJackpot || '',
-        c.pagcorStage || '',
-        userName(c.ownerId), c.priority, c.status, c.dateReceived || '', c.deadline || '', c.loaExpiryDate || '', c.description || '',
-      ].map(csvEscape).join(','));
+      caseGamesList(c).forEach((g) => {
+        lines.push([
+          c.caseNumber, c.title, c.type, c.provider || '', g.gameTitle || '', g.gameType || '', g.gameId || '', g.gameVersion || '', g.withJackpot || '',
+          g.pagcorStage || '',
+          userName(c.ownerId), c.priority, c.status, c.dateReceived || '', c.deadline || '', g.loaExpiryDate || '', c.description || '',
+        ].map(csvEscape).join(','));
+      });
+      if (!caseGamesList(c).length) {
+        // Non-PAGCOR case (no provider, no games) — still export exactly one
+        // row so it isn't silently dropped from the file.
+        lines.push([
+          c.caseNumber, c.title, c.type, '', '', '', '', '', '',
+          '',
+          userName(c.ownerId), c.priority, c.status, c.dateReceived || '', c.deadline || '', '', c.description || '',
+        ].map(csvEscape).join(','));
+      }
     });
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -2846,8 +2979,13 @@ async function renderCases(content) {
     const stage = stageEl ? stageEl.value : '';
     const q = searchEl ? searchEl.value.trim().toLowerCase() : '';
     filteredCases = cases.filter((c) => (!provider || c.provider === provider)
-      && (!stage || c.pagcorStage === stage)
-      && (!q || (c.title || '').toLowerCase().includes(q) || (c.gameTitle || '').toLowerCase().includes(q) || (c.gameId || '').toLowerCase().includes(q)));
+      // Stage filter matches if ANY game inside the case is at that stage —
+      // covers both a legacy flat case's own single stage and any one game
+      // inside a multi-game case, so a Dashboard pipeline click-through
+      // ("N games in For Review") actually surfaces multi-game cases too.
+      && (!stage || caseGamesList(c).some((g) => g.pagcorStage === stage))
+      && (!q || (c.title || '').toLowerCase().includes(q) || (c.gameTitle || '').toLowerCase().includes(q) || (c.gameId || '').toLowerCase().includes(q)
+        || caseGamesList(c).some((g) => (g.gameTitle || '').toLowerCase().includes(q) || (g.gameId || '').toLowerCase().includes(q))));
     currentPage = 1;
     renderPage();
   }

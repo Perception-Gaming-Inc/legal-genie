@@ -1767,6 +1767,205 @@ function caseFormFields() {
   ];
 }
 
+// Multi-game Case create/edit modal (added 2026-08-19, at Tiffany's request
+// — "多個遊戲放在同一個案子，但遊戲細節跟狀態必須分開"). Deliberately separate
+// from caseFormFields()/showFormModal above rather than extending them —
+// that generic single-record field-list renderer has no concept of a
+// repeatable sub-section, and caseFormFields() is still used unchanged by
+// the AI case-intake wizard's single-game review flow (see
+// showCaseIntakeSingleReview), which this doesn't touch. A game row here
+// only collects the fields that identify the game (Title/Type/ID/Version/
+// With Jackpot) — PAGCOR Stage, checklist, jackpot testing sub-fields, and
+// rejection info are edited per-game from the case detail page's game cards
+// once the game actually exists (see renderCaseDetail), same division as
+// before this change (those were never on the "New Case" form either).
+function caseBaseFormFields() {
+  return [
+    { name: 'title', label: 'Title', required: true },
+    { name: 'type', label: 'Type', type: 'select', options: ['Regulatory', 'Commercial', 'IP', 'Litigation', 'Employment', 'Other'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'ownerId', label: 'Owner', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
+    { name: 'priority', label: 'Priority', type: 'select', options: ['High', 'Medium', 'Low'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'status', label: 'Status', type: 'select', options: ['Open', 'In Progress', 'Closed'].map((v) => ({ value: v, label: v })), required: true },
+    { name: 'deadline', label: 'Submit Date', type: 'date' },
+    { name: 'dateReceived', label: 'Date Received (optional)', type: 'date' },
+    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. Galatics, FC, JDB' },
+    { name: 'description', label: 'Description', type: 'textarea' },
+  ];
+}
+
+function caseGameRowHtml(game, idx) {
+  const g = game || {};
+  return `
+    <div class="card mb-2 case-game-row" data-game-id="${escapeHtml(g.id || '')}">
+      <div class="card-body py-2">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="small fw-semibold text-secondary">Game ${idx + 1}${g.pagcorStage ? ` — <span class="badge bg-secondary">${escapeHtml(g.pagcorStage)}</span>` : ''}</div>
+          <button type="button" class="btn btn-sm btn-outline-danger btn-remove-game">Remove</button>
+        </div>
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="small text-secondary">Game Title</label>
+            <input class="form-control form-control-sm case-game-gameTitle" value="${escapeHtml(g.gameTitle || '')}">
+          </div>
+          <div class="col-md-3">
+            <label class="small text-secondary">Game ID</label>
+            <input class="form-control form-control-sm case-game-gameId" value="${escapeHtml(g.gameId || '')}">
+          </div>
+          <div class="col-md-3">
+            <label class="small text-secondary">Game Version</label>
+            <input class="form-control form-control-sm case-game-gameVersion" value="${escapeHtml(g.gameVersion || '')}">
+          </div>
+          <div class="col-md-4">
+            <label class="small text-secondary">Game Type</label>
+            <select class="form-select form-select-sm case-game-gameType">
+              <option value="">—</option>
+              ${GAME_TYPE_OPTIONS.map((v) => `<option value="${v}" ${v === g.gameType ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="small text-secondary">With Jackpot?</label>
+            <select class="form-select form-select-sm case-game-withJackpot">
+              <option value="">—</option>
+              ${YES_NO_OPTIONS.map((v) => `<option value="${v}" ${v === g.withJackpot ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function showCaseFormModal({ title, initial = {}, submitLabel = 'Save', onSubmit }) {
+  const modalId = 'caseFormModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  const baseFields = caseBaseFormFields();
+  const games = Array.isArray(initial.games) ? initial.games : [];
+  const startsPagcor = !!(games.length || initial.isPagcorCase);
+  modalEl.innerHTML = `
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <form id="caseFormModalForm">
+          <div class="modal-header">
+            <h5 class="modal-title">${escapeHtml(title)}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <div class="row g-2 mb-2">
+              ${baseFields.map((f) => `
+                <div class="${f.type === 'textarea' ? 'col-12' : 'col-md-6'}">
+                  <label class="form-label">${escapeHtml(f.label)}</label>
+                  ${fieldInputHtml(f, initial[f.name])}
+                </div>`).join('')}
+            </div>
+            <div class="form-check mb-2">
+              <input type="checkbox" class="form-check-input" id="caseFormIsPagcor" ${startsPagcor ? 'checked' : ''}>
+              <label class="form-check-label" for="caseFormIsPagcor">This is a PAGCOR game submission case (one case, one or more games)</label>
+            </div>
+            <div id="caseFormGamesSection" class="${startsPagcor ? '' : 'd-none'}">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>Games in this case</strong>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="btnAddGameRow">+ Add Game</button>
+              </div>
+              <div id="caseFormGamesRows">${games.map((g, i) => caseGameRowHtml(g, i)).join('')}</div>
+              <div class="small text-secondary" id="caseFormGamesEmptyMsg" style="${games.length ? 'display:none' : ''}">No games added yet — click "+ Add Game".</div>
+            </div>
+            <div id="caseFormError" class="text-danger small mt-2"></div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">${escapeHtml(submitLabel)}</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+
+  const rowsEl = modalEl.querySelector('#caseFormGamesRows');
+  const emptyMsg = modalEl.querySelector('#caseFormGamesEmptyMsg');
+  const refreshEmptyMsg = () => { emptyMsg.style.display = rowsEl.children.length ? 'none' : ''; };
+  const wireRemove = (rowEl) => rowEl.querySelector('.btn-remove-game').addEventListener('click', () => { rowEl.remove(); refreshEmptyMsg(); });
+  modalEl.querySelectorAll('.case-game-row').forEach(wireRemove);
+  modalEl.querySelector('#btnAddGameRow').addEventListener('click', () => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = caseGameRowHtml(null, rowsEl.children.length);
+    const rowEl = wrap.firstElementChild;
+    rowsEl.appendChild(rowEl);
+    wireRemove(rowEl);
+    refreshEmptyMsg();
+  });
+  modalEl.querySelector('#caseFormIsPagcor').addEventListener('change', (e) => {
+    modalEl.querySelector('#caseFormGamesSection').classList.toggle('d-none', !e.target.checked);
+  });
+
+  modalEl.querySelector('#caseFormModalForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const data = {};
+    for (const f of baseFields) {
+      const el = form.elements[f.name];
+      if (!el) continue;
+      data[f.name] = el.value;
+    }
+    const isPagcor = modalEl.querySelector('#caseFormIsPagcor').checked;
+    data.isPagcorCase = isPagcor;
+    if (isPagcor) {
+      data.games = Array.from(rowsEl.querySelectorAll('.case-game-row')).map((rowEl) => ({
+        id: rowEl.dataset.gameId || (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `g_${Date.now()}_${Math.random().toString(36).slice(2)}`),
+        gameTitle: rowEl.querySelector('.case-game-gameTitle').value,
+        gameId: rowEl.querySelector('.case-game-gameId').value,
+        gameVersion: rowEl.querySelector('.case-game-gameVersion').value,
+        gameType: rowEl.querySelector('.case-game-gameType').value,
+        withJackpot: rowEl.querySelector('.case-game-withJackpot').value,
+      }));
+      if (!data.games.length) {
+        modalEl.querySelector('#caseFormError').textContent = 'Add at least one game, or uncheck "This is a PAGCOR game submission case".';
+        return;
+      }
+    } else {
+      data.games = [];
+    }
+    try {
+      await onSubmit(data);
+      modal.hide();
+    } catch (err) {
+      modalEl.querySelector('#caseFormError').textContent = err.message;
+    }
+  });
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
+
+// Normalizes a case's games into one array regardless of which shape the
+// record actually has: a case created/edited through showCaseFormModal
+// above carries a real `item.games` array, one entry per game, each with
+// its own id/pagcorStage/checklist/etc; an older case (Excel import, AI
+// multi-game intake — neither rewritten yet, see notifyCaseStageChange's
+// server-side comment for why) still has the flat single-game fields
+// directly on the case itself. Every place that displays "this case's
+// games" (case list, case detail) reads through this instead of
+// `item.games` directly, so both shapes render correctly without the
+// older paths needing to change at all.
+function caseGamesList(item) {
+  if (Array.isArray(item.games)) return item.games;
+  if (item.gameTitle || item.gameId || item.pagcorStage || item.provider) {
+    return [{
+      id: item.id, gameTitle: item.gameTitle, gameId: item.gameId, gameVersion: item.gameVersion,
+      gameType: item.gameType, withJackpot: item.withJackpot, pagcorStage: item.pagcorStage,
+      pagcorStageChangedAt: item.pagcorStageChangedAt, checklist: item.checklist,
+      jackpotTestingDate: item.jackpotTestingDate, jackpotReportSubmitted: item.jackpotReportSubmitted,
+      testingScreenshotsSubmitted: item.testingScreenshotsSubmitted, rejectionReason: item.rejectionReason,
+      submissionAttempt: item.submissionAttempt, loaExpiryDate: item.loaExpiryDate,
+      _legacyFlat: true,
+    }];
+  }
+  return [];
+}
+
 // Shared by Task Management's own "New"/"Edit" form modal, same pattern as
 // caseFormFields() above. (Tasks are only ever created in Task Management
 // itself — the Calendar just reflects them; see renderCalendar's doc
@@ -1965,6 +2164,45 @@ async function renderCaseDetail(content, id) {
       <div class="small text-secondary">${escapeHtml(label)}</div>
       <div class="fw-semibold">${value === undefined || value === null || value === '' ? '<span class="text-secondary">—</span>' : escapeHtml(String(value))}</div>
     </div>`;
+  // Multi-game case (added 2026-08-19 — see caseGamesList's header comment):
+  // `games` is one entry per game under this case, each with its own
+  // PAGCOR Stage/checklist/jackpot fields, normalized so this renders the
+  // same whether `item` is a brand-new multi-game case or an older
+  // single-game case (Excel import / AI intake) that still has those fields
+  // flat on the case itself.
+  const games = caseGamesList(item);
+  const approvedGame = games.find((g) => g.pagcorStage === 'Approved');
+  const gameCardHtml = (g, idx) => `
+    <div class="card mb-3 case-game-card" data-game-id="${escapeHtml(g.id || '')}" data-legacy-flat="${g._legacyFlat ? '1' : '0'}">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+          <h6 class="mb-0">${escapeHtml(g.gameTitle || `Game ${idx + 1}`)}</h6>
+        </div>
+        <div class="small text-secondary mb-2">PAGCOR Review Progress${canEdit && g.pagcorStage !== 'Rejected' ? ' — click a stage to switch to it directly' : ''}</div>
+        ${pagcorStageStepperHtml(g.pagcorStage, canEdit)}
+        <div class="row mt-3">
+          ${field('Game ID', g.gameId)}
+          ${field('Game Type', g.gameType)}
+          ${field('Game Version', g.gameVersion)}
+          ${field('With Jackpot', g.withJackpot)}
+          ${g.withJackpot === 'Yes' ? field('PAGCOR Game Testing Date', fmtDate(g.jackpotTestingDate)) : ''}
+          ${g.withJackpot === 'Yes' ? field('Jackpot Report Submitted', g.jackpotReportSubmitted) : ''}
+          ${g.withJackpot === 'Yes' ? field('Testing Screenshots Submitted', g.testingScreenshotsSubmitted) : ''}
+          ${field('LOA Expiry Date', fmtDate(g.loaExpiryDate))}
+          ${g.pagcorStage === 'Rejected' ? field('Submission Attempt #', g.submissionAttempt) : ''}
+        </div>
+        ${g.pagcorStage === 'Rejected' && g.rejectionReason ? `<div class="mt-2"><div class="small text-secondary">Rejection Reason</div><div>${escapeHtml(g.rejectionReason)}</div></div>` : ''}
+        ${PAGCOR_CHECKLIST_ITEMS.length ? `
+        <div class="mt-3">
+          <h6 class="mb-2" style="font-size:1rem;">PAGCOR Checklist ${checklistBadgeHtml(g.checklist)}</h6>
+          ${PAGCOR_CHECKLIST_ITEMS.map((i) => `
+            <div class="form-check mb-2">
+              <input class="form-check-input checklist-item" type="checkbox" id="checklist-${g.id}-${i.key}" data-game-id="${escapeHtml(g.id || '')}" data-legacy-flat="${g._legacyFlat ? '1' : '0'}" data-key="${i.key}" ${g.checklist && g.checklist[i.key] ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
+              <label class="form-check-label" for="checklist-${g.id}-${i.key}">${escapeHtml(i.label)}</label>
+            </div>`).join('')}
+        </div>` : ''}
+      </div>
+    </div>`;
   content.innerHTML = `
     <div class="mb-3"><a href="#/cases" class="small text-decoration-none">&larr; Back to Case Management</a></div>
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3 case-detail-header-row">
@@ -1976,37 +2214,26 @@ async function renderCaseDetail(content, id) {
         ${canUploadDocs ? `<button class="btn btn-outline-secondary btn-sm" id="btnUploadCaseDocs">${Icon('upload', 'me-1')}Upload Documents</button>` : ''}
         ${item.provider ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
         ${canDo('documents', 'view') && filedDocs.length ? `<button class="btn ${downloadReady ? 'btn-primary' : 'btn-outline-secondary'} btn-sm" id="btnDownloadAll" ${downloadReady ? '' : 'disabled'} title="${escapeHtml(downloadReady ? 'Download all of this case\'s documents as a .zip' : downloadDisabledReason)}">${Icon('download', 'me-1')}Download All Documents</button>` : ''}
-        ${item.pagcorStage === 'Approved' ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
+        ${approvedGame ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
         ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnEditCase">${Icon('edit', 'me-1')}Edit</button>` : ''}
         ${canDelete ? `<button class="btn btn-outline-danger btn-sm" id="btnDeleteCase">${Icon('trash', 'me-1')}Delete</button>` : ''}
       </div>
     </div>
     <div class="card mb-3"><div class="card-body">
-      <div class="small text-secondary mb-2">PAGCOR Review Progress${canEdit && item.pagcorStage !== 'Rejected' ? ' — click a stage to switch to it directly' : ''}</div>
-      ${pagcorStageStepperHtml(item.pagcorStage, canEdit)}
-    </div></div>
-    <div class="card mb-3"><div class="card-body">
       <div class="row">
-        ${field('Game ID', item.gameId)}
-        ${field('Game Title', item.gameTitle)}
-        ${field('Game Type', item.gameType)}
-        ${field('Game Version', item.gameVersion)}
-        ${field('With Jackpot', item.withJackpot)}
-        ${item.withJackpot === 'Yes' ? field('PAGCOR Game Testing Date', fmtDate(item.jackpotTestingDate)) : ''}
-        ${item.withJackpot === 'Yes' ? field('Jackpot Report Submitted', item.jackpotReportSubmitted) : ''}
-        ${item.withJackpot === 'Yes' ? field('Testing Screenshots Submitted', item.testingScreenshotsSubmitted) : ''}
         ${field('Provider', item.provider)}
         ${field('Type', item.type)}
         ${field('Owner', userName(item.ownerId))}
         ${field('Priority', item.priority)}
         ${field('Status', item.status)}
         ${field('Submit Date', fmtDate(item.deadline))}
-        ${field('LOA Expiry Date', fmtDate(item.loaExpiryDate))}
-        ${item.pagcorStage === 'Rejected' ? field('Submission Attempt #', item.submissionAttempt) : ''}
       </div>
       ${item.description ? `<div class="mt-2"><div class="small text-secondary">Description</div><div>${escapeHtml(item.description)}</div></div>` : ''}
-      ${item.pagcorStage === 'Rejected' && item.rejectionReason ? `<div class="mt-2"><div class="small text-secondary">Rejection Reason</div><div>${escapeHtml(item.rejectionReason)}</div></div>` : ''}
     </div></div>
+    ${games.length ? `
+    <h6 class="mb-2">Games in this case ${games.length > 1 ? `<span class="badge text-bg-light border">${games.length}</span>` : ''}</h6>
+    ${games.map((g, i) => gameCardHtml(g, i)).join('')}
+    ` : ''}
     ${canDo('documents', 'view') ? `
     <div class="card mt-3"><div class="card-body">
       <h6 class="mb-2">Uploaded Documents${relatedDocs.length ? ` <span class="badge text-bg-light border">${relatedDocs.length}</span>` : ''}</h6>
@@ -2025,15 +2252,6 @@ async function renderCaseDetail(content, id) {
               </div>` : ''}
           </div>`).join('')}
       </div>` : `<div class="small text-secondary">No documents linked to this case yet${canUploadDocs ? ' — click "Upload Documents" above to get started.' : '.'}</div>`}
-    </div></div>` : ''}
-    ${item.provider && PAGCOR_CHECKLIST_ITEMS.length ? `
-    <div class="card mt-3"><div class="card-body">
-      <h6 class="mb-2" style="font-size:1.05rem;">PAGCOR Checklist ${checklistBadgeHtml(item.checklist)}</h6>
-      ${PAGCOR_CHECKLIST_ITEMS.map((i) => `
-        <div class="form-check mb-2">
-          <input class="form-check-input checklist-item" type="checkbox" id="checklist-${i.key}" data-key="${i.key}" ${item.checklist && item.checklist[i.key] ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
-          <label class="form-check-label" for="checklist-${i.key}">${escapeHtml(i.label)}</label>
-        </div>`).join('')}
     </div></div>` : ''}`;
 
   content.querySelectorAll('.btn-download-doc').forEach((btn) => btn.addEventListener('click', () => {
@@ -2062,10 +2280,24 @@ async function renderCaseDetail(content, id) {
   // pagcorStageStepperHtml()), so every click is a real change. Re-renders
   // the whole detail page afterward so the stepper, and anything else that
   // depends on pagcorStage, stays in sync.
+  // Patches ONE game's fields within `item.games` and PUTs the whole case
+  // — except a legacy flat single-game case (Excel import / AI intake,
+  // no real `games` array — see caseGamesList), which still PUTs the flat
+  // field directly, exactly as before this change, so those older cases
+  // keep working unchanged.
+  const patchOneGame = (gameId, isLegacyFlat, fieldPatch) => {
+    if (isLegacyFlat) return Api.put(`/api/cases/${item.id}`, fieldPatch);
+    const newGames = (item.games || []).map((g) => (g.id === gameId ? { ...g, ...fieldPatch } : g));
+    return Api.put(`/api/cases/${item.id}`, { games: newGames });
+  };
+
   content.querySelectorAll('.pagcor-step-clickable').forEach((stepEl) => stepEl.addEventListener('click', async () => {
     const newStage = stepEl.dataset.stage;
+    const cardEl = stepEl.closest('.case-game-card');
+    const gameId = cardEl ? cardEl.dataset.gameId : null;
+    const isLegacyFlat = cardEl ? cardEl.dataset.legacyFlat === '1' : true;
     try {
-      await Api.put(`/api/cases/${item.id}`, { pagcorStage: newStage });
+      await patchOneGame(gameId, isLegacyFlat, { pagcorStage: newStage });
       toast(`PAGCOR Stage updated to "${newStage}"`);
       await renderCaseDetail(content, id);
     } catch (err) {
@@ -2073,21 +2305,25 @@ async function renderCaseDetail(content, id) {
     }
   }));
 
-  // Inline PAGCOR Checklist panel (bottom of the case detail page) — each
+  // Inline PAGCOR Checklist panel (inside each game's card) — each
   // checkbox saves and re-renders immediately, same pattern as the stepper
   // clicks above, so the X/3 badge in the heading always reflects what's
   // actually saved rather than pending, unconfirmed local state.
   content.querySelectorAll('.checklist-item').forEach((cb) => cb.addEventListener('change', async () => {
-    const newChecklist = { ...(item.checklist || {}) };
-    content.querySelectorAll('.checklist-item').forEach((el) => { newChecklist[el.dataset.key] = el.checked; });
-    content.querySelectorAll('.checklist-item').forEach((el) => { el.disabled = true; });
+    const gameId = cb.dataset.gameId;
+    const isLegacyFlat = cb.dataset.legacyFlat === '1';
+    const scoped = Array.from(content.querySelectorAll(`.checklist-item[data-game-id="${gameId}"]`));
+    const currentGame = games.find((g) => g.id === gameId) || {};
+    const newChecklist = { ...(currentGame.checklist || {}) };
+    scoped.forEach((el) => { newChecklist[el.dataset.key] = el.checked; });
+    scoped.forEach((el) => { el.disabled = true; });
     try {
-      await Api.put(`/api/cases/${item.id}`, { checklist: newChecklist });
+      await patchOneGame(gameId, isLegacyFlat, { checklist: newChecklist });
       toast('Checklist updated');
       await renderCaseDetail(content, id);
     } catch (err) {
       toast(err.message, 'danger');
-      content.querySelectorAll('.checklist-item').forEach((el) => { el.disabled = false; });
+      scoped.forEach((el) => { el.disabled = false; });
     }
   }));
 
@@ -2129,7 +2365,7 @@ async function renderCaseDetail(content, id) {
   // themselves.
   const loaNoticeBtn = content.querySelector('#btnLoaNotice');
   if (loaNoticeBtn) loaNoticeBtn.addEventListener('click', () => {
-    const text = loaNotificationDraftText(item);
+    const text = loaNotificationDraftText({ ...item, ...approvedGame });
     showInfoModal({
       title: 'Approval Notice Draft',
       bodyHtml: `
@@ -2153,8 +2389,8 @@ async function renderCaseDetail(content, id) {
 
   const editBtn = content.querySelector('#btnEditCase');
   if (editBtn) editBtn.addEventListener('click', () => {
-    showFormModal({
-      title: 'Edit Case', fields: caseFormFields(), initial: item,
+    showCaseFormModal({
+      title: 'Edit Case', initial: item, submitLabel: 'Save',
       onSubmit: async (data) => { await Api.put(`/api/cases/${item.id}`, data); toast('Case updated'); route(); },
     });
   });
@@ -2373,22 +2609,42 @@ async function renderCases(content) {
 
   const fields = caseFormFields;
 
+  // Multi-game case (added 2026-08-19 — see caseGamesList's header comment):
+  // a case with several games has no single Game ID / PAGCOR Stage to show
+  // in these two columns, so a multi-game row shows a games count and a
+  // per-stage breakdown ("2 Approved, 1 For Review") instead of the normal
+  // single value. A case with exactly one game (new-style single-game, or
+  // an older flat case) still shows the plain single value, unchanged.
   function rowHtml(c) {
+    const gList = caseGamesList(c);
+    const gameIdCell = gList.length > 1
+      ? `<span class="small text-secondary">${gList.length} games</span>`
+      : escapeHtml((gList[0] && gList[0].gameId) || '—');
+    let stageCell;
+    if (gList.length > 1) {
+      const counts = {};
+      gList.forEach((g) => { if (g.pagcorStage) counts[g.pagcorStage] = (counts[g.pagcorStage] || 0) + 1; });
+      const parts = Object.entries(counts).map(([s, n]) => `${n} ${s}`);
+      stageCell = parts.length ? `<span class="small">${escapeHtml(parts.join(', '))}</span>` : '<span class="text-secondary">—</span>';
+    } else {
+      const singleStage = gList[0] && gList[0].pagcorStage;
+      stageCell = singleStage ? badge(singleStage) : '<span class="text-secondary">—</span>';
+    }
     return `
       <tr data-id="${c.id}">
         <td><input type="checkbox" class="row-checkbox" data-id="${c.id}" ${selectedIds.has(c.id) ? 'checked' : ''}></td>
         <td class="text-nowrap">${fmtDate(c.dateReceived)}</td>
-        <td class="text-nowrap">${escapeHtml(c.gameId || '—')}</td>
+        <td class="text-nowrap">${gameIdCell}</td>
         <td title="${escapeHtml(c.caseNumber || '')}">${escapeHtml(c.title)}</td>
         <td>${escapeHtml(c.type)}</td>
         <td>${escapeHtml(c.provider || '—')}</td>
-        <td>${c.pagcorStage ? badge(c.pagcorStage) : '<span class="text-secondary">—</span>'}</td>
+        <td>${stageCell}</td>
         <td>${escapeHtml(userName(c.ownerId))}</td>
         <td>${priorityBadge(c.priority)}</td>
         <td>${badge(c.status)}</td>
         <td class="text-nowrap">${fmtDate(c.deadline)}</td>
         <td class="text-end text-nowrap">
-          ${c.provider && PAGCOR_CHECKLIST_ITEMS.length ? `<button class="btn btn-sm btn-outline-secondary btn-checklist" data-id="${c.id}" title="PAGCOR Checklist (${checklistDoneCount(c.checklist)}/${PAGCOR_CHECKLIST_ITEMS.length})">${Icon('checklist')}</button>` : ''}
+          ${c.provider && !Array.isArray(c.games) && PAGCOR_CHECKLIST_ITEMS.length ? `<button class="btn btn-sm btn-outline-secondary btn-checklist" data-id="${c.id}" title="PAGCOR Checklist (${checklistDoneCount(c.checklist)}/${PAGCOR_CHECKLIST_ITEMS.length})">${Icon('checklist')}</button>` : ''}
           ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${c.id}">${Icon('edit')}</button>` : ''}
           ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${c.id}">${Icon('trash')}</button>` : ''}
         </td>
@@ -2410,8 +2666,8 @@ async function renderCases(content) {
     content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const item = cases.find((c) => c.id === btn.dataset.id);
-      showFormModal({
-        title: 'Edit Case', fields: fields(), initial: item,
+      showCaseFormModal({
+        title: 'Edit Case', initial: item, submitLabel: 'Save',
         onSubmit: async (data) => { await Api.put(`/api/cases/${item.id}`, data); toast('Case updated'); route(); },
       });
     }));
@@ -2658,9 +2914,8 @@ async function renderCases(content) {
 
   if (canCreate) {
     content.querySelector('#btnCreate').addEventListener('click', () => {
-      showFormModal({
-        title: 'New Case', fields: fields(), initial: { status: 'Open', priority: 'Medium' },
-        aiAssist: { module: 'cases' },
+      showCaseFormModal({
+        title: 'New Case', initial: { status: 'Open', priority: 'Medium' }, submitLabel: 'Create Case',
         onSubmit: async (data) => { await Api.post('/api/cases', data); toast('Case created'); route(); },
       });
     });

@@ -1,4 +1,5 @@
 'use strict';
+const crypto = require('crypto');
 const { Router, sendJson } = require('./router');
 const store = require('./store');
 const auth = require('./auth');
@@ -145,13 +146,36 @@ function notificationsEnabled(settings, key) {
 // to the case's Provider group (see notifyProviderTelegram below) — that
 // one is NOT skipped for the acting user, since the Provider on the other
 // end has no idea who clicked the button in Legal Genie.
+// Multi-game cases (added 2026-08-19, at Tiffany's request — "多個遊戲放在同一
+// 個案子，但遊戲細節跟狀態要分開"): a case created/edited through the new
+// per-game UI carries `row.games` (an array, each with its own `id`,
+// `gameTitle`, `gameId`, `pagcorStage`, etc.) instead of the old flat
+// `row.pagcorStage`/`row.gameTitle`. Cases still coming from the older
+// single-game paths (Excel import, AI multi-game intake — neither rewritten
+// yet, deliberately, to keep this change small) keep producing the old flat
+// shape, so every function below has to handle BOTH: notify once per
+// changed game when `games` is present, otherwise fall back to exactly the
+// old single-stage behavior so those older paths keep working unchanged.
 async function notifyCaseStageChange(row, existing, actingUser) {
-  if (!row || !existing || !row.pagcorStage || existing.pagcorStage === row.pagcorStage) return;
+  if (!row || !existing) return;
   const settings = await getSystemSettings();
+  if (Array.isArray(row.games)) {
+    const oldById = new Map((existing.games || []).map((g) => [g.id, g]));
+    for (const game of row.games) {
+      const prior = oldById.get(game.id);
+      if (!game.pagcorStage || (prior && prior.pagcorStage === game.pagcorStage)) continue;
+      if (row.ownerId && row.ownerId !== actingUser.id && notificationsEnabled(settings, 'notifyOnCaseStageChange')) {
+        await notifyUser(row.ownerId, 'case_stage_change', `Case "${row.title}" — game "${game.gameTitle || game.gameId || '(untitled)'}" status changed to "${game.pagcorStage}"`, row.id, 'case');
+      }
+      await notifyProviderTelegram(row, settings, game);
+    }
+    return;
+  }
+  if (!row.pagcorStage || existing.pagcorStage === row.pagcorStage) return;
   if (row.ownerId && row.ownerId !== actingUser.id && notificationsEnabled(settings, 'notifyOnCaseStageChange')) {
     await notifyUser(row.ownerId, 'case_stage_change', `Case "${row.title}" status changed to "${row.pagcorStage}"`, row.id, 'case');
   }
-  await notifyProviderTelegram(row, settings);
+  await notifyProviderTelegram(row, settings, null);
 }
 
 // Posts a PAGCOR Stage update straight into the case's Provider's Telegram
@@ -163,13 +187,17 @@ async function notifyCaseStageChange(row, existing, actingUser) {
 // fresh install, not errors. An actual Telegram API failure (bad token,
 // bot not in the group, group deleted, etc.) is logged server-side but
 // still never thrown further — a Telegram outage must never block or fail
-// the underlying case save this is reporting on.
-async function notifyProviderTelegram(row, settings) {
+// the underlying case save this is reporting on. `game` is the specific
+// game whose stage just changed (multi-game case), or null for an
+// old-style flat single-game case.
+async function notifyProviderTelegram(row, settings, game) {
   if (!row.provider) return;
   if (!notificationsEnabled(settings, 'notifyTelegramOnCaseStageChange')) return;
   const chatId = (settings.providerTelegramChatIds || {})[row.provider];
   if (!chatId) return;
-  const text = `📋 PAGCOR Submission Update\nGame: ${row.gameTitle || row.title}${row.caseNumber ? `\nCase: ${row.caseNumber}` : ''}\nStatus: ${row.pagcorStage}`;
+  const gameLabel = game ? (game.gameTitle || game.gameId || row.title) : (row.gameTitle || row.title);
+  const stage = game ? game.pagcorStage : row.pagcorStage;
+  const text = `📋 PAGCOR Submission Update\nGame: ${gameLabel}${row.caseNumber ? `\nCase: ${row.caseNumber}` : ''}\nStatus: ${stage}`;
   try {
     await telegram.sendTelegramMessage(chatId, text);
   } catch (err) {
@@ -612,6 +640,30 @@ crudRoutes({
   base: '/api/cases', moduleName: 'cases', collection: 'cases',
   onCreate: async (body) => {
     const patch = { ...body, caseNumber: body.caseNumber || await store.nextNumber('case', 'CASE') };
+    // Multi-game case (added 2026-08-19 — see notifyCaseStageChange's header
+    // comment): `body.games` is an array of { id, gameTitle, gameId,
+    // gameVersion, gameType, withJackpot, pagcorStage, checklist, ... }, one
+    // entry per game under this one case. Each game gets the same
+    // auto-defaulting a single-game PAGCOR case always got — its own
+    // starting stage, its own blank checklist, its own stamped
+    // pagcorStageChangedAt — just applied per array entry instead of once on
+    // the case itself. A case with no `games` (Commercial/IP/Litigation
+    // cases, and anything still coming from the older single-game paths —
+    // Excel import, AI multi-game intake) falls through to the original
+    // flat-field behavior below, unchanged.
+    if (Array.isArray(body.games)) {
+      const settings = await getSystemSettings();
+      const blankChecklist = () => Object.fromEntries(getChecklistItems(settings).map((i) => [i.key, false]));
+      const now = new Date().toISOString();
+      patch.games = body.games.map((g) => ({
+        id: g.id || crypto.randomUUID(),
+        ...g,
+        pagcorStage: g.pagcorStage || 'Pending Documents',
+        pagcorStageChangedAt: g.pagcorStageChangedAt || now,
+        checklist: g.checklist || blankChecklist(),
+      }));
+      return patch;
+    }
     // A case with a Provider set is a PAGCOR game-submission case — give it
     // the standard stage automatically so the user doesn't have to set it up
     // by hand every time. Cases without a Provider (Commercial, IP,
@@ -639,9 +691,23 @@ crudRoutes({
   // should reset the same "time in stage" clock used for the follow-up
   // reminder — otherwise a game that was actually just moved forward would
   // still look overdue until its next unrelated edit. `existing` is the
-  // pre-update row, handed in by crudRoutes' PUT handler.
+  // pre-update row, handed in by crudRoutes' PUT handler. Multi-game case:
+  // does the same per-game, stamping only the games whose stage actually
+  // changed vs `existing.games`, leaving every other game's timestamp alone.
   onUpdate: async (body, user, id, existing) => {
     const patch = { ...body };
+    if (Array.isArray(patch.games)) {
+      const oldById = new Map((existing && existing.games || []).map((g) => [g.id, g]));
+      const now = new Date().toISOString();
+      patch.games = patch.games.map((g) => {
+        const prior = oldById.get(g.id);
+        if (g.pagcorStage && (!prior || prior.pagcorStage !== g.pagcorStage)) {
+          return { ...g, pagcorStageChangedAt: now };
+        }
+        return g;
+      });
+      return patch;
+    }
     if (patch.pagcorStage && existing && existing.pagcorStage !== patch.pagcorStage) {
       patch.pagcorStageChangedAt = new Date().toISOString();
     }

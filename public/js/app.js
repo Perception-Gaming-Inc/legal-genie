@@ -988,15 +988,6 @@ function renderLogin(message) {
           <div id="loginError" class="text-danger small mb-2"></div>
           <button class="btn btn-primary w-100 login-submit-btn" type="submit">Sign In</button>
         </form>
-        <div class="login-demo-accounts mt-4">
-          <div class="login-demo-title">Demo Accounts</div>
-          <div class="login-demo-chips">
-            <span class="login-demo-chip"><code>admin</code> / <code>admin123</code></span>
-            <span class="login-demo-chip"><code>jchen</code> / <code>password123</code></span>
-            <span class="login-demo-chip"><code>mtan</code> / <code>password123</code></span>
-            <span class="login-demo-chip"><code>viewer</code> / <code>password123</code></span>
-          </div>
-        </div>
       </div>
     </div>
   </div>`;

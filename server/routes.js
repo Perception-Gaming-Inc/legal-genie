@@ -8,6 +8,7 @@ const ai = require('./ai');
 const pagcor = require('./pagcor');
 const pagcorCheck = require('./pagcor-check');
 const caseImport = require('./import');
+const { canonicalProviderName } = require('./providers');
 const telegram = require('./telegram');
 const { mimeFor } = require('./mime');
 const zipLite = require('./zip-lite');
@@ -677,6 +678,11 @@ crudRoutes({
   base: '/api/cases', moduleName: 'cases', collection: 'cases',
   onCreate: async (body) => {
     const patch = { ...body, caseNumber: body.caseNumber || await store.nextNumber('case', 'CASE') };
+    // Normalize Provider spelling (e.g. "OP" -> "Omniplay") so the same
+    // real-world provider never fragments into multiple entries across the
+    // Case Management filter, Telegram routing, or the Dashboard — see
+    // server/providers.js for the alias list.
+    if (patch.provider) patch.provider = canonicalProviderName(patch.provider);
     // Multi-game case (added 2026-08-19 — see notifyCaseStageChange's header
     // comment): `body.games` is an array of { id, gameTitle, gameId,
     // gameVersion, gameType, withJackpot, pagcorStage, checklist, ... }, one
@@ -733,6 +739,7 @@ crudRoutes({
   // changed vs `existing.games`, leaving every other game's timestamp alone.
   onUpdate: async (body, user, id, existing) => {
     const patch = { ...body };
+    if (patch.provider) patch.provider = canonicalProviderName(patch.provider);
     if (Array.isArray(patch.games)) {
       const oldById = new Map((existing && existing.games || []).map((g) => [g.id, g]));
       const now = new Date().toISOString();

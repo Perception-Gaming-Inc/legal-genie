@@ -33,6 +33,7 @@ const { readXlsx, excelSerialToIsoDate } = require('./xlsx-lite');
 // from Settings > Required Document Settings via routes.js; this constant
 // exists so import.js still behaves sensibly standalone.
 const { PAGCOR_CHECKLIST_ITEMS: DEFAULT_CHECKLIST_ITEMS } = require('./pagcor');
+const { canonicalProviderName } = require('./providers');
 
 // ---------------------------------------------------------------------------
 // Column recognition
@@ -185,9 +186,12 @@ function mapRow(row, colMap, sheetSettings, sheetName, checklistItems) {
   const rawStatus = asTrimmedString(cell(row, colMap.status));
   const isApprovedRow = rawStatus && rawStatus.toUpperCase() === 'APPROVED';
 
-  const provider = colMap.provider !== undefined
+  // Normalize Provider spelling (e.g. "OP" -> "Omniplay") so an Excel sheet
+  // using a shorthand doesn't fragment into a separate provider/case group
+  // from one already using the full name — see server/providers.js.
+  const provider = canonicalProviderName(colMap.provider !== undefined
     ? (asTrimmedString(cell(row, colMap.provider)) || sheetSettings.provider || sheetName)
-    : (sheetSettings.provider || sheetName);
+    : (sheetSettings.provider || sheetName));
 
   const pagcorStage = isApprovedRow ? 'Approved' : (sheetSettings.pagcorStage || 'Pending Documents');
 

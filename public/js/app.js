@@ -2497,10 +2497,12 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
           <p class="small text-secondary">You can select multiple files at once. Provider / Game Title / Game ID are filled in automatically from this case — AI only needs to guess each file's Title / Category / Report Type, which you can edit before saving.</p>
           ${isMultiGameCase && games.length > 1 ? `
           <div class="mb-3">
-            <label class="small text-secondary">Which game are these documents for?</label>
-            <select class="form-select form-select-sm" id="caseUploadGameId">
-              ${games.map((g) => `<option value="${escapeHtml(g.id || '')}">${escapeHtml(g.gameTitle || '(untitled game)')}</option>`).join('')}
-            </select>
+            <label class="small text-secondary d-block">Which game(s) are these documents for? Check every game this batch applies to — a document that covers multiple games (e.g. one RTP certificate listing several titles) gets linked to each game you check, so it shows up under all of them. Nothing is checked by default; pick at least one before uploading, even if it's just the one game.</label>
+            ${games.map((g) => `
+            <div class="form-check form-check-inline">
+              <input class="form-check-input case-upload-game-check" type="checkbox" value="${escapeHtml(g.id || '')}" id="caseUploadGame_${escapeHtml(g.id || '')}">
+              <label class="form-check-label small" for="caseUploadGame_${escapeHtml(g.id || '')}">${escapeHtml(g.gameTitle || '(untitled game)')}</label>
+            </div>`).join('')}
           </div>` : ''}
           <input type="file" class="form-control mb-3" id="caseUploadFiles" multiple>
           <div id="caseUploadRows"></div>
@@ -2520,6 +2522,14 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
   let filesData = []; // [{ file, base64, proposed: {title,category,reportType}, aiFailed }]
   const rowsEl = modalEl.querySelector('#caseUploadRows');
   const uploadBtn = modalEl.querySelector('#btnCaseUploadAll');
+  // Multi-game game-picker is now a checklist (see the HTML above), not a
+  // single <select> — nothing is checked by default, so the upload button
+  // also has to stay disabled until at least one game is picked (in
+  // addition to the existing "at least one file chosen" requirement).
+  const gameCheckEls = () => Array.from(modalEl.querySelectorAll('.case-upload-game-check'));
+  const hasGameSelected = () => !isMultiGameCase || games.length <= 1 || gameCheckEls().some((c) => c.checked);
+  const updateUploadBtnState = () => { uploadBtn.disabled = filesData.length === 0 || !hasGameSelected(); };
+  gameCheckEls().forEach((c) => c.addEventListener('change', updateUploadBtnState));
 
   const renderRows = () => {
     rowsEl.innerHTML = filesData.map((f, i) => `
@@ -2550,7 +2560,7 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
           <div class="small text-secondary mt-1 ms-4">${escapeHtml(f.file.name)}${f.aiFailed ? ' — AI could not read this file\'s content, please double-check the category yourself' : ''}</div>
         </div>
       </div>`).join('');
-    uploadBtn.disabled = filesData.length === 0;
+    updateUploadBtnState();
   };
 
   modalEl.querySelector('#caseUploadFiles').addEventListener('change', async (e) => {
@@ -2589,49 +2599,79 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
       });
     if (!rows.length) { msgEl.textContent = 'Please select at least one document.'; return; }
 
-    // Which game these documents get stamped with — the selected option for
-    // a real multi-game case with more than one game, otherwise the case's
-    // single game (or its legacy flat fields, via caseGamesList).
-    const gameSelectEl = modalEl.querySelector('#caseUploadGameId');
-    const selectedGameId = gameSelectEl ? gameSelectEl.value : (games[0] && games[0].id);
-    const selectedGame = games.find((g) => g.id === selectedGameId) || games[0] || {};
-    const existingGameDocCount = isMultiGameCase
-      ? relatedDocs.filter((d) => d.filePath).filter((d) => (selectedGame.id && d.relatedGameId === selectedGame.id)
-        || (!d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === (selectedGame.gameTitle || '').trim().toLowerCase())).length
-      : relatedDocs.length;
+    // Which game(s) these documents get stamped with. Multi-game case with
+    // more than one game: every checked box in the game-picker (a document
+    // covering several games is uploaded once per game it applies to, so
+    // each game's own document list — and its own AI consistency check —
+    // sees it). Single-game / legacy case: just that one game, no picker
+    // shown at all.
+    const selectedGames = (isMultiGameCase && games.length > 1)
+      ? gameCheckEls().filter((c) => c.checked).map((c) => games.find((g) => g.id === c.value)).filter(Boolean)
+      : [games[0] || {}];
+    if (!selectedGames.length) { msgEl.textContent = 'Please select at least one game.'; return; }
 
     uploadBtn.disabled = true;
-    let uploadedCount = 0;
-    for (let i = 0; i < rows.length; i++) {
-      uploadBtn.innerHTML = `Uploading… (${i + 1}/${rows.length})`;
-      try {
-        await Api.post('/api/documents', {
-          title: rows[i].title || rows[i].file.name, category: rows[i].category, reportType: rows[i].reportType,
-          provider: item.provider, gameTitle: selectedGame.gameTitle, gameId: selectedGame.gameId,
-          relatedCaseId: item.id,
-          // Stable link to this specific game (not just its title) — see
-          // docsForGame in server/routes.js for why this is preferred over
-          // matching by gameTitle text. Legacy flat cases have no real game
-          // id of their own to link to, so this is left unset for them.
-          relatedGameId: isMultiGameCase ? selectedGame.id : undefined,
-          fileName: rows[i].file.name, fileContentBase64: rows[i].base64,
-        });
-        uploadedCount++;
-      } catch (err) {
-        toast(`Failed to upload "${rows[i].file.name}": ${err.message}`, 'danger');
+    const perGameUploaded = new Map(); // game (object identity) -> count of files uploaded successfully this batch
+    const totalSteps = rows.length * selectedGames.length;
+    let step = 0;
+    for (const selectedGame of selectedGames) {
+      perGameUploaded.set(selectedGame, 0);
+      for (let i = 0; i < rows.length; i++) {
+        step++;
+        uploadBtn.innerHTML = `Uploading… (${step}/${totalSteps})`;
+        try {
+          await Api.post('/api/documents', {
+            title: rows[i].title || rows[i].file.name, category: rows[i].category, reportType: rows[i].reportType,
+            provider: item.provider, gameTitle: selectedGame.gameTitle, gameId: selectedGame.gameId,
+            relatedCaseId: item.id,
+            // Stable link to this specific game (not just its title) — see
+            // docsForGame in server/routes.js for why this is preferred over
+            // matching by gameTitle text. Legacy flat cases have no real game
+            // id of their own to link to, so this is left unset for them.
+            relatedGameId: isMultiGameCase ? selectedGame.id : undefined,
+            fileName: rows[i].file.name, fileContentBase64: rows[i].base64,
+          });
+          perGameUploaded.set(selectedGame, perGameUploaded.get(selectedGame) + 1);
+        } catch (err) {
+          toast(`Failed to upload "${rows[i].file.name}"${selectedGames.length > 1 ? ` for "${selectedGame.gameTitle || item.title}"` : ''}: ${err.message}`, 'danger');
+        }
       }
     }
     modal.hide();
+    const uploadedCount = Array.from(perGameUploaded.values()).reduce((a, b) => a + b, 0);
     if (!uploadedCount) return;
-    toast(`Uploaded ${uploadedCount}/${rows.length} document(s)`);
-    if (existingGameDocCount + uploadedCount >= 2) {
+    toast(`Uploaded ${uploadedCount}/${totalSteps} document(s)`);
+
+    // Auto-run the AI consistency check for every game that just crossed
+    // (or already had) 2+ filed documents. With exactly one game selected
+    // this is unchanged from before — the full result opens in a modal.
+    // With several games selected, popping one full-screen modal per game
+    // back-to-back would just have each replace the last before anyone
+    // could read it, so instead the checks still run and save (each game's
+    // own "AI Parameter Consistency Check" button on the case page shows
+    // its full result on demand), and a single toast summarizes pass/fail
+    // per game here.
+    const readyGames = [];
+    for (const selectedGame of selectedGames) {
+      const gameUploaded = perGameUploaded.get(selectedGame) || 0;
+      if (!gameUploaded) continue;
+      const existingGameDocCount = isMultiGameCase
+        ? relatedDocs.filter((d) => d.filePath).filter((d) => (selectedGame.id && d.relatedGameId === selectedGame.id)
+          || (!d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === (selectedGame.gameTitle || '').trim().toLowerCase())).length
+        : relatedDocs.length;
+      if (existingGameDocCount + gameUploaded < 2) continue;
       try {
         const result = await Api.post(`/api/cases/${item.id}/check-consistency`, isMultiGameCase ? { gameId: selectedGame.id } : {});
-        showConsistencyResultModal(selectedGame.gameTitle || item.title, result);
+        if (selectedGames.length === 1) {
+          showConsistencyResultModal(selectedGame.gameTitle || item.title, result);
+        } else {
+          readyGames.push(`${selectedGame.gameTitle || item.title}: ${result.overallStatus === 'ready' ? '🟢 ready' : '🔴 not ready'}`);
+        }
       } catch (err) {
-        toast(`Automatic consistency check failed: ${err.message}`, 'danger');
+        toast(`Automatic consistency check failed for "${selectedGame.gameTitle || item.title}": ${err.message}`, 'danger');
       }
     }
+    if (readyGames.length) toast(`Consistency check — ${readyGames.join(' · ')}`);
     route();
   });
 }

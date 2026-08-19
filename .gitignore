@@ -11,3 +11,4 @@ data/legal-genie.sqlite-wal
 uploads/*
 !uploads/.gitkeep
 *.log
+local-mock/data.json.bak-before-kb-dedupe

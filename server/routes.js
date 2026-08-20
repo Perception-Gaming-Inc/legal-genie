@@ -2144,4 +2144,42 @@ async function checkAndSendFollowUpReminders() {
 }
 router.runDueFollowUpReminders = checkAndSendFollowUpReminders;
 
+// ---------------------------------------------------------------------------
+// Vercel Cron entry point for the due-today follow-up check above
+// ---------------------------------------------------------------------------
+// Added 2026-08-20 at Tiffany's request — checkAndSendFollowUpReminders was
+// only ever wired up via server.js's setInterval, which (per that file's
+// own comment) NEVER actually fires on Vercel: a serverless deployment
+// spins up a fresh, short-lived instance per request, so a setInterval
+// timer never survives long enough to tick. That's why the production site
+// (on Vercel) was silently never sending the Telegram follow-up reminders
+// at all, even though the exact same code works fine on the Render
+// deployment. This route gives Vercel's own Cron Jobs feature (see
+// vercel.json's "crons") something to call on a schedule instead — Vercel
+// invokes a cron'd route the same way any HTTP request hits this server,
+// which *does* work in a serverless model (unlike a timer that has to
+// survive between requests).
+//
+// Protected by CRON_SECRET (optional but strongly recommended): when set as
+// an environment variable on the Vercel project, Vercel automatically sends
+// `Authorization: Bearer <CRON_SECRET>` on every cron-triggered request, so
+// checking it here stops a stranger who finds this URL from triggering
+// reminder sends on demand. If CRON_SECRET isn't set, this runs unprotected
+// (fine for local/manual testing, not recommended for production).
+router.get('/api/cron/follow-up-reminders', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (secret) {
+    const auth = req.headers['authorization'] || '';
+    if (auth !== `Bearer ${secret}`) {
+      return sendJson(res, 401, { error: 'Unauthorized' });
+    }
+  }
+  try {
+    await checkAndSendFollowUpReminders();
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 500, { error: err.message });
+  }
+});
+
 module.exports = router;

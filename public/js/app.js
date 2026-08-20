@@ -2261,7 +2261,14 @@ function showConsistencyResultModal(context, result) {
       ${checklistSection('Parameter Validation', parameterValidation, (p) => presenceMeta(p.present), (p) => p.parameter)}
       ${consistencySection}
       ${result.summary ? `<p class="small text-secondary mb-2">${escapeHtml(result.summary)}</p>` : ''}
-      <p class="small text-secondary mb-0">Compared ${result.documentsCompared || 0} document(s). This is an AI-generated pre-submission check based on document content, for reference only — it is not an official compliance determination; the original documents remain authoritative.</p>
+      <p class="small text-secondary mb-1">Compared ${result.documentsCompared || 0} document(s). This is an AI-generated pre-submission check based on document content, for reference only — it is not an official compliance determination; the original documents remain authoritative.</p>
+      ${Array.isArray(result.documentTitles) && result.documentTitles.length ? `
+      <details class="small text-secondary mb-0">
+        <summary style="cursor:pointer;">Show the ${result.documentTitles.length} document(s) actually compared</summary>
+        <ol class="mb-0 mt-1">
+          ${result.documentTitles.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}
+        </ol>
+      </details>` : ''}
     `,
   });
 }

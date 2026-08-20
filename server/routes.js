@@ -1995,11 +1995,33 @@ router.post('/api/telegram/register-webhook', async (req, res) => {
 // DM or an ignorable group is exactly the noise this guards against.
 // Real work only happens for a message: (a) in a chat that's a known
 // Provider's group (see findProviderForChatId — a stranger's DM or an
-// unconfigured group is silently ignored), and (b) that server/ai.js's
-// answerGroupQuestion() decides is actually a question about that
-// Provider's cases (see that function's own conservative-by-design
+// unconfigured group is silently ignored), (b) that looks like it might
+// actually be a question (see looksLikeQuestion() below), and (c) that
+// server/ai.js's answerGroupQuestion() decides is actually a question about
+// that Provider's cases (see that function's own conservative-by-design
 // shouldRespond gate) — everything else in the group (ordinary
 // conversation) is read and silently skipped, never replied to.
+//
+// (b) was added 2026-08-20 at Tiffany's request — every message in a
+// Provider group used to fire a Gemini call (Gemini alone decided
+// shouldRespond), so ordinary chit-chat between staff/providers was silently
+// burning the whole app's shared 20-request/minute free-tier Gemini quota,
+// starving unrelated AI features (Smart-Fill, Parameter Consistency Check)
+// elsewhere in the app even when nobody was actually asking the bot
+// anything. This cheap pre-filter runs with zero API calls, so a busy group
+// chatting amongst themselves no longer costs anything — only messages that
+// plausibly look like a question about a case reach Gemini at all.
+function looksLikeQuestion(text) {
+  const s = String(text || '').trim();
+  if (s.length < 4) return false; // too short to be a real question ("ok", "😂", "+1"...)
+  if (/[?？]/.test(s)) return true; // any half- or full-width question mark
+  // Common Traditional/Simplified Chinese question particles and
+  // case-tracking vocabulary — covers "怎麼樣了", "進度如何", "審核了嗎",
+  // "現在到哪個階段", "什麼時候", "為什麼被拒" etc. without requiring "?".
+  const QUESTION_HINTS = /(嗎|呢\b|怎麼|怎样|如何|進度|进度|狀態|状态|階段|阶段|審核|审核|核准|拒絕|拒绝|何時|何时|什麼時候|什么时候|為什麼|为什么|多久|status|progress|when|why|how)/i;
+  return QUESTION_HINTS.test(s);
+}
+
 router.post('/api/telegram/webhook', async (req, res, params, body) => {
   if (process.env.TELEGRAM_WEBHOOK_SECRET) {
     const headerSecret = req.headers['x-telegram-bot-api-secret-token'];
@@ -2019,7 +2041,7 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
     try {
       const settings = await getSystemSettings();
       const provider = findProviderForChatId(settings, msg.chat.id);
-      if (provider) {
+      if (provider && looksLikeQuestion(msg.text)) {
         const allCases = await store.all('cases');
         const providerCases = allCases.filter((c) => String(c.provider || '').trim().toLowerCase() === provider.trim().toLowerCase());
         const result = await ai.answerGroupQuestion({ providerName: provider, question: msg.text, cases: providerCases });

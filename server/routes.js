@@ -1033,7 +1033,9 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   // left over from an earlier import, even for the exact same Provider.
   // Different upload batches represent different points in time and Tiffany
   // wants them to stay separate records she can tell apart (see the
-  // (${importDateLabel}) suffix added to the case title below). The ONLY
+  // (${creationDateLabel}) suffix added to the case title below, which is
+  // always this case's real creation date — not a separately-computed
+  // "when this import ran" stamp; see that comment for why). The ONLY
   // way games join an already-existing case now is the manual "Edit Case"
   // Add/Remove Game flow inside the app itself (showCaseFormModal in
   // app.js) — a deliberate, in-app edit of one specific case, not an
@@ -1119,10 +1121,6 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   // "create a new case" path below; see the Stage 3 comment above for why.
   let casesUpdated = 0;
   let gamesAdded = 0;
-  // Date suffix appended to every case title created by this commit — see
-  // the Stage 3 comment above. Computed once per commit (not per case) so
-  // every case from the same import batch shares the exact same label.
-  const importDateLabel = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   for (const [, group] of groups) {
     const newGames = [];
     for (const { row } of group.rows) {
@@ -1135,8 +1133,21 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     if (!newGames.length) continue;
     try {
       const caseNumber = await store.nextNumber('case', 'CASE');
+      // Date suffix appended to every case title created by this commit —
+      // see the Stage 3 comment above for why (one case per import batch,
+      // so the same Provider can now have several — the title's date is
+      // what tells them apart in Case Management's list view). Changed
+      // 2026-08-20 (same day, after Tiffany clarified) to explicitly pass
+      // this exact timestamp as the record's own `createdAt` too, instead
+      // of letting store.insert() stamp its own `new Date()` a moment
+      // later — so the date printed in the title is always, by
+      // construction, this case's real creation date, not a
+      // similar-but-technically-separate "when the import ran" timestamp
+      // that just happens to usually match.
+      const createdAt = new Date().toISOString();
+      const creationDateLabel = new Date(createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
       await store.insert('cases', {
-        title: `${group.providerDisplay} — Game Submissions (${importDateLabel})`,
+        title: `${group.providerDisplay} — Game Submissions (${creationDateLabel})`,
         type: 'Regulatory',
         priority: 'Medium',
         status: caseStatusFromGames(newGames),
@@ -1145,6 +1156,7 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
         ownerId: user.id,
         caseNumber,
         games: newGames,
+        createdAt,
       });
       casesCreated++;
       gamesAdded += newGames.length;

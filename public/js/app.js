@@ -1920,14 +1920,32 @@ function showCaseFormModal({ title, initial = {}, submitLabel = 'Save', onSubmit
     const isPagcor = modalEl.querySelector('#caseFormIsPagcor').checked;
     data.isPagcorCase = isPagcor;
     if (isPagcor) {
-      data.games = Array.from(rowsEl.querySelectorAll('.case-game-row')).map((rowEl) => ({
-        id: rowEl.dataset.gameId || (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `g_${Date.now()}_${Math.random().toString(36).slice(2)}`),
-        gameTitle: rowEl.querySelector('.case-game-gameTitle').value,
-        gameId: rowEl.querySelector('.case-game-gameId').value,
-        gameVersion: rowEl.querySelector('.case-game-gameVersion').value,
-        gameType: rowEl.querySelector('.case-game-gameType').value,
-        withJackpot: rowEl.querySelector('.case-game-withJackpot').value,
-      }));
+      // Merge onto each row's ORIGINAL game object (by id) rather than
+      // replacing it outright — this form only exposes the identifying
+      // fields (Title/ID/Version/Type/Jackpot), so a plain rebuild here
+      // would silently drop every other game's pagcorStage/checklist/
+      // jackpot-testing/rejection/LOA fields back to blank the moment
+      // ANY game in the case was added or removed and the form saved
+      // (found 2026-08-20 verifying Tiffany's Excel-imported cases —
+      // adding one game to e.g. the Omniplay case would have reset all
+      // 25 games, including the 10 already Approved, back to Pending
+      // Documents with an empty checklist). A genuinely new row (no
+      // matching original) has nothing to merge onto, so it still gets
+      // the same server-side defaulting a brand-new game always got.
+      const originalGamesById = new Map(games.map((g) => [g.id, g]));
+      data.games = Array.from(rowsEl.querySelectorAll('.case-game-row')).map((rowEl) => {
+        const existingId = rowEl.dataset.gameId;
+        const original = existingId ? originalGamesById.get(existingId) : null;
+        return {
+          ...(original || {}),
+          id: existingId || (window.crypto && crypto.randomUUID ? crypto.randomUUID() : `g_${Date.now()}_${Math.random().toString(36).slice(2)}`),
+          gameTitle: rowEl.querySelector('.case-game-gameTitle').value,
+          gameId: rowEl.querySelector('.case-game-gameId').value,
+          gameVersion: rowEl.querySelector('.case-game-gameVersion').value,
+          gameType: rowEl.querySelector('.case-game-gameType').value,
+          withJackpot: rowEl.querySelector('.case-game-withJackpot').value,
+        };
+      });
       if (!data.games.length) {
         modalEl.querySelector('#caseFormError').textContent = 'Add at least one game, or uncheck "This is a PAGCOR game submission case".';
         return;

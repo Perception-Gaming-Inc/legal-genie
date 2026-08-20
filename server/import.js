@@ -44,11 +44,23 @@ const { canonicalProviderName } = require('./providers');
 // to exactly one key; first matching header wins if a sheet somehow repeats
 // a header.
 const COLUMN_ALIASES = {
-  gameTitle: ['game name', 'game title', 'title'],
-  provider: ['provider'],
+  // 'list of games' added 2026-08-20 after Tiffany's GALATIC_YBGAMES...xlsx
+  // (Yellow Bat's own template) failed to import — its header row uses
+  // "List of Games" instead of "Game Name"/"Game Title", which didn't match
+  // any existing alias (exactly OR as a "contains" fuzzy match, since
+  // "list of games" doesn't contain "game name"/"game title"/"title" as a
+  // substring), so gameTitle came back undetected and every row was
+  // silently skipped (0 rows) — see mapRow()'s `if (!gameTitle) return
+  // null;` guard just below.
+  gameTitle: ['game name', 'game title', 'title', 'list of games'],
+  // 'manufacturer' added alongside the above — the same Yellow Bat template
+  // labels its Provider column "Manufacturer" rather than "Provider".
+  provider: ['provider', 'manufacturer'],
   gameType: ['game type'],
   gameId: ['game id'],
-  gameVersion: ['game version'],
+  // 'version' added alongside the above — same template again, just
+  // "Version" rather than "Game Version".
+  gameVersion: ['game version', 'version'],
   // Added 2026-08-20 at Tiffany's request, so the AI Parameter Consistency
   // Check (see server/ai.js's checkDocumentConsistency) has real submitted
   // values to compare each game's documents against, instead of only

@@ -4585,7 +4585,7 @@ async function renderSubmissionSettingsTab(body) {
         <div class="mb-3" style="max-width:320px;">
           <label class="form-label">Follow-up window (days)</label>
           <input type="number" min="1" class="form-control" id="followUpDays" value="${settings.followUpDays || 30}" ${canEdit ? '' : 'disabled'}>
-          <div class="small text-secondary mt-1">How many days after a case's Submit Date to automatically create a follow-up reminder, and how long a case can sit in "For Review" / "On Process" before it's flagged on the Dashboard.</div>
+          <div class="small text-secondary mt-1">How many PAGCOR business days (Mon-Thu — PAGCOR isn't open Fri/Sat/Sun) after a case's Submit Date to automatically create a follow-up reminder. Also how many calendar days a case can sit in "For Review" / "On Process" before it's flagged on the Dashboard.</div>
         </div>
         ${canEdit ? `<button type="submit" class="btn btn-primary">Save</button>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
       </form>

@@ -83,6 +83,26 @@ function detectColumns(headerRow, checklistItems) {
       if (normalizeHeader(item.label) === norm) map.checklistCols[item.key] = idx;
     }
   });
+  // Second, looser pass — added 2026-08-20 after a real PAGCOR "Annex A" new-
+  // game-request template (Tiffany's GALATIC_FACHAI_NOJACKPOT_17GAMES file)
+  // failed to import: that official government form's own header row reads
+  // "GAME NAME/ SPORTS/ MARKETS" and "GAME ID/ TABLE ID" — combined column
+  // headers that don't equal any COLUMN_ALIASES entry exactly, so gameTitle
+  // and gameId came back undetected and every row was silently skipped (0
+  // rows). Only runs for whichever keys the exact pass above left
+  // unmatched, and only accepts a CONTAINS match (e.g. "game name/ sports/
+  // markets" contains "game name"), so a sheet that already matches exactly
+  // (the common case — this session's earlier real import used plain "Game
+  // Name"/"Game ID" columns) behaves identically to before; this is purely
+  // a fallback for combined/annotated header text.
+  headerRow.forEach((cellVal, idx) => {
+    const norm = normalizeHeader(cellVal);
+    if (!norm) return;
+    for (const [key, aliases] of Object.entries(COLUMN_ALIASES)) {
+      if (map[key] !== undefined) continue;
+      if (aliases.some((alias) => norm.includes(alias))) map[key] = idx;
+    }
+  });
   return map;
 }
 
@@ -234,11 +254,32 @@ function mapRow(row, colMap, sheetSettings, sheetName, checklistItems) {
   };
 }
 
-// Finds the first row that looks like a real header (has at least 2
-// non-empty cells) — tolerates a file that has a title/blank row above the
-// actual header, though every sheet in the real workbook this was built
-// against has the header on row 1.
+// Finds the first row that looks like a real header. Two passes:
+//
+// 1. Prefer a row containing a cell whose text CONTAINS "game name" or
+//    "game title" — a strong, near-unambiguous signal for the real header,
+//    since that's always present on a real game-submission sheet. Added
+//    2026-08-20: a real official PAGCOR "Annex A" template (Tiffany's
+//    GALATIC_FACHAI_NOJACKPOT_17GAMES file) puts a
+//    "GAME CONTENT PROVIDER: | <name>" label row above the actual header —
+//    that label row has exactly 2 non-empty cells (the label + the
+//    provider name), so the old single-pass "first row with >= 2 non-empty
+//    cells" heuristic below picked IT as the header instead of the real one
+//    a few rows further down, and every data row was silently skipped as a
+//    result (see detectColumns()'s matching comment for the other half of
+//    that bug).
+// 2. Falls back to the original heuristic — first row with >= 2 non-empty
+//    cells — when no row matches pass 1, so a sheet using different wording
+//    entirely (e.g. only "Title", no "Game Name") still gets a best-effort
+//    header guess instead of failing outright.
 function findHeaderRowIndex(rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const hasStrongSignal = (rows[i] || []).some((v) => {
+      const norm = normalizeHeader(v);
+      return norm.includes('game name') || norm.includes('game title');
+    });
+    if (hasStrongSignal) return i;
+  }
   for (let i = 0; i < rows.length; i++) {
     const nonEmpty = (rows[i] || []).filter((v) => v !== null && v !== undefined && String(v).trim() !== '');
     if (nonEmpty.length >= 2) return i;

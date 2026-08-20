@@ -1898,7 +1898,14 @@ function caseBaseFormFields() {
   return [
     { name: 'title', label: 'Title', required: true },
     { name: 'type', label: 'Type', type: 'select', options: ['Regulatory', 'Commercial', 'IP', 'Litigation', 'Employment', 'Other'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'ownerId', label: 'Owner', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
+    // Owner removed from this form 2026-08-20 at Tiffany's request — it's
+    // still stored on the case (defaults to whoever creates it — see
+    // routes.js's onCreate for '/api/cases') and still shown/sortable as a
+    // read-only column in Case Management's table (renderCases()) and on
+    // the case detail page, just no longer editable from this modal. An
+    // existing case's ownerId is left untouched on save since it's simply
+    // absent from `data` now and store.update() only merges the fields it's
+    // given (see store.js's update()).
     { name: 'priority', label: 'Priority', type: 'select', options: ['High', 'Medium', 'Low'].map((v) => ({ value: v, label: v })), required: true },
     { name: 'status', label: 'Status', type: 'select', options: ['Open', 'In Progress', 'Closed'].map((v) => ({ value: v, label: v })), required: true },
     { name: 'deadline', label: 'Submit Date', type: 'date' },

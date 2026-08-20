@@ -2743,12 +2743,28 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
     updateUploadBtnState();
   };
 
+  // A native <input type="file"> replaces its entire .files FileList on every
+  // picker interaction — it's not additive. Re-opening the picker to browse
+  // to another folder for more of the same game's documents used to wipe out
+  // whatever was already selected (Tiffany: "如果我跳到另一個檔案頁面 原本選取的會不見").
+  // Fix: accumulate onto the existing filesData instead of replacing it, only
+  // running the AI extraction on newly-added files, and skip files that look
+  // like exact re-picks (same name+size already staged) so re-selecting the
+  // same file twice doesn't create a duplicate row.
   modalEl.querySelector('#caseUploadFiles').addEventListener('change', async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
+    const picked = Array.from(e.target.files || []);
+    const newFiles = picked.filter((file) => !filesData.some((f) => f.file.name === file.name && f.file.size === file.size));
+    // Reset the input now so the same filename can be picked again later
+    // (some browsers no-op a 'change' event if the resulting FileList would
+    // look identical to the previous one) and so `picked` above isn't reused.
+    e.target.value = '';
+    if (!newFiles.length) return;
     uploadBtn.disabled = true;
-    rowsEl.innerHTML = `<div class="small text-secondary">AI reading ${files.length} document(s)…</div>`;
-    filesData = await Promise.all(files.map(async (file) => {
+    const loadingEl = document.createElement('div');
+    loadingEl.className = 'small text-secondary';
+    loadingEl.textContent = `AI reading ${newFiles.length} document(s)…`;
+    rowsEl.appendChild(loadingEl);
+    const newFilesData = await Promise.all(newFiles.map(async (file) => {
       const base64 = await fileToBase64(file);
       let proposed = {};
       let aiFailed = false;
@@ -2760,6 +2776,7 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
       }
       return { file, base64, proposed, aiFailed };
     }));
+    filesData = filesData.concat(newFilesData);
     renderRows();
   });
 

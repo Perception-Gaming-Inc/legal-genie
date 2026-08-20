@@ -968,6 +968,42 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     }
   }
 
+  // Stage 1.5: a "reskin annotation" sheet (see the reskinOf alias comment
+  // in server/import.js — e.g. Tiffany's "Reskin games" tab) lists games
+  // that TURN OUT to already be present as real submission rows on another
+  // sheet in the same workbook — Tiffany confirmed her "Reskin games" rows
+  // (Manny Moreways_22107, Muscle Manny_22108, Halo Halo) are the exact same
+  // games as rows 11/12/17 of her "fa chai" tab, just with an extra note on
+  // which already-approved game each is a reskin of. Importing both sheets
+  // as-is would create a duplicate case for each. Instead: for every row
+  // flagged with reskinOf, pull the numeric ID embedded in its own title
+  // (e.g. "Manny Moreways_22107" -> "22107") and look for another row in
+  // THIS SAME COMMIT (any sheet/provider) whose real Game ID matches it. A
+  // match means it's the same game — merge the reskinOf note onto that row
+  // and drop the reskin row entirely so it never becomes its own case. Not
+  // every reskin row's title actually carries an ID suffix (Tiffany's own
+  // "Halo Halo" row doesn't, unlike "Manny Moreways_22107"), so a row with
+  // no extractable ID (or whose extracted ID matches nothing) falls back to
+  // a normalized-title match via titlesLikelySameGame() (same helper Stage
+  // 2.5 below uses). Only once BOTH signals fail is a reskin row left alone
+  // to become its own case, same as before — so data is never silently
+  // dropped just because neither match was found.
+  function extractTrailingNumericId(s) {
+    const m = /(\d+)\s*$/.exec(String(s || '').trim());
+    return m ? m[1] : null;
+  }
+  for (const reskinEntry of allRows.filter((e) => e.row.reskinOf)) {
+    const matchId = extractTrailingNumericId(reskinEntry.row.gameTitle);
+    const target = (matchId && allRows.find((e) => e !== reskinEntry && !e.row.reskinOf
+      && (e.row.gameId || '').trim().toLowerCase() === matchId.toLowerCase()))
+      || allRows.find((e) => e !== reskinEntry && !e.row.reskinOf
+        && titlesLikelySameGame(e.row.gameTitle, reskinEntry.row.gameTitle));
+    if (target) {
+      target.row.reskinOf = reskinEntry.row.reskinOf;
+      allRows.splice(allRows.indexOf(reskinEntry), 1);
+    }
+  }
+
   // Stage 2: a real workbook can list the same game in more than one sheet
   // — e.g. a Provider's own pending-list tab AND the master "APPROVED" tab,
   // once that game has actually been approved (the Provider tab just never

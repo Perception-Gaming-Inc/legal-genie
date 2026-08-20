@@ -18,6 +18,12 @@
 const PROVIDER_ALIASES = {
   op: 'Omniplay',
   omniplay: 'Omniplay',
+  // Added 2026-08-20 at Tiffany's request — "Fa Chai" (the sheet-name-
+  // derived default Provider for her GALATIC_FACHAI_NOJACKPOT_17GAMES
+  // import) is really the same provider she otherwise refers to as "FC".
+  'fa chai': 'FC',
+  'fachai': 'FC',
+  'galatic_fa chai': 'FC',
 };
 
 function canonicalProviderName(raw) {
@@ -28,4 +34,3 @@ function canonicalProviderName(raw) {
 }
 
 module.exports = { canonicalProviderName, PROVIDER_ALIASES };
-// redeploy-trigger

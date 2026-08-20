@@ -249,7 +249,16 @@ function mapRow(row, colMap, sheetSettings, sheetName, checklistItems) {
     provider,
     gameTitle,
     gameType: normalizeGameType(cell(row, colMap.gameType)),
-    gameId: asTrimmedString(cell(row, colMap.gameId)),
+    // Guards against a combined header like "Re Skin Game Title_Game ID"
+    // (see the reskinOf alias comment above) matching BOTH gameTitle and
+    // gameId to the exact same column — without this, gameId would just
+    // duplicate the title text verbatim, which is never a real ID and would
+    // be actively misleading if this row ends up as its own case (e.g. a
+    // reskin row that finds no Game-ID match to merge onto — see routes.js's
+    // import commit handler).
+    gameId: (colMap.gameId !== undefined && colMap.gameId !== colMap.gameTitle)
+      ? asTrimmedString(cell(row, colMap.gameId))
+      : null,
     gameVersion: asTrimmedString(cell(row, colMap.gameVersion)),
     withJackpot: colMap.withJackpot !== undefined ? normalizeYesNo(cell(row, colMap.withJackpot)) : null,
     reskinOf,

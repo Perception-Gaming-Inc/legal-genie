@@ -676,8 +676,15 @@ async function syncDeadlineFollowUpTask(caseRow) {
 // Cases -----------------------------------------------------------------
 crudRoutes({
   base: '/api/cases', moduleName: 'cases', collection: 'cases',
-  onCreate: async (body) => {
+  onCreate: async (body, user) => {
     const patch = { ...body, caseNumber: body.caseNumber || await store.nextNumber('case', 'CASE') };
+    // Owner field removed from the multi-game case form 2026-08-20 (see
+    // caseBaseFormFields() in app.js) — default to whoever is creating the
+    // case so it's never left blank, instead of requiring it to be picked
+    // by hand every time. Still overridable by any other caller that does
+    // pass ownerId explicitly (e.g. Excel import's routes.js commit handler
+    // below, which already sets it to the importing user).
+    if (!patch.ownerId && user) patch.ownerId = user.id;
     // Normalize Provider spelling (e.g. "OP" -> "Omniplay") so the same
     // real-world provider never fragments into multiple entries across the
     // Case Management filter, Telegram routing, or the Dashboard — see

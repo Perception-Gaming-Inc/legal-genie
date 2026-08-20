@@ -633,6 +633,23 @@ function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCre
 // field the user ever sets) plus `sourceDeadline` (the deadline value it was
 // last computed from), both invisible in the normal Task form/list — this
 // is purely bookkeeping so re-syncing is idempotent instead of duplicating.
+// PAGCOR is only open Monday-Thursday (confirmed by Tiffany 2026-08-20) — a
+// plain calendar "+30 days" follow-up could land on a Friday/Saturday/
+// Sunday PAGCOR isn't even open on, days before they'd realistically have
+// made any progress on a submission. Steps forward one calendar day at a
+// time, only counting Mon/Tue/Wed/Thu as one of the `days` PAGCOR business
+// days to advance — Fri/Sat/Sun are skipped over entirely, not counted.
+function addPagcorBusinessDays(date, days) {
+  const result = new Date(date);
+  let remaining = days;
+  while (remaining > 0) {
+    result.setDate(result.getDate() + 1);
+    const dow = result.getDay(); // 0=Sun, 1=Mon, ..., 4=Thu, 5=Fri, 6=Sat
+    if (dow >= 1 && dow <= 4) remaining--;
+  }
+  return result;
+}
+
 async function syncDeadlineFollowUpTask(caseRow) {
   if (!caseRow || !caseRow.id) return;
   const tasks = await store.all('tasks');
@@ -647,18 +664,20 @@ async function syncDeadlineFollowUpTask(caseRow) {
     return;
   }
 
-  const followUp = new Date(caseRow.deadline);
-  if (isNaN(followUp)) return; // malformed date — don't crash the case save over it
+  const deadlineDate = new Date(caseRow.deadline);
+  if (isNaN(deadlineDate)) return; // malformed date — don't crash the case save over it
   const settings = await getSystemSettings();
   const followUpDays = Number.isFinite(settings.followUpDays) && settings.followUpDays > 0 ? settings.followUpDays : 30;
-  followUp.setDate(followUp.getDate() + followUpDays);
+  // Counts PAGCOR business days (Mon-Thu), not calendar days — see
+  // addPagcorBusinessDays()'s comment above for why.
+  const followUp = addPagcorBusinessDays(deadlineDate, followUpDays);
   const followUpDate = followUp.toISOString().slice(0, 10);
   const title = `Follow up: ${caseRow.title}`;
 
   if (!existing) {
     await store.insert('tasks', {
       title,
-      description: `Case "${caseRow.title}" has a Submit Date of ${caseRow.deadline}. This reminder was created automatically ${followUpDays} days later to follow up on progress.`,
+      description: `Case "${caseRow.title}" has a Submit Date of ${caseRow.deadline}. This reminder was created automatically ${followUpDays} PAGCOR business days later (Mon-Thu only) to follow up on progress.`,
       assigneeId: caseRow.ownerId || null,
       assigneeIds: caseRow.ownerId ? [caseRow.ownerId] : [],
       type: 'team',

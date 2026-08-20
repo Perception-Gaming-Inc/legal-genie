@@ -53,6 +53,17 @@ const COLUMN_ALIASES = {
   dateReceived: ['date received'],
   withJackpot: ['with jackpot', 'jackpot'],
   remarks: ['remarks', 'remark', 'notes', 'note'],
+  // Added 2026-08-20 at Tiffany's request, for sheets like her "Reskin
+  // games" tab (see GALATIC_FACHAI_NOJACKPOT_17GAMES_071626.xlsx) that
+  // list re-themed versions of games PAGCOR has already approved, mapped
+  // one-to-one against the original game's title/ID (e.g. "Original Game
+  // Title_Game ID" -> "Chinese New Year Moreways_22064 (PAGCOR Approved)").
+  // These aren't brand-new games, so rather than importing them
+  // indistinguishably from the other 17 real new-submission rows, mapRow()
+  // below carries this through as `reskinOf` so routes.js's rowToGame()
+  // can stamp it onto the game record and the UI (see gameCardHtml in
+  // app.js) can show "Reskin of: <original>" on the card.
+  reskinOf: ['original game title', 'original title', 'reskin of', 'based on'],
 };
 
 function normalizeHeader(h) {
@@ -216,6 +227,11 @@ function mapRow(row, colMap, sheetSettings, sheetName, checklistItems) {
   const pagcorStage = isApprovedRow ? 'Approved' : (sheetSettings.pagcorStage || 'Pending Documents');
 
   const remarks = asTrimmedString(cell(row, colMap.remarks));
+  // See the reskinOf alias comment above — carries the original approved
+  // game's title/ID through untouched (e.g. "Chinese New Year
+  // Moreways_22064 (PAGCOR Approved)") so it can be stamped onto the game
+  // record rather than silently dropped.
+  const reskinOf = colMap.reskinOf !== undefined ? asTrimmedString(cell(row, colMap.reskinOf)) : null;
   // dateReceived used to only be folded into the free-text description
   // below; since 2026-08-12 it's a real field on the case (see
   // caseFormFields() in app.js and the "Date Received" table column in
@@ -236,6 +252,7 @@ function mapRow(row, colMap, sheetSettings, sheetName, checklistItems) {
     gameId: asTrimmedString(cell(row, colMap.gameId)),
     gameVersion: asTrimmedString(cell(row, colMap.gameVersion)),
     withJackpot: colMap.withJackpot !== undefined ? normalizeYesNo(cell(row, colMap.withJackpot)) : null,
+    reskinOf,
     dateReceived,
     checklist: Object.fromEntries((checklistItems || DEFAULT_CHECKLIST_ITEMS).map((item) => [
       item.key,

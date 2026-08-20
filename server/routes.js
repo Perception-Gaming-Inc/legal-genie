@@ -1076,6 +1076,12 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
       gameVersion: row.gameVersion,
       gameType: row.gameType,
       withJackpot: row.withJackpot,
+      // Set only for rows from a "reskin"-style sheet (see the reskinOf
+      // alias comment in server/import.js) — the already-PAGCOR-approved
+      // game this one is a re-themed version of. Surfaced on the game card
+      // in app.js so it's clear at a glance this isn't a brand-new
+      // submission. null for every ordinary imported row.
+      reskinOf: row.reskinOf || null,
       jackpotTestingDate: null,
       jackpotReportSubmitted: null,
       testingScreenshotsSubmitted: null,

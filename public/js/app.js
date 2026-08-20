@@ -256,9 +256,11 @@ const PAGCOR_LINEAR_STAGES = [
 ];
 // Brought back 2026-08-12 at Tiffany's request (was removed once already,
 // see the matching comment in server/pagcor.js for the full history). This
-// is a simple, manually-maintained tracking checklist; it does not gate the
-// "Download All Documents" button (that's the AI Parameter Consistency
-// Check's job — see renderCaseDetail()'s downloadReady logic).
+// is a simple, manually-maintained tracking checklist. (The "Download All
+// Documents" .zip button that used to be gated on the AI Parameter
+// Consistency Check was removed 2026-08-20 at Tiffany's request; the
+// GET /api/cases/:id/download-all route in server/routes.js still exists
+// but is no longer linked from the UI.)
 //
 // `let`, not `const`, since 2026-08-12 (later the same day): the actual
 // list of items is now editable in Settings > Required Document Settings
@@ -2289,58 +2291,7 @@ async function renderCaseDetail(content, id) {
   // pattern server-side.
   const relatedDocs = canDo('documents', 'view') ? (await Api.get('/api/documents')).filter((d) => d.relatedCaseId === item.id) : [];
 
-  // Gate for the "Download All Documents" button below — mirrors
-  // GET /api/cases/:id/download-all's own gate in server/routes.js exactly
-  // (the last AI Parameter Consistency Check came back "ready" for the
-  // CURRENT set of related documents), so the button's enabled/disabled
-  // state never disagrees with what clicking it will actually do. The
-  // server re-checks this itself too — this is purely so the button can
-  // explain *why* it's disabled instead of the person having to click it
-  // and read a toast. (This gate used to also require a separate
-  // manually-maintained PAGCOR Checklist to be fully checked off — removed
-  // at Tiffany's request since the AI check's own documentCompleteness
-  // section already covers "what's missing".)
-  const filedDocs = relatedDocs.filter((d) => d.filePath);
   const isMultiGameCase = Array.isArray(item.games);
-  function isCheckStaleClient(check, docs) {
-    if (!check || !Array.isArray(check.documentIds)) return true;
-    const currentIds = docs.map((d) => d.id).sort();
-    const lastIds = [...check.documentIds].sort();
-    if (currentIds.length !== lastIds.length) return true;
-    return currentIds.some((docId, i) => docId !== lastIds[i]);
-  }
-  function docsForGameClient(docs, game) {
-    if (!game) return [];
-    const byId = game.id ? docs.filter((d) => d.relatedGameId === game.id) : [];
-    if (byId.length) return byId;
-    const gt = ((game && game.gameTitle) || '').trim().toLowerCase();
-    if (!gt) return [];
-    return docs.filter((d) => !d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === gt);
-  }
-  let downloadReady = false;
-  let downloadDisabledReason = '';
-  if (!filedDocs.length) {
-    downloadDisabledReason = 'Upload at least one document before downloading.';
-  } else if (isMultiGameCase) {
-    // Ready only once every game with 2+ filed docs has its own passed,
-    // non-stale check — mirrors caseDownloadGateStatus in server/routes.js.
-    const blockedGame = (item.games || []).find((g) => {
-      const gDocs = docsForGameClient(filedDocs, g);
-      if (gDocs.length < 2) return false;
-      return !g.lastConsistencyCheck || g.lastConsistencyCheck.overallStatus !== 'ready' || isCheckStaleClient(g.lastConsistencyCheck, gDocs);
-    });
-    if (blockedGame) {
-      downloadDisabledReason = `Run the AI Parameter Consistency Check for game "${blockedGame.gameTitle || '(untitled game)'}" and confirm no anomalies before downloading.`;
-    } else {
-      downloadReady = true;
-    }
-  } else {
-    const lastCheck = item.lastConsistencyCheck;
-    const consistencyPassed = !!lastCheck && lastCheck.overallStatus === 'ready';
-    const consistencyStale = isCheckStaleClient(lastCheck, filedDocs);
-    downloadReady = consistencyPassed && !consistencyStale;
-    if (!downloadReady) downloadDisabledReason = 'Run the AI Parameter Consistency Check above and confirm no anomalies before downloading.';
-  }
 
   const field = (label, value) => `
     <div class="col-6 col-md-3 mb-3">
@@ -2402,7 +2353,6 @@ async function renderCaseDetail(content, id) {
       <div class="d-flex gap-2 case-header-actions">
         ${canUploadDocs ? `<button class="btn btn-outline-secondary btn-sm" id="btnUploadCaseDocs">${Icon('upload', 'me-1')}Upload Documents</button>` : ''}
         ${!isMultiGameCase && item.provider ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
-        ${canDo('documents', 'view') && filedDocs.length ? `<button class="btn ${downloadReady ? 'btn-primary' : 'btn-outline-secondary'} btn-sm" id="btnDownloadAll" ${downloadReady ? '' : 'disabled'} title="${escapeHtml(downloadReady ? 'Download all of this case\'s documents as a .zip' : downloadDisabledReason)}">${Icon('download', 'me-1')}Download All Documents</button>` : ''}
         ${approvedGame ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
         ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnEditCase">${Icon('edit', 'me-1')}Edit</button>` : ''}
         ${canDelete ? `<button class="btn btn-outline-danger btn-sm" id="btnDeleteCase">${Icon('trash', 'me-1')}Delete</button>` : ''}
@@ -2452,16 +2402,6 @@ async function renderCaseDetail(content, id) {
 
   const uploadDocsBtn = content.querySelector('#btnUploadCaseDocs');
   if (uploadDocsBtn) uploadDocsBtn.addEventListener('click', () => showCaseDocumentUploadModal(item, relatedDocs));
-
-  // Only ever enabled (see downloadReady above) once every document is
-  // uploaded and the AI Parameter Consistency Check has passed for the
-  // current documents — the server re-verifies all of that itself in
-  // GET /api/cases/:id/download-all and returns a JSON {error} otherwise,
-  // which downloadAuthedFile() already surfaces as a toast.
-  const downloadAllBtn = content.querySelector('#btnDownloadAll');
-  if (downloadAllBtn) downloadAllBtn.addEventListener('click', () => {
-    downloadAuthedFile(`/api/cases/${item.id}/download-all`, `${item.caseNumber || item.id} - ${item.title || item.gameTitle || 'Case'}.zip`);
-  });
 
   // Clicking a step on the PAGCOR Review Progress stepper jumps straight to
   // that stage — no need to open the Edit form just to change one field.

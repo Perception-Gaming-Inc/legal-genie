@@ -971,6 +971,22 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   } catch (err) {
     return sendJson(res, 400, { error: err.message });
   }
+  // Keep the original workbook around after import (2026-08-20, at
+  // Tiffany's request) — until now the file was only ever read into memory
+  // for parsing and then discarded, so there was no way to go back and
+  // check what a Min Bet / Max Bet / RTP (or any other) column actually
+  // said once the numbers were in the app. Saved once per commit (not per
+  // case/game) and then linked as a "Other"-category document on every
+  // case this commit creates below, tagged so it's easy to tell apart from
+  // real compliance documents in the Document Center / case detail list.
+  let importSourceFilePath = null;
+  try {
+    importSourceFilePath = await storage.saveBase64File(body.fileName || 'import.xlsx', body.fileContentBase64);
+  } catch (err) {
+    // Non-fatal — losing the source-file backup shouldn't block the import
+    // itself from completing.
+    console.error('Failed to save import source file:', err.message);
+  }
   const errors = [];
   const checklistItems = getChecklistItems(await getSystemSettings());
 
@@ -1214,7 +1230,7 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
       // that just happens to usually match.
       const createdAt = new Date().toISOString();
       const creationDateLabel = new Date(createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-      await store.insert('cases', {
+      const newCase = await store.insert('cases', {
         title: `${group.providerDisplay} — Game Submissions (${creationDateLabel})`,
         type: 'Regulatory',
         priority: 'Medium',
@@ -1226,6 +1242,25 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
         games: newGames,
         createdAt,
       });
+      // Link the saved source workbook (see importSourceFilePath above) onto
+      // this case as a Document Center entry, so anyone reviewing the case
+      // later can open the exact original file its Game ID/Version/etc.
+      // values were read from — not just the parsed-out fields.
+      if (importSourceFilePath) {
+        try {
+          await store.insert('documents', {
+            title: `Import Source — ${body.fileName || 'import.xlsx'}`,
+            fileName: body.fileName || 'import.xlsx',
+            filePath: importSourceFilePath,
+            category: 'Other',
+            provider: group.providerDisplay,
+            relatedCaseId: newCase.id,
+            uploadedBy: user.id,
+          });
+        } catch (err) {
+          console.error('Failed to link import source document:', err.message);
+        }
+      }
       casesCreated++;
       gamesAdded += newGames.length;
     } catch (err) {

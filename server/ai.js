@@ -381,6 +381,45 @@ async function summarizeDocument({ fileName, fileContentBase64, text }) {
 const REQUIRED_DOCUMENT_TYPES = ['EG Form', 'Game Parameters', 'Game Manual', 'RNG Certification', 'RTP Verification', 'Content Provider Certification'];
 const CHECKED_PARAMETERS = ['Game ID', 'Game Version', 'Minimum Bet', 'Maximum Bet', 'RTP'];
 
+// PAGCOR's allowed RTP band (2026-08-20, at Tiffany's request) — RTP is
+// checked differently from the other four parameters below: it doesn't need
+// to match one specific submitted number, it just needs to fall inside this
+// range. Bounds are inclusive.
+const RTP_MIN_PERCENT = 90;
+const RTP_MAX_PERCENT = 96.99;
+
+// Parses a value pulled out of a document (e.g. "94.45%", "94.45", "0.9445")
+// into a plain percentage number. Mirrors asRtpPercent() in server/import.js
+// (kept separate/duplicated rather than shared — this one additionally
+// strips a trailing "%" from free-text document values, which the Excel-only
+// helper never needs to handle) — a bare fraction like "0.9445" is assumed
+// to mean 94.45%, anything already >1 is assumed to already be a percentage.
+// Returns null if the text doesn't parse as a number at all.
+function parseRtpPercent(raw) {
+  if (raw === null || raw === undefined) return null;
+  const cleaned = String(raw).trim().replace(/%$/, '').replace(/,/g, '');
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+  return n <= 1 ? n * 100 : n;
+}
+
+// Loose equality for the four fixed-value parameters (Game ID / Game
+// Version / Minimum Bet / Maximum Bet) — a document value is compared
+// against the value submitted in the provider's own Excel (expectedValues,
+// passed in by the caller — see routes.js, which reads it off the game
+// record's gameId/gameVersion/minBet/maxBet fields, themselves populated at
+// import time from the Excel's own "GAME ID"/"GAME VERSION"/"MINIMUM BET"/
+// "MAXIMUM BET" columns — see server/import.js). Numbers compare
+// numerically (so "0.5" and "0.50" match); everything else compares as
+// trimmed, case-insensitive text (so "vp_230039_1" matches "VP_230039_1").
+function valuesMatch(expected, actual) {
+  if (expected === null || expected === undefined || actual === null || actual === undefined) return false;
+  const expNum = Number(String(expected).trim());
+  const actNum = Number(String(actual).trim());
+  if (Number.isFinite(expNum) && Number.isFinite(actNum)) return expNum === actNum;
+  return String(expected).trim().toLowerCase() === String(actual).trim().toLowerCase();
+}
+
 const SUBMISSION_VALIDATION_SCHEMA = {
   type: 'OBJECT',
   properties: {
@@ -419,8 +458,8 @@ const SUBMISSION_VALIDATION_SCHEMA = {
           parameter: { type: 'STRING', enum: CHECKED_PARAMETERS },
           status: {
             type: 'STRING',
-            enum: ['match', 'mismatch', 'missing'],
-            description: '"match" = every document that mentions this parameter states the same value; "mismatch" = two or more documents state different values for it; "missing" = no document mentions it at all.',
+            enum: ['match', 'mismatch', 'missing', 'in_range', 'out_of_range'],
+            description: 'Your best-effort read of this — the caller recomputes the authoritative status itself from the `values` you extract below, so this field is only a fallback and does not need to be precise.',
           },
           values: {
             type: 'ARRAY',
@@ -448,16 +487,24 @@ const SUBMISSION_VALIDATION_SCHEMA = {
 };
 
 /**
- * @param {{caseTitle?: string, gameTitle?: string, gameId?: string, documents: Array<{fileName?: string, fileContentBase64: string}>}} input
+ * @param {{
+ *   caseTitle?: string, gameTitle?: string, gameId?: string,
+ *   expectedValues?: {gameId?: string|null, gameVersion?: string|null, minBet?: number|null, maxBet?: number|null},
+ *   documents: Array<{fileName?: string, fileContentBase64: string}>,
+ * }} input `expectedValues` is the provider's own submitted values (read off
+ *   the case's Excel import — see server/import.js / routes.js's
+ *   rowToGame()) for the four fixed-value parameters. RTP has no
+ *   corresponding entry: it's checked against the RTP_MIN_PERCENT/
+ *   RTP_MAX_PERCENT range below instead of against one specific number.
  * @returns {Promise<{
  *   overallStatus: 'ready'|'not_ready',
  *   documentCompleteness: Array<{documentType: string, present: boolean, detail: string}>,
  *   parameterValidation: Array<{parameter: string, present: boolean, detail: string}>,
- *   documentConsistency: Array<{parameter: string, status: 'match'|'mismatch'|'missing', values: Array<{source: string, value: string}>, detail: string}>,
+ *   documentConsistency: Array<{parameter: string, status: 'match'|'mismatch'|'missing'|'in_range'|'out_of_range', values: Array<{source: string, value: string}>, expectedValue: string|null, detail: string}>,
  *   summary: string,
  * }>}
  */
-async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, documents }) {
+async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expectedValues, documents }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -477,6 +524,16 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, document
     gameId ? `Game ID: ${gameId}` : null,
   ].filter(Boolean).join(', ');
 
+  // Maps CHECKED_PARAMETERS entries to expectedValues keys — used both to
+  // build the prompt line below and, after the response comes back, to
+  // recompute each parameter's real status in JS (see the post-processing
+  // block below `callGemini`).
+  const EXPECTED_VALUE_KEYS = { 'Game ID': 'gameId', 'Game Version': 'gameVersion', 'Minimum Bet': 'minBet', 'Maximum Bet': 'maxBet' };
+  const expectedLines = Object.entries(EXPECTED_VALUE_KEYS)
+    .map(([label, key]) => [label, expectedValues && expectedValues[key] != null ? expectedValues[key] : null])
+    .filter(([, v]) => v !== null)
+    .map(([label, v]) => `${label}: ${v}`);
+
   const parts = [{
     text:
       `The following are ${docs.length} documents related to the same PAGCOR game-submission case${context ? ` (${context})` : ''}. ` +
@@ -485,9 +542,11 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, document
       'If any one document clearly belongs to a type, count it as present; mark it not present if no matching document is found (judge the type from the document\'s actual content, not just its file name). ' +
       `2) Parameter completeness: check whether each of these ${CHECKED_PARAMETERS.length} parameters has a value stated in "at least one document" — ${CHECKED_PARAMETERS.join(', ')}. ` +
       'This only judges whether a value exists, not whether it is consistent. ' +
-      '3) Document consistency: for these same parameters, list every document that explicitly states a value for it along with that value, ' +
-      'then judge whether those values agree: mark "match" if they all agree, "mismatch" if two or more documents state different values, "missing" if no document mentions it at all. ' +
-      'Only compare whether the values agree with each other — do not judge which value is "correct" or "compliant", and never invent a value that is not actually written in a document.',
+      '3) For these same parameters, list every document that explicitly states a value for it along with that value, exactly as written in that document — ' +
+      'never invent a value or a document that is not actually there. Do NOT judge match/mismatch/range yourself; the caller recomputes that deterministically from the raw values you list here.' +
+      (expectedLines.length
+        ? ` For reference, the provider's own submitted values for this game are — ${expectedLines.join('; ')} — extract each document's stated value independently of this regardless of whether it agrees.`
+        : ''),
   }];
   docs.forEach((d, i) => {
     parts.push({ text: `[Document ${i + 1}: ${d.fileName || `Document ${i + 1}`}]` });
@@ -501,11 +560,12 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, document
           'You are a pre-submission validation assistant embedded in an internal legal department system for ' +
           'a gaming company, reviewing PAGCOR (Philippine gaming regulator) game-submission document bundles ' +
           'before they go out. Given several documents about the same game submission, check document type ' +
-          'completeness, parameter completeness, and cross-document parameter consistency exactly as requested, ' +
-          'reporting every requested item even when the answer is "not present" or "missing" rather than omitting ' +
-          'it. This tool focuses purely on pre-submission validation — never judge whether a value is legally ' +
-          'correct, compliant, or PAGCOR-acceptable, only whether required documents/values are present and ' +
-          'whether documents agree with each other. Never invent a value or a document that is not actually there.',
+          'completeness and parameter completeness exactly as requested, and extract each document\'s stated ' +
+          'value for each tracked parameter verbatim — reporting every requested item even when the answer is ' +
+          '"not present" or "missing" rather than omitting it. This tool focuses purely on pre-submission ' +
+          'validation — never judge whether a value is legally correct, compliant, or PAGCOR-acceptable, and ' +
+          'never invent a value or a document that is not actually there. Do not decide match/mismatch/range ' +
+          'status yourself — the caller recomputes that deterministically from the values you extract.',
       }],
     },
     contents: [{ parts }],
@@ -518,11 +578,58 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, document
   const result = await callGemini(requestBody);
   const documentCompleteness = Array.isArray(result.documentCompleteness) ? result.documentCompleteness : [];
   const parameterValidation = Array.isArray(result.parameterValidation) ? result.parameterValidation : [];
-  const documentConsistency = Array.isArray(result.documentConsistency) ? result.documentConsistency : [];
+  const rawConsistency = Array.isArray(result.documentConsistency) ? result.documentConsistency : [];
+
+  // Recompute each parameter's status deterministically from the raw
+  // (EXPECTED_VALUE_KEYS declared once above, near the prompt-building code)
+  // per-document values Gemini extracted, rather than trusting whatever
+  // match/mismatch/range judgment it made itself (the schema still asks for
+  // one as a fallback, but this is the one actually used) — see the two
+  // rule types 2026-08-20 (at Tiffany's request):
+  //   - RTP: no single "correct" value to match — checked against the
+  //     PAGCOR-allowed RTP_MIN_PERCENT–RTP_MAX_PERCENT range instead.
+  //   - Game ID / Game Version / Minimum Bet / Maximum Bet: checked against
+  //     the provider's own submitted value (expectedValues, from the
+  //     Excel import) if one is on file; falls back to the older
+  //     "do the documents at least agree with each other" comparison when
+  //     no expected value is available (e.g. a legacy pre-Excel-import case).
+  const documentConsistency = CHECKED_PARAMETERS.map((parameter) => {
+    const entry = rawConsistency.find((c) => c && c.parameter === parameter) || {};
+    const values = Array.isArray(entry.values) ? entry.values.filter((v) => v && v.value != null && String(v.value).trim()) : [];
+    const detail = typeof entry.detail === 'string' ? entry.detail : '';
+
+    if (parameter === 'RTP') {
+      const parsed = values.map((v) => ({ ...v, percent: parseRtpPercent(v.value) })).filter((v) => v.percent !== null);
+      const status = parsed.length === 0
+        ? 'missing'
+        : parsed.every((v) => v.percent >= RTP_MIN_PERCENT && v.percent <= RTP_MAX_PERCENT)
+          ? 'in_range'
+          : 'out_of_range';
+      return { parameter, status, values, expectedValue: `${RTP_MIN_PERCENT}%–${RTP_MAX_PERCENT}%`, detail };
+    }
+
+    const expectedKey = EXPECTED_VALUE_KEYS[parameter];
+    const expectedValue = expectedValues && expectedValues[expectedKey] != null ? expectedValues[expectedKey] : null;
+    let status;
+    if (values.length === 0) {
+      status = 'missing';
+    } else if (expectedValue !== null) {
+      status = values.every((v) => valuesMatch(expectedValue, v.value)) ? 'match' : 'mismatch';
+    } else {
+      // No submitted value on file for this game (e.g. legacy case) — fall
+      // back to the original behavior of checking the documents agree with
+      // each other, since there's nothing else to compare against.
+      const firstValue = values[0].value;
+      status = values.every((v) => valuesMatch(firstValue, v.value)) ? 'match' : 'mismatch';
+    }
+    return { parameter, status, values, expectedValue: expectedValue !== null ? String(expectedValue) : null, detail };
+  });
+
   // overallStatus is derived here (not trusted from the model) so the
   // "Ready for Submission" banner always follows the same fixed rule: every
   // required document type must be present, every tracked parameter must
-  // have a value somewhere, and no parameter may disagree across documents.
+  // have a value somewhere, RTP must fall in the allowed range, and the
+  // other four parameters must match their submitted (Excel) value.
   // Each array gets its own `.length > 0` guard, not just documentCompleteness
   // — Array.prototype.every() vacuously returns true on an empty array, so
   // without this, a malformed/truncated Gemini response that comes back
@@ -535,7 +642,7 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, document
     && parameterValidation.length > 0
     && parameterValidation.every((p) => p.present)
     && documentConsistency.length > 0
-    && documentConsistency.every((c) => c.status === 'match')
+    && documentConsistency.every((c) => c.status === 'match' || c.status === 'in_range')
   ) ? 'ready' : 'not_ready';
 
   return {

@@ -49,6 +49,15 @@ const COLUMN_ALIASES = {
   gameType: ['game type'],
   gameId: ['game id'],
   gameVersion: ['game version'],
+  // Added 2026-08-20 at Tiffany's request, so the AI Parameter Consistency
+  // Check (see server/ai.js's checkDocumentConsistency) has real submitted
+  // values to compare each game's documents against, instead of only
+  // checking whether documents agree with EACH OTHER. Matches the real
+  // PAGCOR "Annex A — New Games Request for Approval" template's own
+  // headers ("MINIMUM BET", "MAXIMUM BET", "Total RTP (%)").
+  minBet: ['minimum bet'],
+  maxBet: ['maximum bet'],
+  rtp: ['total rtp (%)', 'total rtp', 'rtp (%)', 'rtp'],
   status: ['status'],
   dateReceived: ['date received'],
   withJackpot: ['with jackpot', 'jackpot'],
@@ -131,6 +140,31 @@ function asTrimmedString(v) {
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(v);
   const s = String(v).trim();
   return s === '' ? null : s;
+}
+
+// Bet amounts (MINIMUM BET / MAXIMUM BET) — plain numbers in the real
+// workbook (e.g. 0.5, 1000). Returns null for blank/non-numeric cells
+// rather than 0, so "not filled in" stays distinguishable from "really is
+// zero" downstream (checkDocumentConsistency in server/ai.js treats null as
+// "no expected value to compare against").
+function asNumber(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(String(v).trim().replace(/[, ]+/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+// RTP — Excel stores a "%"-formatted cell as its underlying fraction (0.9445
+// for what's displayed as "94.45%"), but someone can also just type a plain
+// number like "94.45" directly into an unformatted cell. Both appear in real
+// workbooks, so: a value already >1 is assumed to already be a percentage
+// and passed through; anything <=1 is assumed to be the raw Excel fraction
+// and scaled up. Always returns a percentage number (94.45), never a
+// fraction, so it lines up 1:1 with the percentages written in RTP
+// verification/evaluation report documents.
+function asRtpPercent(v) {
+  const n = asNumber(v);
+  if (n === null) return null;
+  return n <= 1 ? Math.round(n * 100 * 100) / 100 : Math.round(n * 100) / 100;
 }
 
 function normalizeGameType(raw) {
@@ -260,6 +294,9 @@ function mapRow(row, colMap, sheetSettings, sheetName, checklistItems) {
       ? asTrimmedString(cell(row, colMap.gameId))
       : null,
     gameVersion: asTrimmedString(cell(row, colMap.gameVersion)),
+    minBet: colMap.minBet !== undefined ? asNumber(cell(row, colMap.minBet)) : null,
+    maxBet: colMap.maxBet !== undefined ? asNumber(cell(row, colMap.maxBet)) : null,
+    rtp: colMap.rtp !== undefined ? asRtpPercent(cell(row, colMap.rtp)) : null,
     withJackpot: colMap.withJackpot !== undefined ? normalizeYesNo(cell(row, colMap.withJackpot)) : null,
     reskinOf,
     dateReceived,

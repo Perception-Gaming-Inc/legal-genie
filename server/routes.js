@@ -1152,6 +1152,15 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
       gameTitle: row.gameTitle,
       gameId: row.gameId,
       gameVersion: row.gameVersion,
+      // Excel-submitted values (2026-08-20, at Tiffany's request) — the same
+      // "MINIMUM BET" / "MAXIMUM BET" / "Total RTP (%)" columns from the
+      // provider's own Annex A submission sheet, kept alongside gameId/
+      // gameVersion so the AI Parameter Consistency Check (server/ai.js) has
+      // real expected values to compare each game's documents against,
+      // rather than only checking whether documents agree with each other.
+      minBet: row.minBet ?? null,
+      maxBet: row.maxBet ?? null,
+      rtp: row.rtp ?? null,
       gameType: row.gameType,
       withJackpot: row.withJackpot,
       // Set only for rows from a "reskin"-style sheet (see the reskinOf
@@ -1252,7 +1261,13 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
             title: `Import Source — ${body.fileName || 'import.xlsx'}`,
             fileName: body.fileName || 'import.xlsx',
             filePath: importSourceFilePath,
-            category: 'Other',
+            // Certificates, not Other (2026-08-20, at Tiffany's request) —
+            // this workbook is the provider's own official submission form
+            // (e.g. Vertexplay's "Annex A — New Games Request for
+            // Approval"), the same kind of supplier-provided compliance
+            // document as a game manual or RNG certificate, not an
+            // internal/miscellaneous file.
+            category: 'Certificates',
             provider: group.providerDisplay,
             relatedCaseId: newCase.id,
             uploadedBy: user.id,
@@ -1467,10 +1482,25 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
     if (documents.length < 2) {
       return sendJson(res, 404, { error: 'The related documents\' file content could not be found in storage, so they cannot be compared.' });
     }
+    // The provider's own submitted values for this game (from the Excel
+    // import — see server/import.js's minBet/maxBet/rtp column detection and
+    // routes.js's rowToGame() above) — passed through so checkDocumentConsistency
+    // can compare each document's stated value against what was actually
+    // submitted, not just check that documents agree with each other. A
+    // legacy flat (pre-multi-game) case falls back to its own top-level
+    // fields, which predate this and will usually be null/undefined.
+    const expectedSource = targetGame || kase;
+    const expectedValues = {
+      gameId: expectedSource.gameId ?? null,
+      gameVersion: expectedSource.gameVersion ?? null,
+      minBet: expectedSource.minBet ?? null,
+      maxBet: expectedSource.maxBet ?? null,
+    };
     const result = await ai.checkDocumentConsistency({
       caseTitle: kase.title,
       gameTitle: targetGame ? targetGame.gameTitle : kase.gameTitle,
       gameId: targetGame ? targetGame.gameId : kase.gameId,
+      expectedValues,
       documents,
     });
 
@@ -1536,9 +1566,14 @@ router.post('/api/documents/check-consistency', async (req, res, params, body) =
     if (documents.length < 2) {
       return sendJson(res, 404, { error: 'The documents\' file content could not be found in storage, so they cannot be compared.' });
     }
+    // Optional — this ad hoc Document Center check has no Case/game record
+    // behind it, so there's nowhere to read submitted values from unless the
+    // caller passes them explicitly (not currently done by the frontend;
+    // RTP's range check runs regardless since it doesn't need one).
     const result = await ai.checkDocumentConsistency({
       gameTitle: body.gameTitle,
       gameId: body.gameId,
+      expectedValues: body.expectedValues || null,
       documents,
     });
     sendJson(res, 200, { ...result, documentsCompared: documents.length });

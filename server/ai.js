@@ -613,6 +613,45 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
   const parameterValidation = Array.isArray(result.parameterValidation) ? result.parameterValidation : [];
   const rawConsistency = Array.isArray(result.documentConsistency) ? result.documentConsistency : [];
 
+  // "Game Parameters" completeness override — added 2026-08-20 after
+  // Tiffany noticed the SAME Annex A Excel submission form got judged
+  // "Present" for one game (Fortune Panda) and "Missing" for another
+  // (Power of Odin) within the same check run ("一開始匯入的excel就是
+  // Parameters" — the Excel IS the Game Parameters document, full stop).
+  // That inconsistency is Gemini's own document-type classification being
+  // asked to judge the same evidence twice and landing on two different
+  // answers — same root problem the deterministic documentConsistency
+  // recompute below already solves for match/mismatch/range, just for
+  // completeness instead. The Excel/CSV submission form's presence is a
+  // simple, checkable fact (its file extension), not something that needs
+  // an LLM's judgment call, so: if a spreadsheet file is among the
+  // documents actually being compared, "Game Parameters" is always
+  // present — never left to vary run to run.
+  // Checked two ways, since the caller (server/routes.js) passes each
+  // document's TITLE as `fileName` when one is set (e.g. "Annex A New
+  // Games Request for Approval - Vertex Play", which has no file
+  // extension at all) rather than its actual on-disk file name — so a
+  // plain filename-extension check alone would miss most real Excel
+  // submissions. `fileContentBase64` is a `data:<mimeType>;base64,...`
+  // URL built from the file's real extension via server/mime.js's
+  // mimeFor(), so it stays reliable regardless of what the title says.
+  const isSpreadsheetDoc = (d) => (
+    /^data:(application\/vnd\.openxmlformats-officedocument\.spreadsheetml|application\/vnd\.ms-excel|text\/csv)/i.test(String(d.fileContentBase64 || ''))
+    || /\.(xlsx|xls|xlsm|csv)$/i.test(String(d.fileName || ''))
+  );
+  const hasSpreadsheetDoc = docs.some(isSpreadsheetDoc);
+  if (hasSpreadsheetDoc) {
+    const spreadsheetDoc = docs.find(isSpreadsheetDoc);
+    const idx = documentCompleteness.findIndex((d) => d && d.documentType === 'Game Parameters');
+    const entry = {
+      documentType: 'Game Parameters',
+      present: true,
+      detail: `The submission spreadsheet (${spreadsheetDoc.fileName}) contains the game's declared parameters (Game ID, Game Version, Minimum/Maximum Bet, RTP).`,
+    };
+    if (idx === -1) documentCompleteness.push(entry);
+    else documentCompleteness[idx] = entry;
+  }
+
   // Recompute each parameter's status deterministically from the raw
   // (EXPECTED_VALUE_KEYS declared once above, near the prompt-building code)
   // per-document values Gemini extracted, rather than trusting whatever

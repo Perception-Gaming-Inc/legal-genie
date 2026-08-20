@@ -24,6 +24,11 @@ const PROVIDER_ALIASES = {
   'fa chai': 'FC',
   'fachai': 'FC',
   'galatic_fa chai': 'FC',
+  // Added 2026-08-20 at Tiffany's request — "YB" is shorthand for "Yellow
+  // Bat" (already the canonical spelling elsewhere, e.g. the "YELLOW BAT"
+  // sheet tab in her PENDING_GAME_APPROVAL_APPLICATIONS.xlsx workbook,
+  // title-cased by suggestedProviderFromSheetName() in server/import.js).
+  yb: 'Yellow Bat',
 };
 
 function canonicalProviderName(raw) {

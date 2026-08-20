@@ -1026,13 +1026,26 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   // Stage 3: group surviving rows into multi-game Cases, one per Provider —
   // Provider lives at the case level, each game inside tracks its own
   // PAGCOR stage/checklist independently (see the multi-game Case model,
-  // Phase 1). Re-running an import (e.g. weekly) should ADD any newly-found
-  // games into that Provider's existing case rather than creating a
-  // duplicate Provider case or a duplicate game entry, so both "case
-  // already exists" and "game already exists in that case" are checked
-  // before anything is written. Pre-Phase-2 (legacy flat, single-game)
-  // cases are left completely untouched — never migrated, never appended
-  // to — only ever checked so a game already recorded on one of them isn't
+  // Phase 1).
+  // Changed 2026-08-20 at Tiffany's request: a NEW import batch (a
+  // different day's file, or a re-upload) must always create a fresh
+  // Provider case — it no longer looks for or appends into a Provider case
+  // left over from an earlier import, even for the exact same Provider.
+  // Different upload batches represent different points in time and Tiffany
+  // wants them to stay separate records she can tell apart (see the
+  // (${importDateLabel}) suffix added to the case title below). The ONLY
+  // way games join an already-existing case now is the manual "Edit Case"
+  // Add/Remove Game flow inside the app itself (showCaseFormModal in
+  // app.js) — a deliberate, in-app edit of one specific case, not an
+  // import. (An import CAN still span multiple sheets for the same
+  // Provider in one go — e.g. a Provider's own tab plus rows for it that
+  // also appear on the shared "APPROVED" tab — those still collapse into
+  // one case, since `groups` above already gathers every row for a
+  // Provider from this single commit before this loop even starts; it's
+  // only re-imports on a LATER, separate commit that now get their own new
+  // case instead of merging.) Pre-Phase-2 (legacy flat, single-game) cases
+  // are left completely untouched — never migrated, never appended to —
+  // only ever checked so a game already recorded on one of them isn't
   // re-imported as a duplicate elsewhere.
   const existingCases = await store.all('cases');
   const legacyFlatCases = existingCases.filter((c) => c.provider && !Array.isArray(c.games));
@@ -1045,17 +1058,6 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     if (!existingByProviderGameId.has(pgKey)) existingByProviderGameId.set(pgKey, []);
     existingByProviderGameId.get(pgKey).push(c);
   }
-  // One multi-game case per Provider is the target shape going forward — if
-  // more than one already exists for the same Provider (shouldn't normally
-  // happen), new games land on whichever this Map happens to keep, which is
-  // fine since this is just an import-target choice, not data loss.
-  const multiGameCasesByProvider = new Map();
-  for (const c of existingCases) {
-    if (!c.provider || !Array.isArray(c.games)) continue;
-    const key = c.provider.trim().toLowerCase();
-    if (!multiGameCasesByProvider.has(key)) multiGameCasesByProvider.set(key, c);
-  }
-
   function rowMatchesExistingGame(row, games) {
     return (games || []).some((g) => {
       if (row.gameId && g.gameId && row.gameId.trim().toLowerCase() === g.gameId.trim().toLowerCase()
@@ -1112,13 +1114,19 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   }
 
   let casesCreated = 0;
+  // Always 0 now — kept in the response shape (app.js's import summary
+  // reads result.casesUpdated) since every Provider group takes the
+  // "create a new case" path below; see the Stage 3 comment above for why.
   let casesUpdated = 0;
   let gamesAdded = 0;
-  for (const [providerKey, group] of groups) {
-    const existingCase = multiGameCasesByProvider.get(providerKey);
+  // Date suffix appended to every case title created by this commit — see
+  // the Stage 3 comment above. Computed once per commit (not per case) so
+  // every case from the same import batch shares the exact same label.
+  const importDateLabel = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  for (const [, group] of groups) {
     const newGames = [];
     for (const { row } of group.rows) {
-      if (rowMatchesExistingGame(row, existingCase ? existingCase.games : null) || rowMatchesExistingGame(row, newGames)) {
+      if (rowMatchesExistingGame(row, newGames)) {
         skippedExisting++;
         continue;
       }
@@ -1126,30 +1134,19 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     }
     if (!newGames.length) continue;
     try {
-      if (existingCase) {
-        const mergedGames = [...existingCase.games, ...newGames];
-        await store.update('cases', existingCase.id, {
-          games: mergedGames,
-          status: caseStatusFromGames(mergedGames),
-        });
-        casesUpdated++;
-        multiGameCasesByProvider.set(providerKey, { ...existingCase, games: mergedGames });
-      } else {
-        const caseNumber = await store.nextNumber('case', 'CASE');
-        const createdCase = await store.insert('cases', {
-          title: `${group.providerDisplay} — Game Submissions`,
-          type: 'Regulatory',
-          priority: 'Medium',
-          status: caseStatusFromGames(newGames),
-          provider: group.providerDisplay,
-          description: 'Imported from Excel.',
-          ownerId: user.id,
-          caseNumber,
-          games: newGames,
-        });
-        casesCreated++;
-        multiGameCasesByProvider.set(providerKey, createdCase);
-      }
+      const caseNumber = await store.nextNumber('case', 'CASE');
+      await store.insert('cases', {
+        title: `${group.providerDisplay} — Game Submissions (${importDateLabel})`,
+        type: 'Regulatory',
+        priority: 'Medium',
+        status: caseStatusFromGames(newGames),
+        provider: group.providerDisplay,
+        description: 'Imported from Excel.',
+        ownerId: user.id,
+        caseNumber,
+        games: newGames,
+      });
+      casesCreated++;
       gamesAdded += newGames.length;
     } catch (err) {
       errors.push(`${group.providerDisplay}: ${err.message}`);

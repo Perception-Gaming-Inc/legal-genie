@@ -1524,7 +1524,18 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
       await store.update('cases', params.id, { lastConsistencyCheck });
     }
 
-    sendJson(res, 200, { ...result, documentsCompared: documents.length });
+    // documentTitles — added 2026-08-20 at Tiffany's request ("可是他沒有
+    // 寫他實際比對了哪些文件" — the result only ever showed a bare COUNT of
+    // documents compared, never which ones). Same order Gemini itself was
+    // given them in (see checkDocumentConsistency's "[Document N: ...]"
+    // labels in server/ai.js), so "Document 1"/"Document 4" etc. in the
+    // AI's own explanations lines up with this list 1:1 and Tiffany can
+    // actually see what was fed in — useful given the Document Center still
+    // has some stray mistagged/duplicate records left over from the old
+    // multi-game-upload bug (see the reassignment work earlier this case)
+    // that don't affect a correctly-scoped check but are worth being able
+    // to visually confirm aren't sneaking in.
+    sendJson(res, 200, { ...result, documentsCompared: documents.length, documentTitles: documents.map((d) => d.fileName) });
   } catch (err) {
     sendJson(res, 400, { error: err.message });
   }
@@ -1576,7 +1587,7 @@ router.post('/api/documents/check-consistency', async (req, res, params, body) =
       expectedValues: body.expectedValues || null,
       documents,
     });
-    sendJson(res, 200, { ...result, documentsCompared: documents.length });
+    sendJson(res, 200, { ...result, documentsCompared: documents.length, documentTitles: documents.map((d) => d.fileName) });
   } catch (err) {
     sendJson(res, 400, { error: err.message });
   }

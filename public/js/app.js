@@ -2182,6 +2182,12 @@ function presenceMeta(present) {
 function consistencyStatusMeta(status) {
   if (status === 'match') return { icon: '✅', label: 'Match' };
   if (status === 'mismatch') return { icon: '⚠️', label: 'Mismatch Detected' };
+  // RTP isn't compared against one specific submitted value — it's checked
+  // against the PAGCOR-allowed range instead (see RTP_MIN_PERCENT/
+  // RTP_MAX_PERCENT in server/ai.js), so it gets its own pair of labels
+  // rather than reusing "Match"/"Mismatch" (2026-08-20, at Tiffany's request).
+  if (status === 'in_range') return { icon: '✅', label: 'In Range' };
+  if (status === 'out_of_range') return { icon: '⚠️', label: 'Out of Range' };
   return { icon: '❔', label: 'Not Mentioned' }; // 'missing'
 }
 function showConsistencyResultModal(context, result) {
@@ -2214,16 +2220,24 @@ function showConsistencyResultModal(context, result) {
       ${documentConsistency.map((c) => {
         const meta = consistencyStatusMeta(c.status);
         const values = c.values || [];
-        const isMismatch = c.status === 'mismatch';
+        const isBad = c.status === 'mismatch' || c.status === 'out_of_range';
+        const isGood = c.status === 'match' || c.status === 'in_range';
+        // expectedValue is either the provider's own submitted value (Game
+        // ID/Version/Min/Max Bet, from the Excel import) or, for RTP, the
+        // allowed range string ("90%–96.99%") — see server/ai.js. null for
+        // a fixed-value parameter with nothing on file to compare against
+        // (e.g. a legacy case imported before this field existed).
+        const expectedLabel = c.parameter === 'RTP' ? 'Allowed range' : 'Submitted value';
         return `
-        <div class="card mb-2 ${isMismatch ? 'border-danger' : ''}">
+        <div class="card mb-2 ${isBad ? 'border-danger' : ''}">
           <div class="card-body py-2 px-3">
             <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
               <span class="fw-semibold">${escapeHtml(c.parameter)}</span>
-              <span class="badge ${isMismatch ? 'bg-danger' : c.status === 'match' ? 'bg-success' : 'bg-secondary'}">${meta.icon} ${escapeHtml(meta.label)}</span>
+              <span class="badge ${isBad ? 'bg-danger' : isGood ? 'bg-success' : 'bg-secondary'}">${meta.icon} ${escapeHtml(meta.label)}</span>
             </div>
+            ${c.expectedValue ? `<div class="small text-secondary mb-1">${escapeHtml(expectedLabel)}: <span class="fw-semibold">${escapeHtml(c.expectedValue)}</span></div>` : ''}
             ${values.length ? `
-              <ul class="list-unstyled small mb-1 ${isMismatch ? 'bg-warning-subtle rounded p-2' : ''}">
+              <ul class="list-unstyled small mb-1 ${isBad ? 'bg-warning-subtle rounded p-2' : ''}">
                 ${values.map((v) => `<li><span class="text-secondary">${escapeHtml(v.source)}:</span> <span class="fw-semibold">${escapeHtml(v.value)}</span></li>`).join('')}
               </ul>
             ` : ''}

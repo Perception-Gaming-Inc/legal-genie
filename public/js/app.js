@@ -2516,6 +2516,10 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
           ${isMultiGameCase && games.length > 1 ? `
           <div class="mb-3">
             <label class="small text-secondary d-block">Which game(s) are these documents for? Check every game this batch applies to — a document that covers multiple games (e.g. one RTP certificate listing several titles) gets linked to each game you check, so it shows up under all of them. Nothing is checked by default; pick at least one before uploading, even if it's just the one game.</label>
+            <div class="form-check form-check-inline border-end pe-2 me-2">
+              <input class="form-check-input" type="checkbox" id="caseUploadGameAll">
+              <label class="form-check-label small fw-semibold" for="caseUploadGameAll">All</label>
+            </div>
             ${games.map((g) => `
             <div class="form-check form-check-inline">
               <input class="form-check-input case-upload-game-check" type="checkbox" value="${escapeHtml(g.id || '')}" id="caseUploadGame_${escapeHtml(g.id || '')}">
@@ -2547,7 +2551,29 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
   const gameCheckEls = () => Array.from(modalEl.querySelectorAll('.case-upload-game-check'));
   const hasGameSelected = () => !isMultiGameCase || games.length <= 1 || gameCheckEls().some((c) => c.checked);
   const updateUploadBtnState = () => { uploadBtn.disabled = filesData.length === 0 || !hasGameSelected(); };
-  gameCheckEls().forEach((c) => c.addEventListener('change', updateUploadBtnState));
+  // "All" checkbox — a shortcut for checking every game at once rather than
+  // clicking each one individually (added 2026-08-20 at Tiffany's request,
+  // useful for cases with dozens of games like the Excel-imported ones).
+  // It's a plain toggle when clicked directly; it also reflects the
+  // individual boxes' combined state (all/none/some checked) so it never
+  // shows checked when a game was unchecked by hand — using indeterminate
+  // for the "some but not all" case rather than silently picking a side.
+  const allCheckEl = modalEl.querySelector('#caseUploadGameAll');
+  const syncAllCheckbox = () => {
+    if (!allCheckEl) return;
+    const boxes = gameCheckEls();
+    const checkedCount = boxes.filter((c) => c.checked).length;
+    allCheckEl.checked = boxes.length > 0 && checkedCount === boxes.length;
+    allCheckEl.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+  };
+  gameCheckEls().forEach((c) => c.addEventListener('change', () => { syncAllCheckbox(); updateUploadBtnState(); }));
+  if (allCheckEl) {
+    allCheckEl.addEventListener('change', () => {
+      gameCheckEls().forEach((c) => { c.checked = allCheckEl.checked; });
+      allCheckEl.indeterminate = false;
+      updateUploadBtnState();
+    });
+  }
 
   const renderRows = () => {
     rowsEl.innerHTML = filesData.map((f, i) => `

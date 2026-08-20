@@ -138,6 +138,65 @@ function detectColumns(headerRow, checklistItems) {
   return map;
 }
 
+// Added 2026-08-20 after Tiffany's Yellow Bat GALATIC_YBGAMES...xlsx
+// template failed to import Minimum/Maximum Bet: that sheet's header is
+// split across TWO rows — a parent label ("Bet (PHP)") in the header row,
+// with "Minimum"/"Maximum" sub-labels in the row directly beneath it (the
+// same shape a merged Excel header cell takes once unmerged — the parent
+// text only appears once, in its own leftmost column, blank in the columns
+// to its right until the next parent label starts). detectColumns() above
+// only ever looks at a single row, so neither "Bet (PHP)" alone nor
+// "Minimum"/"Maximum" alone matches COLUMN_ALIASES's "minimum bet"/"maximum
+// bet" phrasing, and those columns silently come back undetected.
+//
+// This combines each sub-label with the nearest parent label above it
+// (forward-filling blank parent cells the same way a merged cell's
+// unmerged blanks need to inherit the one real label to their left) into
+// phrases like "Minimum Bet (PHP)" / "Maximum Bet (PHP)", which DO match
+// the ordinary aliases as a "contains" fuzzy match. Only ever fills in keys
+// existingColMap left undetected — never overrides a confident single-row
+// match — and only treats the row below the header as a real second header
+// row (rather than the first actual data row) when every one of its
+// non-blank cells reads like a short text label rather than real data
+// (numbers, IDs, long free text), so a sheet that has no second header row
+// at all is completely unaffected.
+function detectTwoRowHeader(headerRow, subRow, existingColMap) {
+  if (!subRow || !subRow.length) return { used: false, colMap: {} };
+  const nonBlank = subRow.filter((v) => asTrimmedString(v) !== null);
+  if (!nonBlank.length) return { used: false, colMap: {} };
+  const looksLikeLabelRow = nonBlank.every((v) => {
+    const s = asTrimmedString(v);
+    return s !== null && s.length <= 30 && !/^-?\d+(\.\d+)?$/.test(s);
+  });
+  if (!looksLikeLabelRow) return { used: false, colMap: {} };
+
+  const parents = [];
+  let lastParent = '';
+  headerRow.forEach((v, idx) => {
+    const s = asTrimmedString(v);
+    if (s) lastParent = s;
+    parents[idx] = lastParent;
+  });
+
+  const colMap = {};
+  let matchedAny = false;
+  subRow.forEach((v, idx) => {
+    const sub = asTrimmedString(v);
+    if (!sub) return;
+    const parent = parents[idx] || '';
+    if (!parent) return; // no parent label to combine with — nothing to merge
+    const combos = [normalizeHeader(`${sub} ${parent}`), normalizeHeader(`${parent} ${sub}`)];
+    for (const [key, aliases] of Object.entries(COLUMN_ALIASES)) {
+      if (existingColMap[key] !== undefined || colMap[key] !== undefined) continue;
+      if (aliases.some((alias) => combos.some((combo) => combo.includes(alias)))) {
+        colMap[key] = idx;
+        matchedAny = true;
+      }
+    }
+  });
+  return { used: matchedAny, colMap };
+}
+
 // ---------------------------------------------------------------------------
 // Value normalization
 // ---------------------------------------------------------------------------
@@ -367,7 +426,15 @@ function sheetToRows(sheet, checklistItems) {
   if (headerIdx === -1) return { headerRow: [], dataRows: [], colMap: { checklistCols: {} } };
   const headerRow = sheet.rows[headerIdx];
   const colMap = detectColumns(headerRow, checklistItems);
-  const dataRows = sheet.rows.slice(headerIdx + 1);
+  // See detectTwoRowHeader()'s own header comment — handles templates like
+  // "Bet (PHP)" / "Minimum" / "Maximum" split across the header row and the
+  // row directly beneath it. Only ever fills in colMap keys the single-row
+  // pass above left undetected, and only consumes (skips) that second row
+  // as data when it actually looks like sub-header labels rather than a
+  // real first data row.
+  const twoRowHeader = detectTwoRowHeader(headerRow, sheet.rows[headerIdx + 1], colMap);
+  if (twoRowHeader.used) Object.assign(colMap, twoRowHeader.colMap);
+  const dataRows = sheet.rows.slice(headerIdx + (twoRowHeader.used ? 2 : 1));
   return { headerRow, dataRows, colMap };
 }
 

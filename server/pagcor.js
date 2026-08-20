@@ -32,8 +32,18 @@
 // Review / LOA Approved / Rejected) to this simpler 5-stage one. Existing
 // cases carrying an old stage value were migrated via
 // scripts/migrate-pagcor-stages.js — see that file for the exact mapping.
+// 'Game Testing' added 2026-08-20 at Tiffany's request, matching Galatic
+// Events Corp's "New Game Application Process to PAGCOR" flowchart: jackpot
+// games must "Schedule & Conduct PAGCOR Game Testing" and submit the
+// post-testing requirements (Jackpot Report, Screenshots) BEFORE PAGCOR
+// Evaluation begins, while non-jackpot games skip straight past this step.
+// Placed right after 'Pending Documents' (document submission) and before
+// 'For Review' (PAGCOR Evaluation) to match that ordering. The frontend
+// (public/js/app.js's PAGCOR_LINEAR_STAGES) only shows this step on the
+// stepper for games with withJackpot === 'Yes' — see its header comment.
 const PAGCOR_STAGE_OPTIONS = [
   'Pending Documents',
+  'Game Testing',
   'For Review',
   'On Process',
   'Approved',

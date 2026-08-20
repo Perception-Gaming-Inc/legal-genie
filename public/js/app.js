@@ -234,16 +234,25 @@ const NAV = [
 // Review / LOA Approved / Rejected) to this simpler 5-stage one — see the
 // matching comment in server/pagcor.js and scripts/migrate-pagcor-stages.js
 // for how existing cases on the old stage names were migrated.
+// 'Game Testing' added 2026-08-20 at Tiffany's request — see the matching
+// comment in server/pagcor.js. Sits between 'Pending Documents' and 'For
+// Review' since, per Galatic Events Corp's flowchart, jackpot games must
+// complete PAGCOR Game Testing (and submit the Jackpot Report/Screenshots)
+// before PAGCOR Evaluation starts; non-jackpot games skip it entirely.
 const PAGCOR_STAGE_OPTIONS = [
-  'Pending Documents', 'For Review', 'On Process', 'Approved', 'Rejected',
+  'Pending Documents', 'Game Testing', 'For Review', 'On Process', 'Approved', 'Rejected',
 ];
 // The normal, linear left-to-right pipeline a game submission moves through.
 // 'Rejected' is deliberately excluded here — it's an off-path terminal state
 // (a submission can be rejected from any point in the pipeline), not a
 // further step along it, so it gets its own distinct visual treatment in
-// pagcorStageStepperHtml() below rather than a 5th step on the bar.
+// pagcorStageStepperHtml() below rather than a further step on the bar.
+// 'Game Testing' is included here but pagcorStageStepperHtml() filters it
+// back out for non-jackpot games (withJackpot !== 'Yes') before rendering,
+// since the flowchart has them skip straight to 'For Review' — see that
+// function's withJackpot param.
 const PAGCOR_LINEAR_STAGES = [
-  'Pending Documents', 'For Review', 'On Process', 'Approved',
+  'Pending Documents', 'Game Testing', 'For Review', 'On Process', 'Approved',
 ];
 // Brought back 2026-08-12 at Tiffany's request (was removed once already,
 // see the matching comment in server/pagcor.js for the full history). This
@@ -330,6 +339,85 @@ function showPagcorChecklistModal(item, onSaved) {
   });
   modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
 }
+// Modal to edit the three jackpot-testing fields on one game
+// (jackpotTestingDate / jackpotReportSubmitted / testingScreenshotsSubmitted)
+// — added 2026-08-20 at Tiffany's request. These fields already existed in
+// the data model (set on Excel import, read-only displayed on the game card
+// when withJackpot === 'Yes') but had no editable UI anywhere in the
+// multi-game case flow until now; the only prior editable copy was in
+// caseFormFields(), which is exclusively used by the legacy single-game AI
+// intake review modal, never by this multi-game game card. `game` is the
+// current game object (for pre-filling); `onSave(fieldPatch)` does the
+// actual persisting — the caller (renderCaseDetail) supplies one that reuses
+// its existing patchOneGame() helper so this reuses the exact same
+// "merge onto the one game being edited, leave every other game's fields
+// untouched" approach as the PAGCOR stage stepper and checklist saves right
+// above it, avoiding the class of data-loss bug fixed 2026-08-20 in
+// showCaseFormModal's submit handler.
+function showJackpotTestingModal(game, onSave) {
+  const modalId = 'jackpotTestingModal';
+  let modalEl = document.getElementById(modalId);
+  if (modalEl) modalEl.remove();
+  modalEl = document.createElement('div');
+  modalEl.id = modalId;
+  modalEl.className = 'modal fade';
+  modalEl.tabIndex = -1;
+  const dateVal = game.jackpotTestingDate ? String(game.jackpotTestingDate).slice(0, 10) : '';
+  modalEl.innerHTML = `
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Game Testing Info — ${escapeHtml(game.gameTitle || 'Game')}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small">PAGCOR Game Testing Date</label>
+            <input type="date" class="form-control" id="jtTestingDate" value="${dateVal}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Jackpot Report Submitted?</label>
+            <select class="form-select" id="jtReportSubmitted">
+              <option value="">—</option>
+              ${YES_NO_OPTIONS.map((v) => `<option value="${v}" ${v === game.jackpotReportSubmitted ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label small">Testing Screenshots Submitted?</label>
+            <select class="form-select" id="jtScreenshotsSubmitted">
+              <option value="">—</option>
+              ${YES_NO_OPTIONS.map((v) => `<option value="${v}" ${v === game.testingScreenshotsSubmitted ? 'selected' : ''}>${v}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="jtSaveBtn">Save</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modalEl);
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+
+  modalEl.querySelector('#jtSaveBtn').addEventListener('click', async () => {
+    const btn = modalEl.querySelector('#jtSaveBtn');
+    btn.disabled = true;
+    const fieldPatch = {
+      jackpotTestingDate: modalEl.querySelector('#jtTestingDate').value || null,
+      jackpotReportSubmitted: modalEl.querySelector('#jtReportSubmitted').value || null,
+      testingScreenshotsSubmitted: modalEl.querySelector('#jtScreenshotsSubmitted').value || null,
+    };
+    try {
+      await onSave(fieldPatch);
+      modal.hide();
+    } catch (err) {
+      toast(err.message, 'danger');
+      btn.disabled = false;
+    }
+  });
+  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+}
 // Renders the horizontal PAGCOR review progress stepper shown at the top of
 // the case detail page (renderCaseDetail() below). Steps before the current
 // stage are marked done (checkmark), the current stage is highlighted, and
@@ -340,7 +428,11 @@ function showPagcorChecklistModal(item, onSaved) {
 // this function only marks which steps should be clickable and with what
 // value, same split as the PAGCOR Checklist (markup here, save-on-click
 // logic at the call site).
-function pagcorStageStepperHtml(stage, canEdit) {
+// withJackpot: pass the game's `withJackpot` value ('Yes'/'No'/undefined).
+// 'Game Testing' is only shown as a step for withJackpot === 'Yes' games —
+// per the flowchart, non-jackpot games skip that step entirely and go
+// straight from 'Pending Documents' to 'For Review'. Added 2026-08-20.
+function pagcorStageStepperHtml(stage, canEdit, withJackpot) {
   if (stage === 'Rejected') {
     return `
       <div class="pagcor-stepper pagcor-stepper-rejected d-flex align-items-center gap-2">
@@ -349,10 +441,11 @@ function pagcorStageStepperHtml(stage, canEdit) {
         <span class="small text-secondary">This game submission did not pass PAGCOR review.</span>
       </div>`;
   }
-  const idx = Math.max(0, PAGCOR_LINEAR_STAGES.indexOf(stage || 'Pending Documents'));
+  const stages = withJackpot === 'Yes' ? PAGCOR_LINEAR_STAGES : PAGCOR_LINEAR_STAGES.filter((s) => s !== 'Game Testing');
+  const idx = Math.max(0, stages.indexOf(stage || 'Pending Documents'));
   return `
     <div class="pagcor-stepper d-flex align-items-start">
-      ${PAGCOR_LINEAR_STAGES.map((s, i) => {
+      ${stages.map((s, i) => {
         const state = i < idx ? 'done' : (i === idx ? 'current' : 'upcoming');
         const connector = i > 0 ? `<div class="pagcor-step-connector ${i <= idx ? 'done' : ''}"></div>` : '';
         const clickable = canEdit && i !== idx;
@@ -2232,7 +2325,7 @@ async function renderCaseDetail(content, id) {
           ${isMultiGameCase && item.provider ? `<button class="btn btn-outline-secondary btn-sm btn-check-game-consistency" data-game-id="${escapeHtml(g.id || '')}">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
         </div>
         <div class="small text-secondary mb-2">PAGCOR Review Progress${canEdit && g.pagcorStage !== 'Rejected' ? ' — click a stage to switch to it directly' : ''}</div>
-        ${pagcorStageStepperHtml(g.pagcorStage, canEdit)}
+        ${pagcorStageStepperHtml(g.pagcorStage, canEdit, g.withJackpot)}
         <div class="row mt-3">
           ${field('Game ID', g.gameId)}
           ${field('Game Type', g.gameType)}
@@ -2244,6 +2337,10 @@ async function renderCaseDetail(content, id) {
           ${field('LOA Expiry Date', fmtDate(g.loaExpiryDate))}
           ${g.pagcorStage === 'Rejected' ? field('Submission Attempt #', g.submissionAttempt) : ''}
         </div>
+        ${g.withJackpot === 'Yes' && canEdit ? `
+        <div class="mt-1">
+          <button type="button" class="btn btn-outline-secondary btn-sm btn-edit-jackpot-testing" data-game-id="${escapeHtml(g.id || '')}" data-legacy-flat="${g._legacyFlat ? '1' : '0'}">${Icon('edit', 'me-1')}Edit Game Testing Info</button>
+        </div>` : ''}
         ${g.pagcorStage === 'Rejected' && g.rejectionReason ? `<div class="mt-2"><div class="small text-secondary">Rejection Reason</div><div>${escapeHtml(g.rejectionReason)}</div></div>` : ''}
         ${PAGCOR_CHECKLIST_ITEMS.length ? `
         <div class="mt-3">
@@ -2378,6 +2475,20 @@ async function renderCaseDetail(content, id) {
       toast(err.message, 'danger');
       scoped.forEach((el) => { el.disabled = false; });
     }
+  }));
+
+  // "Edit Game Testing Info" button on each jackpot game's card — opens
+  // showJackpotTestingModal() and saves through the same patchOneGame()
+  // helper used by the stepper/checklist above (added 2026-08-20).
+  content.querySelectorAll('.btn-edit-jackpot-testing').forEach((btn) => btn.addEventListener('click', () => {
+    const gameId = btn.dataset.gameId;
+    const isLegacyFlat = btn.dataset.legacyFlat === '1';
+    const currentGame = games.find((g) => g.id === gameId) || {};
+    showJackpotTestingModal(currentGame, async (fieldPatch) => {
+      await patchOneGame(gameId, isLegacyFlat, fieldPatch);
+      toast('Game Testing info updated');
+      await renderCaseDetail(content, id);
+    });
   }));
 
   // AI cross-document parameter consistency check — checks a fixed 5-item

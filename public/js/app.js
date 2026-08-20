@@ -2341,6 +2341,7 @@ async function renderCaseDetail(content, id) {
           <h6 class="mb-0">${escapeHtml(g.gameTitle || `Game ${idx + 1}`)}</h6>
           ${isMultiGameCase && item.provider ? `<button class="btn btn-outline-secondary btn-sm btn-check-game-consistency" data-game-id="${escapeHtml(g.id || '')}">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
         </div>
+        ${g.reskinOf ? `<div class="badge bg-info-subtle text-info-emphasis mb-2">Reskin of already-approved game: ${escapeHtml(g.reskinOf)}</div>` : ''}
         <div class="small text-secondary mb-2">PAGCOR Review Progress${canEdit && g.pagcorStage !== 'Rejected' ? ' — click a stage to switch to it directly' : ''}</div>
         ${pagcorStageStepperHtml(g.pagcorStage, canEdit, g.withJackpot)}
         <div class="row mt-3">

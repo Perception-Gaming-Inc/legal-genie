@@ -2677,7 +2677,7 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
   modal.show();
   modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
 
-  let filesData = []; // [{ file, base64, proposed: {title,category,reportType}, aiFailed }]
+  let filesData = []; // [{ file, base64, proposed: {title,category,reportType}, aiFailed, aiError }]
   const rowsEl = modalEl.querySelector('#caseUploadRows');
   const uploadBtn = modalEl.querySelector('#btnCaseUploadAll');
   // Multi-game game-picker is now a checklist (see the HTML above), not a
@@ -2737,7 +2737,7 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
               </div>
             </div>
           </div>
-          <div class="small text-secondary mt-1 ms-4">${escapeHtml(f.file.name)}${f.aiFailed ? ' — AI could not read this file\'s content, please double-check the category yourself' : ''}</div>
+          <div class="small text-secondary mt-1 ms-4">${escapeHtml(f.file.name)}${f.aiFailed ? ` — <span class="text-danger">${escapeHtml(f.aiError || "AI could not read this file's content")}</span> — please double-check the category yourself` : ''}</div>
         </div>
       </div>`).join('');
     updateUploadBtnState();
@@ -2768,13 +2768,20 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
       const base64 = await fileToBase64(file);
       let proposed = {};
       let aiFailed = false;
+      let aiError = '';
       try {
         const { fields: extracted } = await Api.post('/api/ai/extract/documents', { fileName: file.name, fileContentBase64: base64 });
         proposed = extracted || {};
       } catch (err) {
         aiFailed = true;
+        // Surface the real error (e.g. "AI service error (429): ... Please
+        // retry in 15s") instead of a generic message — added 2026-08-20 at
+        // Tiffany's request, so she can see exactly how long to wait before
+        // trying again instead of guessing/retrying blind (which, for a
+        // shared-quota 429, only pushes the reset further out).
+        aiError = err.message;
       }
-      return { file, base64, proposed, aiFailed };
+      return { file, base64, proposed, aiFailed, aiError };
     }));
     filesData = filesData.concat(newFilesData);
     renderRows();

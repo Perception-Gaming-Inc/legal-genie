@@ -388,18 +388,29 @@ const CHECKED_PARAMETERS = ['Game ID', 'Game Version', 'Minimum Bet', 'Maximum B
 const RTP_MIN_PERCENT = 90;
 const RTP_MAX_PERCENT = 96.99;
 
-// Parses a value pulled out of a document (e.g. "94.45%", "94.45", "0.9445")
-// into a plain percentage number. Mirrors asRtpPercent() in server/import.js
-// (kept separate/duplicated rather than shared — this one additionally
-// strips a trailing "%" from free-text document values, which the Excel-only
-// helper never needs to handle) — a bare fraction like "0.9445" is assumed
-// to mean 94.45%, anything already >1 is assumed to already be a percentage.
-// Returns null if the text doesn't parse as a number at all.
+// Parses a value pulled out of a document into a plain percentage number.
+// Different games' RTP verification/evaluation reports come from different
+// testing labs (GLI, Gaming Associates, BMM, etc.) with their own wording
+// and layout — "Total RTP", "Theoretical RTP", "Published RTP%", "RTP%
+// Calculated by ga", "Target RTP", sometimes with a units label or trailing
+// remark attached (2026-08-20, raised by Tiffany: RTP simply won't always
+// come out as a clean bare number). So rather than requiring the whole
+// string to be numeric, this pulls out the FIRST number-looking substring
+// from whatever text Gemini extracted (e.g. "94.45% (Compliant)" -> 94.45,
+// "Total RTP: 94.45" -> 94.45, "0.9445" -> 94.45) and only falls back to the
+// fraction/percent ambiguity check (values <=1 assumed to be a raw Excel-
+// style fraction, meaning *100) when the source text had no literal "%"
+// telling us it was already a percentage. Returns null if no number is
+// found at all (kept distinct from a real 0 — a document that genuinely
+// says "0%" should still register as a value, just an out-of-range one).
 function parseRtpPercent(raw) {
   if (raw === null || raw === undefined) return null;
-  const cleaned = String(raw).trim().replace(/%$/, '').replace(/,/g, '');
-  const n = Number(cleaned);
+  const text = String(raw).trim();
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const n = Number(match[0]);
   if (!Number.isFinite(n)) return null;
+  if (text.includes('%')) return n;
   return n <= 1 ? n * 100 : n;
 }
 
@@ -412,8 +423,26 @@ function parseRtpPercent(raw) {
 // "MAXIMUM BET" columns — see server/import.js). Numbers compare
 // numerically (so "0.5" and "0.50" match); everything else compares as
 // trimmed, case-insensitive text (so "vp_230039_1" matches "VP_230039_1").
-function valuesMatch(expected, actual) {
+function valuesMatch(expected, actual, isCurrencyAmount) {
   if (expected === null || expected === undefined || actual === null || actual === undefined) return false;
+  if (isCurrencyAmount) {
+    // Minimum/Maximum Bet only — a document can state these with a currency
+    // symbol/label attached (e.g. "PHP 0.50", "₱1,000.00") rather than as a
+    // bare number, so pull out the first number-looking substring the same
+    // way parseRtpPercent does, rather than requiring the whole string to
+    // parse cleanly as a number.
+    const expMatch = String(expected).trim().match(/-?\d+(?:\.\d+)?/);
+    const actMatch = String(actual).trim().match(/-?\d+(?:\.\d+)?/);
+    const expNum = expMatch ? Number(expMatch[0]) : NaN;
+    const actNum = actMatch ? Number(actMatch[0]) : NaN;
+    if (Number.isFinite(expNum) && Number.isFinite(actNum)) return expNum === actNum;
+    return false;
+  }
+  // Game ID / Game Version — these are identifiers, not arithmetic values
+  // (e.g. "v1.10" is a different version from "v1.1", not the number 1.1),
+  // so no embedded-number extraction here: only an exact full-string numeric
+  // match (so "0.5" still equals "0.50" if a version happens to look
+  // numeric) or an exact case-insensitive text match count as equal.
   const expNum = Number(String(expected).trim());
   const actNum = Number(String(actual).trim());
   if (Number.isFinite(expNum) && Number.isFinite(actNum)) return expNum === actNum;
@@ -543,7 +572,11 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
       `2) Parameter completeness: check whether each of these ${CHECKED_PARAMETERS.length} parameters has a value stated in "at least one document" — ${CHECKED_PARAMETERS.join(', ')}. ` +
       'This only judges whether a value exists, not whether it is consistent. ' +
       '3) For these same parameters, list every document that explicitly states a value for it along with that value, exactly as written in that document — ' +
-      'never invent a value or a document that is not actually there. Do NOT judge match/mismatch/range yourself; the caller recomputes that deterministically from the raw values you list here.' +
+      'never invent a value or a document that is not actually there. Do NOT judge match/mismatch/range yourself; the caller recomputes that deterministically from the raw values you list here. ' +
+      'Note on RTP specifically: different games\' RTP verification/evaluation reports may come from different independent testing labs, each with its own layout and wording — ' +
+      'terms like "Total RTP", "Theoretical RTP", "Target RTP", "Published RTP%", or "RTP% Calculated" can all be the value to extract here, and it may be written as a percentage (94.45%) ' +
+      'or a decimal fraction (0.9445). Extract whichever number that document states as ITS RTP value for this specific game, in whatever format/wording it actually uses — ' +
+      'do not require an exact phrase match, and do not mark RTP "missing" just because a report uses different terminology than another one does.' +
       (expectedLines.length
         ? ` For reference, the provider's own submitted values for this game are — ${expectedLines.join('; ')} — extract each document's stated value independently of this regardless of whether it agrees.`
         : ''),
@@ -610,17 +643,18 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
 
     const expectedKey = EXPECTED_VALUE_KEYS[parameter];
     const expectedValue = expectedValues && expectedValues[expectedKey] != null ? expectedValues[expectedKey] : null;
+    const isCurrencyAmount = parameter === 'Minimum Bet' || parameter === 'Maximum Bet';
     let status;
     if (values.length === 0) {
       status = 'missing';
     } else if (expectedValue !== null) {
-      status = values.every((v) => valuesMatch(expectedValue, v.value)) ? 'match' : 'mismatch';
+      status = values.every((v) => valuesMatch(expectedValue, v.value, isCurrencyAmount)) ? 'match' : 'mismatch';
     } else {
       // No submitted value on file for this game (e.g. legacy case) — fall
       // back to the original behavior of checking the documents agree with
       // each other, since there's nothing else to compare against.
       const firstValue = values[0].value;
-      status = values.every((v) => valuesMatch(firstValue, v.value)) ? 'match' : 'mismatch';
+      status = values.every((v) => valuesMatch(firstValue, v.value, isCurrencyAmount)) ? 'match' : 'mismatch';
     }
     return { parameter, status, values, expectedValue: expectedValue !== null ? String(expectedValue) : null, detail };
   });

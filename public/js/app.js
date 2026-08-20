@@ -1180,6 +1180,9 @@ function calendarEventMeta(ev) {
     followup: { label: 'Follow-up', tone: 'warning' },
     task: { label: 'Task', tone: 'info' },
     event: { label: 'Event', tone: 'purple' },
+    // Added 2026-08-20 alongside the Game Testing PAGCOR stage — see
+    // renderCalendar()'s cases.forEach for where these get added.
+    gametest: { label: 'Game Testing', tone: 'warning' },
   }[ev.type] || { label: 'Task', tone: 'info' };
 }
 function calendarEventBadgeHtml(ev) {
@@ -1263,6 +1266,20 @@ async function renderCalendar(content) {
   cases.forEach((c) => {
     if (c.deadline && c.status !== 'Closed') {
       addEvent(c.deadline, { type: 'deadline', title: `Submit: ${c.title}`, href: `#/cases/${c.id}` });
+    }
+    // PAGCOR Game Testing dates — added 2026-08-20 at Tiffany's request, so
+    // a scheduled jackpot-game testing date shows up on the Calendar the
+    // same way a case's Submit Date already does. Reads through
+    // caseGamesList(c) (defined below, hoisted) rather than c.jackpotTestingDate
+    // directly, since on a multi-game case that field lives per-game inside
+    // c.games, not flat on the case — see caseGamesList's header comment for
+    // why it normalizes both shapes the same way.
+    if (c.status !== 'Closed') {
+      caseGamesList(c).forEach((g) => {
+        if (g.jackpotTestingDate) {
+          addEvent(g.jackpotTestingDate, { type: 'gametest', title: `Game Testing: ${g.gameTitle || c.title}`, href: `#/cases/${c.id}` });
+        }
+      });
     }
   });
   tasks.forEach((t) => {

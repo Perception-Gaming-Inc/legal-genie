@@ -311,17 +311,22 @@ router.get('/api/lookups', async (req, res) => {
   // existing "Related Contract" pickers keep working — there is no
   // `contracts` permission module left to check it against.
   const canViewCases = await auth.can(user, 'cases', 'view');
+  // Also honors providerScope (see filterCasesByProviderScope below) —
+  // otherwise a provider-scoped role could still enumerate every case's
+  // title/number through this lookup even though /api/cases itself is
+  // correctly scoped.
+  const visibleCases = canViewCases ? await filterCasesByProviderScope(cases, user) : [];
   sendJson(res, 200, {
     users: users.map((u) => ({ id: u.id, fullName: u.fullName, username: u.username })),
     departments,
     roles: roles.map((r) => ({ id: r.id, name: r.name })),
-    cases: canViewCases ? cases.map((c) => ({
+    cases: visibleCases.map((c) => ({
       id: c.id, title: c.title, caseNumber: c.caseNumber,
       // Games list included (2026-08-24) so Document Center's "Related
       // Game" picker can be populated for a multi-game case without a
       // second round-trip — see fields() in renderDocuments (app.js).
       games: Array.isArray(c.games) ? c.games.map((g) => ({ id: g.id, gameTitle: g.gameTitle })) : undefined,
-    })) : [],
+    })),
     contracts: contracts.map((c) => ({ id: c.id, title: c.title, contractNumber: c.contractNumber })),
     // The frontend can't reach getChecklistItems() itself (plain browser
     // JS, no server import) — sent here once at boot instead, alongside
@@ -709,9 +714,76 @@ async function syncDeadlineFollowUpTask(caseRow) {
   }
 }
 
+// Audit log for compliance-critical case/game fields (2026-08-24, at
+// Tiffany's request) — nothing previously recorded WHO changed a game's
+// Game ID / Version / Min-Max Bet / RTP / PAGCOR Stage or WHEN, so an
+// accidental post-import edit to a submitted value had no way to be traced
+// or reversed. This directly matters because checkDocumentConsistency (see
+// server/ai.js) compares each document's stated value against these exact
+// fields as "the provider's own submitted value" — if one gets silently
+// edited after import, that comparison is now checking against the wrong
+// baseline with no way to tell. Deliberately lightweight: one row per
+// changed field (not a generic diff blob) so "show me every time RTP
+// changed on this game" is a simple filter, not a scan-and-parse.
+const AUDITED_CASE_FIELDS = ['gameId', 'gameVersion', 'minBet', 'maxBet', 'rtp', 'pagcorStage'];
+async function logAudit(entityType, entityId, field, oldValue, newValue, user, extra) {
+  if (oldValue === newValue) return;
+  if ((oldValue ?? null) === (newValue ?? null)) return; // undefined vs null: not a real change
+  await store.insert('auditLog', {
+    entityType, entityId, field,
+    oldValue: oldValue ?? null, newValue: newValue ?? null,
+    userId: user ? user.id : null, userName: user ? (user.fullName || user.username) : 'system',
+    ...extra,
+  });
+}
+// Diffs one case's AUDITED_CASE_FIELDS before/after an update — handles both
+// a legacy flat (single-game) case and a multi-game case's `games[]`, in
+// which case each row is tagged with gameId/gameTitle so the audit trail
+// reads per-game rather than as one undifferentiated case-level list.
+async function logCaseAudit(row, user, existing) {
+  if (!existing) return;
+  if (Array.isArray(row.games)) {
+    const oldById = new Map((existing.games || []).map((g) => [g.id, g]));
+    for (const g of row.games) {
+      const prior = oldById.get(g.id);
+      if (!prior) continue; // newly-added game — nothing to diff against
+      for (const field of AUDITED_CASE_FIELDS) {
+        await logAudit('game', g.id, field, prior[field], g[field], user, { caseId: row.id, gameTitle: g.gameTitle || null });
+      }
+    }
+  } else {
+    for (const field of AUDITED_CASE_FIELDS) {
+      await logAudit('case', row.id, field, existing[field], row[field], user, { caseId: row.id, gameTitle: row.gameTitle || null });
+    }
+  }
+}
+
+// Provider-scoped row-level visibility (2026-08-24, at Tiffany's request —
+// today, any role with `cases: view` sees every case system-wide with no
+// way to restrict a paralegal to only the Provider(s) they actually handle).
+// A role's `providerScope` (array of Provider names, matched via
+// canonicalProviderName so "OP"/"Omniplay" etc. count as the same one) is
+// opt-in: absent or empty means unrestricted (every existing role keeps
+// seeing everything it always could — this is additive, not a default
+// lockdown). Admin always bypasses it, same as every other permission
+// check in this file. Applied via crudRoutes' `filterList`, which already
+// runs identically for the list endpoint AND for get/update/delete of a
+// single row (see crudRoutes' visibleRow) — so a case outside a user's
+// scope isn't just hidden from the list, it 404s if they try to open,
+// edit, or delete it directly by ID too.
+async function filterCasesByProviderScope(rows, user) {
+  const role = await store.find('roles', user.roleId);
+  if (!role || role.name === 'Admin') return rows;
+  const scope = Array.isArray(role.providerScope) ? role.providerScope.filter(Boolean) : [];
+  if (!scope.length) return rows; // unrestricted — the default for every role until explicitly scoped
+  const allowed = new Set(scope.map((p) => canonicalProviderName(p).toLowerCase()));
+  return rows.filter((c) => c.provider && allowed.has(canonicalProviderName(c.provider).toLowerCase()));
+}
+
 // Cases -----------------------------------------------------------------
 crudRoutes({
   base: '/api/cases', moduleName: 'cases', collection: 'cases',
+  filterList: filterCasesByProviderScope,
   onCreate: async (body, user) => {
     const patch = { ...body, caseNumber: body.caseNumber || await store.nextNumber('case', 'CASE') };
     // Owner field removed from the multi-game case form 2026-08-20 (see
@@ -808,8 +880,26 @@ crudRoutes({
   afterUpdate: async (row, user, id, existing) => {
     await syncDeadlineFollowUpTask(row);
     await notifyCaseStageChange(row, existing, user);
+    await logCaseAudit(row, user, existing);
   },
   afterDelete: async (row) => syncDeadlineFollowUpTask({ ...row, deadline: null }),
+});
+
+// Bulk-update-stage (below) also changes pagcorStage outside the normal
+// crudRoutes PUT path, so it needs its own audit call — see the route body.
+
+// Audit log read endpoint — same "cases: view" permission as the case
+// itself, since this is case detail history, not a separate module. Scoped
+// to one case at a time (caseId, stamped on every row by logAudit above)
+// rather than a global feed; a global cross-case audit view isn't needed
+// yet and would need its own permission story (who gets to see everyone
+// else's edits) if it ever is.
+router.get('/api/cases/:id/audit-log', async (req, res, params) => {
+  const user = await requirePerm(req, res, 'cases', 'view');
+  if (!user) return;
+  const all = await store.all('auditLog');
+  const rows = all.filter((r) => r.caseId === params.id).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  sendJson(res, 200, rows);
 });
 
 // Bulk stage update — select multiple cases in Case Management (e.g. a
@@ -865,7 +955,11 @@ router.post('/api/cases/bulk-update-stage', async (req, res, params, body) => {
         if (existing.pagcorStage !== pagcorStage) patch.pagcorStageChangedAt = now;
       }
       const row = await store.update('cases', id, patch);
-      if (row) { updated++; await notifyCaseStageChange(row, existing, user); }
+      if (row) {
+        updated++;
+        await notifyCaseStageChange(row, existing, user);
+        await logCaseAudit(row, user, existing); // this route bypasses crudRoutes' own afterUpdate, so it needs its own audit call
+      }
       else errors.push(`${id}: not found`);
     } catch (err) {
       errors.push(`${id}: ${err.message}`);
@@ -903,7 +997,10 @@ router.post('/api/cases/import-approval-notice', async (req, res, params, body) 
       const fullPatch = { ...patch };
       if (existing && existing.pagcorStage !== patch.pagcorStage) fullPatch.pagcorStageChangedAt = new Date().toISOString();
       const row = await store.update('cases', id, fullPatch);
-      if (row) await notifyCaseStageChange(row, existing, user);
+      if (row) {
+        await notifyCaseStageChange(row, existing, user);
+        await logCaseAudit(row, user, existing); // bypasses crudRoutes' own afterUpdate too — see comment above
+      }
       return row;
     };
     const result = await pagcorCheck.applyApprovalNoticeGames(cases, extracted.games, updateFn);
@@ -971,11 +1068,26 @@ function normalizeGameName(s) {
 // 2.5 below). One name being essentially a substring of the other covers
 // both punctuation-only typos and a shorter/longer variant of the same
 // name (e.g. "Super Niubi Fortune" vs "SuperNiubiFortuneX-huge").
+//
+// Length/ratio floor added 2026-08-24 (audit fix, at Tiffany's request) — a
+// bare substring check has no lower bound, so two SHORT, unrelated titles
+// that happen to share a common word/fragment (e.g. "ACE" inside "ACE OF
+// SPADES ULTRA") would previously read as "likely the same game" even
+// though the shorter one is a small fraction of the longer one. Requiring
+// the shorter normalized title to be both at least 4 characters AND at
+// least half the length of the longer one keeps the real-world cases this
+// was built for (a handful of characters' typo/punctuation difference, or
+// a short name embedded in a longer stylized one) while rejecting a short
+// generic title just happening to appear inside an unrelated longer name.
 function titlesLikelySameGame(a, b) {
   const na = normalizeGameName(a);
   const nb = normalizeGameName(b);
   if (!na || !nb) return false;
-  return na === nb || na.includes(nb) || nb.includes(na);
+  if (na === nb) return true;
+  const [shorter, longer] = na.length <= nb.length ? [na, nb] : [nb, na];
+  if (shorter.length < 4) return false;
+  if (shorter.length / longer.length < 0.5) return false;
+  return longer.includes(shorter);
 }
 
 router.post('/api/cases/import/commit', async (req, res, params, body) => {
@@ -1006,6 +1118,14 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   }
   const errors = [];
   const checklistItems = getChecklistItems(await getSystemSettings());
+  // Audit trail for every automatic row-merge decision this commit makes
+  // (2026-08-24, at Tiffany's request) — previously only OUTRIGHT conflicts
+  // were ever reported back (see gameIdConflicts below); a merge that
+  // silently collapsed two rows because titlesLikelySameGame() judged them
+  // "close enough" had no record at all, so there was no way to audit
+  // whether a collapse was actually correct after the fact. Returned in the
+  // commit response as `mergeDecisions` alongside the existing counts.
+  const mergeDecisions = [];
 
   // Stage 1: parse every included sheet into rows, tagged with the sheet
   // name they came from (for error messages).
@@ -1046,11 +1166,15 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   }
   for (const reskinEntry of allRows.filter((e) => e.row.reskinOf)) {
     const matchId = extractTrailingNumericId(reskinEntry.row.gameTitle);
-    const target = (matchId && allRows.find((e) => e !== reskinEntry && !e.row.reskinOf
-      && (e.row.gameId || '').trim().toLowerCase() === matchId.toLowerCase()))
-      || allRows.find((e) => e !== reskinEntry && !e.row.reskinOf
-        && titlesLikelySameGame(e.row.gameTitle, reskinEntry.row.gameTitle));
+    const byId = matchId && allRows.find((e) => e !== reskinEntry && !e.row.reskinOf
+      && (e.row.gameId || '').trim().toLowerCase() === matchId.toLowerCase());
+    const target = byId || allRows.find((e) => e !== reskinEntry && !e.row.reskinOf
+      && titlesLikelySameGame(e.row.gameTitle, reskinEntry.row.gameTitle));
     if (target) {
+      mergeDecisions.push({
+        stage: 'reskin', reason: byId ? 'matched trailing numeric ID' : 'title similarity',
+        dropped: reskinEntry.row.gameTitle || reskinEntry.row.title, keptAs: target.row.gameTitle || target.row.title,
+      });
       target.row.reskinOf = reskinEntry.row.reskinOf;
       allRows.splice(allRows.indexOf(reskinEntry), 1);
     }
@@ -1106,7 +1230,13 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     if (allSimilar) {
       const survivor = entries.find((e) => e.row.isApprovedRow) || entries[0];
       for (const e of entries) {
-        if (e !== survivor) byKey.delete(importDedupKey(e.row));
+        if (e !== survivor) {
+          byKey.delete(importDedupKey(e.row));
+          mergeDecisions.push({
+            stage: 'gameIdTitleDedup', reason: 'same Provider + Game ID, titles judged similar enough',
+            dropped: e.row.gameTitle || e.row.title, keptAs: survivor.row.gameTitle || survivor.row.title,
+          });
+        }
       }
     } else {
       gameIdConflicts.push({
@@ -1308,6 +1438,7 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     skipped: collapsedByCrossSheetDedup + collapsedByGameIdDedup + skippedExisting,
     errors,
     gameIdConflicts,
+    mergeDecisions,
   });
 });
 
@@ -1548,7 +1679,14 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
       overallStatus: result.overallStatus || null,
       checkedAt: new Date().toISOString(),
       documentIds: comparedDocIds,
-      fullResult,
+      // Never cache an 'error' (AI-response-incomplete, see server/ai.js's
+      // aiResponseIncomplete) result — caching it would make the "please
+      // re-run" message permanent for this document set until something
+      // else changes, defeating the point of asking for a re-run. Leaving
+      // fullResult unset here means the cache-hit check above (`cachedCheck
+      // && cachedCheck.fullResult`) simply falls through to a fresh AI call
+      // next time, same as if this had never been checked.
+      fullResult: result.overallStatus === 'error' ? null : fullResult,
     };
     if (targetGame) {
       const newGames = kase.games.map((g) => (g.id === targetGame.id ? { ...g, lastConsistencyCheck } : g));

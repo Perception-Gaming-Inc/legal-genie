@@ -172,7 +172,7 @@ async function nextNumber(seq, prefix, pad = 4) {
 const COLLECTIONS = [
   'users', 'roles', 'departments', 'cases', 'caseNotes', 'contracts',
   'contractVersions', 'documents', 'tasks', 'approvals',
-  'notifications', 'sessions',
+  'notifications', 'sessions', 'auditLog',
 ];
 
 // Kept only for backward compatibility with seed.js's startup guard

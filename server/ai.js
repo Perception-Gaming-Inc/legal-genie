@@ -641,6 +641,23 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
   const parameterValidation = Array.isArray(result.parameterValidation) ? result.parameterValidation : [];
   const rawConsistency = Array.isArray(result.documentConsistency) ? result.documentConsistency : [];
 
+  // Partial-failure detection (2026-08-24, at Tiffany's request) — the
+  // schema instructs Gemini to report on EVERY entry in
+  // REQUIRED_DOCUMENT_TYPES/CHECKED_PARAMETERS "even when the answer is
+  // missing", so a response that comes back with fewer entries than that
+  // isn't "this game happens to be missing everything" — it's the AI call
+  // itself only partially complying with its own schema (truncation, a
+  // schema-compliance hiccup, etc.). Recorded here, BEFORE the "Game
+  // Parameters" override below can grow documentCompleteness by one entry,
+  // so a spreadsheet-triggered addition never masks a genuinely short
+  // response (or vice versa — falsely flags one that was actually complete
+  // before the override ran).
+  const aiResponseIncomplete = (
+    documentCompleteness.length < REQUIRED_DOCUMENT_TYPES.length
+    || parameterValidation.length < CHECKED_PARAMETERS.length
+    || rawConsistency.length < CHECKED_PARAMETERS.length
+  );
+
   // "Game Parameters" completeness override — added 2026-08-20 after
   // Tiffany noticed the SAME Annex A Excel submission form got judged
   // "Present" for one game (Fortune Panda) and "Missing" for another
@@ -743,7 +760,15 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
   // with an empty parameterValidation or documentConsistency (schema
   // non-compliance, an API hiccup, etc.) would silently report "ready" for
   // a real PAGCOR filing without ever actually validating those sections.
-  const overallStatus = (
+  // aiResponseIncomplete (computed above, before the Game Parameters
+  // override) takes priority over the normal ready/not_ready verdict — an
+  // 'error' status is a distinct, third outcome from 'ready'/'not_ready' so
+  // the UI can tell "the AI call itself didn't fully come back, please
+  // re-run this" apart from "this was actually checked and something is
+  // genuinely wrong". Without this distinction a truncated response reads
+  // identically to a real compliance failure, which is worse than useless
+  // for legal staff deciding whether to trust the result.
+  const overallStatus = aiResponseIncomplete ? 'error' : (
     documentCompleteness.length > 0
     && documentCompleteness.every((d) => d.present)
     && parameterValidation.length > 0
@@ -754,10 +779,13 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
 
   return {
     overallStatus,
+    partial: aiResponseIncomplete,
     documentCompleteness,
     parameterValidation,
     documentConsistency,
-    summary: typeof result.summary === 'string' ? result.summary : '',
+    summary: aiResponseIncomplete
+      ? 'The AI did not return a complete result for every required document type / parameter this run — please re-run the check rather than relying on this result.'
+      : (typeof result.summary === 'string' ? result.summary : ''),
   };
 }
 

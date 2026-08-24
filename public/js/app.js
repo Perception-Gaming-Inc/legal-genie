@@ -1803,14 +1803,21 @@ async function showImportCasesModal() {
       const errorMsg = result.errors && result.errors.length ? `, ${result.errors.length} error(s) (see the browser console)` : '';
       const conflictMsg = result.gameIdConflicts && result.gameIdConflicts.length
         ? `; ⚠️ ${result.gameIdConflicts.length} Game ID group(s) share an ID but look like different games and were not auto-merged — see the browser console` : '';
+      // mergeDecisions (2026-08-24, at Tiffany's request) — every automatic
+      // row-merge (reskin matching, same-Game-ID-similar-title collapse)
+      // now gets logged, not just outright conflicts, so a merge can be
+      // audited after the fact instead of only ever seeing the final count.
+      const mergeMsg = result.mergeDecisions && result.mergeDecisions.length
+        ? `; ${result.mergeDecisions.length} row(s) auto-merged as duplicates — see the browser console for which` : '';
       const gamesAdded = result.gamesAdded != null ? result.gamesAdded : result.created;
       const caseSummary = [];
       if (result.casesCreated) caseSummary.push(`${result.casesCreated} new case(s)`);
       if (result.casesUpdated) caseSummary.push(`${result.casesUpdated} existing case(s) updated`);
       const caseSummaryMsg = caseSummary.length ? ` across ${caseSummary.join(' and ')}` : '';
-      toast(`Imported ${gamesAdded} game(s)${caseSummaryMsg}${skippedMsg}${errorMsg}${conflictMsg}`);
+      toast(`Imported ${gamesAdded} game(s)${caseSummaryMsg}${skippedMsg}${errorMsg}${conflictMsg}${mergeMsg}`);
       if (result.errors && result.errors.length) console.warn('Import errors:', result.errors);
       if (result.gameIdConflicts && result.gameIdConflicts.length) console.warn('Game ID conflicts (not auto-merged):', result.gameIdConflicts);
+      if (result.mergeDecisions && result.mergeDecisions.length) console.warn('Rows auto-merged as duplicates:', result.mergeDecisions);
       route();
     } catch (err) {
       toast(err.message, 'danger');
@@ -2199,6 +2206,13 @@ function consistencyStatusMeta(status) {
 }
 function showConsistencyResultModal(context, result) {
   const ready = result.overallStatus === 'ready';
+  // 'error' (2026-08-24, at Tiffany's request) — a distinct third outcome
+  // from 'ready'/'not_ready': the AI call itself didn't fully come back
+  // this run (see server/ai.js's aiResponseIncomplete), so whatever's below
+  // isn't a real compliance verdict and shouldn't be read as one. Shown as
+  // its own amber banner rather than folding into the red "Not Ready" case,
+  // which would otherwise look identical to a genuine failed check.
+  const isError = result.overallStatus === 'error';
   const documentCompleteness = result.documentCompleteness || [];
   const parameterValidation = result.parameterValidation || [];
   const documentConsistency = result.documentConsistency || [];
@@ -2259,9 +2273,10 @@ function showConsistencyResultModal(context, result) {
     size: 'modal-lg',
     bodyHtml: `
       <div class="small text-secondary mb-1">Validation Result</div>
-      <div class="alert ${ready ? 'alert-success' : 'alert-danger'} py-2 px-3 mb-3">
-        ${ready ? '🟢 Ready for Submission' : '🔴 Not Ready for Submission'}
+      <div class="alert ${isError ? 'alert-warning' : ready ? 'alert-success' : 'alert-danger'} py-2 px-3 mb-3">
+        ${isError ? '⚠️ AI Check Incomplete — Please Re-run' : ready ? '🟢 Ready for Submission' : '🔴 Not Ready for Submission'}
       </div>
+      ${isError ? '<p class="small text-secondary mb-3">The AI did not return a value for every required document type / parameter this run (likely a rate limit or a truncated response, not a real compliance finding). Whatever is shown below is incomplete — please re-run the check before treating this as a result.</p>' : ''}
       ${checklistSection('Document Completeness', documentCompleteness, (d) => presenceMeta(d.present), (d) => d.documentType)}
       ${checklistSection('Parameter Validation', parameterValidation, (p) => presenceMeta(p.present), (p) => p.parameter)}
       ${consistencySection}
@@ -2395,6 +2410,7 @@ async function renderCaseDetail(content, id) {
         ${canUploadDocs ? `<button class="btn btn-outline-secondary btn-sm" id="btnUploadCaseDocs">${Icon('upload', 'me-1')}Upload Documents</button>` : ''}
         ${!isMultiGameCase && item.provider ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
         ${approvedGame ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
+        <button class="btn btn-outline-secondary btn-sm" id="btnCaseHistory">${Icon('history', 'me-1')}History</button>
         ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnEditCase">${Icon('edit', 'me-1')}Edit</button>` : ''}
         ${canDelete ? `<button class="btn btn-outline-danger btn-sm" id="btnDeleteCase">${Icon('trash', 'me-1')}Delete</button>` : ''}
       </div>
@@ -2591,6 +2607,37 @@ async function renderCaseDetail(content, id) {
         if (ta) { ta.focus(); ta.select(); }
         toast('Could not copy automatically — the text has been selected for you, press Cmd/Ctrl+C to copy', 'danger');
       }
+    });
+  });
+
+  // Audit trail (2026-08-24, at Tiffany's request) — see logCaseAudit in
+  // server/routes.js for what gets recorded (Game ID/Version/Min-Max Bet/
+  // RTP/PAGCOR Stage, per-game for a multi-game case). Read-only, no edit/
+  // revert action here — just "who changed what, and what was it before".
+  const AUDIT_FIELD_LABELS = { gameId: 'Game ID', gameVersion: 'Game Version', minBet: 'Minimum Bet', maxBet: 'Maximum Bet', rtp: 'RTP', pagcorStage: 'PAGCOR Stage' };
+  const historyBtn = content.querySelector('#btnCaseHistory');
+  if (historyBtn) historyBtn.addEventListener('click', async () => {
+    let entries = [];
+    try { entries = await Api.get(`/api/cases/${item.id}/audit-log`); } catch (err) { toast(err.message, 'danger'); return; }
+    showInfoModal({
+      title: 'Change History',
+      bodyHtml: entries.length ? `
+        <div class="list-group list-group-flush">
+          ${entries.map((e) => `
+            <div class="list-group-item px-0">
+              <div>
+                <span class="fw-semibold">${escapeHtml(AUDIT_FIELD_LABELS[e.field] || e.field)}</span>
+                ${e.gameTitle ? `<span class="text-secondary"> — ${escapeHtml(e.gameTitle)}</span>` : ''}
+              </div>
+              <div class="small">
+                ${e.oldValue === null || e.oldValue === undefined ? '<span class="text-secondary">(empty)</span>' : escapeHtml(String(e.oldValue))}
+                &rarr;
+                ${e.newValue === null || e.newValue === undefined ? '<span class="text-secondary">(empty)</span>' : `<strong>${escapeHtml(String(e.newValue))}</strong>`}
+              </div>
+              <div class="small text-secondary">${escapeHtml(e.userName || 'system')} · ${fmtDate(e.createdAt)}</div>
+            </div>`).join('')}
+        </div>`
+        : '<div class="small text-secondary">No tracked field changes recorded yet for this case (Game ID, Game Version, Minimum/Maximum Bet, RTP, PAGCOR Stage).</div>',
     });
   });
 
@@ -2864,7 +2911,7 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
         if (selectedGames.length === 1) {
           showConsistencyResultModal(selectedGame.gameTitle || item.title, result);
         } else {
-          readyGames.push(`${selectedGame.gameTitle || item.title}: ${result.overallStatus === 'ready' ? '🟢 ready' : '🔴 not ready'}`);
+          readyGames.push(`${selectedGame.gameTitle || item.title}: ${result.overallStatus === 'ready' ? '🟢 ready' : result.overallStatus === 'error' ? '⚠️ check incomplete, re-run' : '🔴 not ready'}`);
         }
       } catch (err) {
         toast(`Automatic consistency check failed for "${selectedGame.gameTitle || item.title}": ${err.message}`, 'danger');
@@ -4596,8 +4643,14 @@ async function renderRolesTab(body) {
     { key: 'notifications', label: 'Notifications' }, { key: 'knowledgeBase', label: 'Knowledge Base' },
     { key: 'settings', label: 'Settings' },
   ];
+  // Provider Scope (2026-08-24, at Tiffany's request) — the one row-level
+  // restriction this table exposes an editor for, distinct from the
+  // module×action permission matrix above (which stays read-only/contact-
+  // admin, per the existing footer note). Empty = unrestricted (sees every
+  // Provider's cases, same as before this existed) — see
+  // filterCasesByProviderScope in server/routes.js for how it's enforced.
   body.innerHTML = `<div class="card stat-card"><div class="table-responsive"><table class="table mb-0 roles-perm-table">
-    <thead class="table-light"><tr><th>Role</th>${modules.map((m) => `<th class="text-center">${m.label}</th>`).join('')}</tr></thead>
+    <thead class="table-light"><tr><th>Role</th>${modules.map((m) => `<th class="text-center">${m.label}</th>`).join('')}<th>Provider Scope</th></tr></thead>
     <tbody>
       ${roles.map((r) => `<tr>
         <td class="fw-semibold">${escapeHtml(r.name)}</td>
@@ -4605,6 +4658,12 @@ async function renderRolesTab(body) {
           const p = r.name === 'Admin' ? { view: true, create: true, edit: true, delete: true, approve: true } : ((r.permissions || {})[m.key] || {});
           return `<td class="text-center">${permissionBadgeHtml(p)}</td>`;
         }).join('')}
+        <td>
+          ${r.name === 'Admin' ? '<span class="text-secondary small">All (Admin)</span>' : `
+          <span class="small">${(Array.isArray(r.providerScope) && r.providerScope.length) ? escapeHtml(r.providerScope.join(', ')) : '<span class="text-secondary">All Providers</span>'}</span>
+          ${canEdit ? ` <button type="button" class="btn btn-sm btn-outline-secondary btn-edit-provider-scope" data-id="${r.id}" title="Edit Provider Scope">${Icon('edit')}</button>` : ''}
+          `}
+        </td>
       </tr>`).join('')}
     </tbody></table></div>
     <div class="card-footer small text-secondary">
@@ -4613,8 +4672,23 @@ async function renderRolesTab(body) {
       <span class="badge badge-soft-neutral perm-badge">V</span> view only &nbsp;
       <span class="text-secondary">—</span> no access
       <br>V=View, C=Create, E=Edit, D=Delete, A=Approve. Admin role always has full access.${canEdit ? ' Contact your system administrator to adjust granular permissions.' : ''}
+      <br>Provider Scope (optional): restricts a role to only seeing cases for the listed Provider(s). Leave empty for no restriction.
     </div>
     </div>`;
+  if (canEdit) body.querySelectorAll('.btn-edit-provider-scope').forEach((btn) => btn.addEventListener('click', () => {
+    const role = roles.find((r) => r.id === btn.dataset.id);
+    showFormModal({
+      title: `Provider Scope — ${role.name}`,
+      fields: [{ name: 'providerScope', label: 'Provider(s) this role can see (comma-separated; leave empty for no restriction)', type: 'textarea' }],
+      initial: { providerScope: (role.providerScope || []).join(', ') },
+      onSubmit: async (data) => {
+        const providerScope = String(data.providerScope || '').split(',').map((s) => s.trim()).filter(Boolean);
+        await Api.put(`/api/roles/${role.id}`, { providerScope });
+        toast('Provider Scope updated');
+        renderRolesTab(body);
+      },
+    });
+  }));
 }
 
 async function renderDepartmentsTab(body) {

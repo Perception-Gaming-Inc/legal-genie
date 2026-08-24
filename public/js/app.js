@@ -171,6 +171,11 @@ const State = { user: null, role: null, lookups: null };
 const UNCATEGORIZED_PROVIDER = 'Uncategorized Provider';
 const UNCATEGORIZED_GAME = 'Uncategorized Game';
 let documentsFolderNav = { provider: null, gameTitle: null };
+// Document Center search (2026-08-24, at Tiffany's request — the page had
+// no way to search across all documents, only drill down provider→game).
+// Module-level like documentsFolderNav above, for the same reason: it must
+// survive a delete/edit/upload's route() re-render rather than resetting.
+let documentsSearchQuery = '';
 
 // Task Management's status stat tiles (see renderTasks) act as a toggleable
 // filter over the table below them — module-level for the same reason as
@@ -2273,6 +2278,35 @@ function showConsistencyResultModal(context, result) {
   });
 }
 
+// Deleting a case used to orphan every document/task still pointing at it
+// with zero warning (this is exactly how the ~20 orphaned Vertex Play
+// documents earlier this case came to exist — a deleted case ID with
+// documents still referencing it). The server doesn't cascade-delete or
+// unlink those rows, so this at least warns the user up front how many
+// records will be orphaned before they confirm — added 2026-08-24 at
+// Tiffany's request. Fetches everything and filters client-side, same
+// "fine at this app's scale" pattern already used elsewhere (e.g.
+// renderCaseDetail's own relatedDocs above check-consistency's lookup).
+async function confirmCaseDelete(caseId, caseLabel) {
+  let docCount = 0;
+  let taskCount = 0;
+  try {
+    const [docs, tasks] = await Promise.all([
+      canDo('documents', 'view') ? Api.get('/api/documents') : Promise.resolve([]),
+      canDo('tasks', 'view') ? Api.get('/api/tasks') : Promise.resolve([]),
+    ]);
+    docCount = docs.filter((d) => d.relatedCaseId === caseId).length;
+    taskCount = tasks.filter((t) => t.relatedCaseId === caseId).length;
+  } catch (e) { /* if the count lookup fails, still allow the plain confirm below */ }
+  const warnings = [];
+  if (docCount) warnings.push(`${docCount} document(s)`);
+  if (taskCount) warnings.push(`${taskCount} task(s)`);
+  const message = warnings.length
+    ? `Delete "${caseLabel}"? ${warnings.join(' and ')} still reference this case and will be orphaned (NOT deleted, but no longer linked to any case) — this cannot be undone.`
+    : `Delete "${caseLabel}"? This cannot be undone.`;
+  return confirmDialog(message);
+}
+
 // Full-page, read/write case + game detail view — reached by clicking a row
 // in Case Management (see attachRowHandlers() below), routed via
 // "#/cases/<id>" (see the route() dispatcher's cases-with-id branch).
@@ -2569,7 +2603,7 @@ async function renderCaseDetail(content, id) {
   });
   const delBtn = content.querySelector('#btnDeleteCase');
   if (delBtn) delBtn.addEventListener('click', async () => {
-    if (!(await confirmDialog('Delete this case?'))) return;
+    if (!(await confirmCaseDelete(item.id, item.title || item.caseNumber || 'this case'))) return;
     await Api.del(`/api/cases/${item.id}`);
     toast('Case deleted');
     location.hash = '#/cases';
@@ -2969,7 +3003,8 @@ async function renderCases(content) {
     }));
     content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!(await confirmDialog('Delete this case?'))) return;
+      const c = cases.find((x) => x.id === btn.dataset.id);
+      if (!(await confirmCaseDelete(btn.dataset.id, (c && (c.title || c.caseNumber)) || 'this case'))) return;
       await Api.del(`/api/cases/${btn.dataset.id}`);
       toast('Case deleted');
       route();
@@ -3648,8 +3683,37 @@ function showImportApprovalNoticeModal() {
 // them. Position is tracked in the module-level `documentsFolderNav` so it
 // survives a delete/edit/upload's route() re-render — see its declaration
 // near the top of this file for why that has to live outside this function.
+// CSV export for whatever document set is currently visible (2026-08-24, at
+// Tiffany's request — Cases already had exportCasesCsv, Document Center had
+// no equivalent). Same throwaway-object-URL trick exportCasesCsv uses.
+function exportDocumentsCsv(list) {
+  const header = ['Title', 'File Name', 'Provider', 'Game Title', 'Game ID', 'Related Case', 'Uploaded By', 'Uploaded'];
+  const lines = [header.map(csvEscape).join(',')];
+  list.forEach((d) => {
+    lines.push([
+      d.title || '', d.fileName || '', d.provider || '', d.gameTitle || '', d.gameId || '',
+      caseName(d.relatedCaseId) || '', userName(d.uploadedBy), fmtDate(d.createdAt),
+    ].map(csvEscape).join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'documents.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function renderDocuments(content) {
-  const docs = await Api.get('/api/documents');
+  const rawDocs = await Api.get('/api/documents');
+  // Search (2026-08-24, at Tiffany's request) — filters across ALL documents
+  // by title/file name/game title/game ID/provider before anything below
+  // groups or drills down, so a search hit surfaces regardless of which
+  // provider tab or game folder it's actually filed under. Module-level
+  // documentsSearchQuery (declared near documentsFolderNav) so it survives
+  // this page's own route() re-renders the same way the folder position does.
+  const q = documentsSearchQuery.trim().toLowerCase();
+  const docs = q
+    ? rawDocs.filter((d) => [d.title, d.fileName, d.gameTitle, d.gameId, d.provider].some((v) => (v || '').toLowerCase().includes(q)))
+    : rawDocs;
   const canCreate = canDo('documents', 'create');
   const canEdit = canDo('documents', 'edit');
   const canDelete = canDo('documents', 'delete');
@@ -3659,18 +3723,35 @@ async function renderDocuments(content) {
   // (optionally) click AI Smart-Fill to read that same file" rather than
   // needing to scroll all the way down before AI smart-fill has anything
   // to read. See showFormModal's reuseFileField.
-  const fields = () => ([
-    { name: 'title', label: 'Title', required: true },
-    { name: 'fileName', label: 'File Upload', type: 'file' },
-    { name: 'category', label: 'Category', type: 'select', options: ['Templates', 'Policies', 'Agreements', 'Certificates', 'Other'].map((v) => ({ value: v, label: v })), required: true },
-    { name: 'isPagcorDoc', label: 'This is a PAGCOR game-related document (check to show game-related fields)', type: 'checkbox', controlsSection: 'pagcor' },
-    { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP', section: 'pagcor' },
-    { name: 'gameTitle', label: 'Game Title (optional)', section: 'pagcor' },
-    { name: 'gameId', label: 'Game ID (optional)', section: 'pagcor' },
-    { name: 'reportType', label: 'Report Type (optional)', type: 'select', allowEmpty: true, options: REPORT_TYPE_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
-    { name: 'relatedCaseId', label: 'Related Case (optional)', type: 'select', allowEmpty: true, options: State.lookups.cases.map((c) => ({ value: c.id, label: c.caseNumber + ' - ' + c.title })) },
-    { name: 'relatedContractId', label: 'Related Contract (optional)', type: 'select', allowEmpty: true, options: State.lookups.contracts.map((c) => ({ value: c.id, label: c.contractNumber + ' - ' + c.title })) },
-  ]);
+  // relatedGameId (2026-08-24, at Tiffany's request): the field that
+  // actually scopes a document to one game inside a multi-game case (see
+  // docsForGame in routes.js) was previously only ever set once, at upload
+  // time — there was no way to fix a mis-linked document afterward except
+  // by editing it directly via the API (exactly what the Vertex Play
+  // Document Center cleanup earlier this case had to resort to). Options
+  // are computed from whichever case is passed in (the document's current
+  // relatedCaseId when editing) since this form has no live "case changed,
+  // refresh the game list" wiring — reopen the Edit form after changing
+  // Related Case if you need to also change Related Game.
+  const fields = (forCaseId) => {
+    const selectedCase = forCaseId ? State.lookups.cases.find((c) => c.id === forCaseId) : null;
+    const gameOptions = (selectedCase && Array.isArray(selectedCase.games))
+      ? selectedCase.games.map((g) => ({ value: g.id, label: g.gameTitle || '(untitled game)' }))
+      : [];
+    return [
+      { name: 'title', label: 'Title', required: true },
+      { name: 'fileName', label: 'File Upload', type: 'file' },
+      { name: 'category', label: 'Category', type: 'select', options: ['Templates', 'Policies', 'Agreements', 'Certificates', 'Other'].map((v) => ({ value: v, label: v })), required: true },
+      { name: 'isPagcorDoc', label: 'This is a PAGCOR game-related document (check to show game-related fields)', type: 'checkbox', controlsSection: 'pagcor' },
+      { name: 'provider', label: 'PAGCOR Provider (optional)', placeholder: 'e.g. FC, JDB, VP', section: 'pagcor' },
+      { name: 'gameTitle', label: 'Game Title (optional)', section: 'pagcor' },
+      { name: 'gameId', label: 'Game ID (optional)', section: 'pagcor' },
+      { name: 'reportType', label: 'Report Type (optional)', type: 'select', allowEmpty: true, options: REPORT_TYPE_OPTIONS.map((v) => ({ value: v, label: v })), section: 'pagcor' },
+      { name: 'relatedCaseId', label: 'Related Case (optional)', type: 'select', allowEmpty: true, options: State.lookups.cases.map((c) => ({ value: c.id, label: c.caseNumber + ' - ' + c.title })) },
+      ...(gameOptions.length ? [{ name: 'relatedGameId', label: 'Related Game (optional — only if Related Case has multiple games; re-open this form after changing Related Case)', type: 'select', allowEmpty: true, options: gameOptions }] : []),
+      { name: 'relatedContractId', label: 'Related Contract (optional)', type: 'select', allowEmpty: true, options: State.lookups.contracts.map((c) => ({ value: c.id, label: c.contractNumber + ' - ' + c.title })) },
+    ];
+  };
 
   // Upload/Edit/Summarize/Delete handlers are identical at both views, so
   // they're wired up once here and called from whichever one actually
@@ -3680,7 +3761,7 @@ async function renderDocuments(content) {
     if (!btn) return;
     btn.addEventListener('click', () => {
       showFormModal({
-        title: 'Upload Document', fields: fields(), initial: prefill || {}, submitLabel: 'Upload',
+        title: 'Upload Document', fields: fields(prefill && prefill.relatedCaseId), initial: prefill || {}, submitLabel: 'Upload',
         aiAssist: { module: 'documents' },
         onSubmit: async (data) => { await Api.post('/api/documents', data); toast('Document uploaded'); route(); },
       });
@@ -3695,7 +3776,7 @@ async function renderDocuments(content) {
     }));
     content.querySelectorAll('.btn-edit').forEach((btn) => btn.addEventListener('click', () => {
       const item = rowDocs.find((d) => d.id === btn.dataset.id);
-      showFormModal({ title: 'Edit Document', fields: fields().filter((f) => f.name !== 'fileName'), initial: item,
+      showFormModal({ title: 'Edit Document', fields: fields(item.relatedCaseId).filter((f) => f.name !== 'fileName'), initial: item,
         onSubmit: async (data) => { await Api.put(`/api/documents/${item.id}`, data); toast('Updated'); route(); } });
     }));
     content.querySelectorAll('.btn-del').forEach((btn) => btn.addEventListener('click', async () => {
@@ -3849,8 +3930,15 @@ async function renderDocuments(content) {
         ${providers.map((p) => `<li class="nav-item"><button type="button" class="btn btn-sm ${selectedProvider === p ? 'btn-primary' : 'btn-outline-secondary'} btn-provider-tab" ${tabKeyAttr(p)}>${escapeHtml(p)}</button></li>`).join('')}
         ${hasUncategorized ? `<li class="nav-item"><button type="button" class="btn btn-sm ${selectedProvider === UNCATEGORIZED_PROVIDER ? 'btn-primary' : 'btn-outline-secondary'} btn-provider-tab" ${tabKeyAttr(UNCATEGORIZED_PROVIDER)}>${UNCATEGORIZED_PROVIDER}</button></li>` : ''}
       </ul>`;
+    const searchBarHtml = `
+      <div class="d-flex gap-2 mb-3">
+        <input type="search" class="form-control form-control-sm" id="docSearch" style="min-width:240px; max-width:320px;" placeholder="Search Title / File / Game / Game ID / Provider…" value="${escapeHtml(documentsSearchQuery)}">
+      </div>`;
 
-    content.innerHTML = listToolbar({ title: 'Document Center', canCreate }) + tabsHtml + (
+    content.innerHTML = listToolbar({
+      title: 'Document Center', canCreate,
+      extraButtonsHtml: `<button type="button" class="btn btn-outline-secondary btn-sm" id="btnExportDocsCsv">${Icon('download', 'me-1')}Export CSV</button>`,
+    }) + searchBarHtml + tabsHtml + (
       gameRows.length
         ? `<div class="card stat-card">
             <div class="table-responsive">
@@ -3884,6 +3972,22 @@ async function renderDocuments(content) {
       documentsFolderNav = { provider: row.dataset.provider, gameTitle: row.dataset.game };
       renderDocuments(content);
     }));
+    // Debounced + refocus-after-rerender (2026-08-24): this page does a full
+    // content.innerHTML rebuild on every search change (unlike Cases' own
+    // search, which only patches its table body), so without this the input
+    // would lose focus/cursor position on every pause while typing.
+    let docSearchDebounce;
+    content.querySelector('#docSearch').addEventListener('input', (e) => {
+      clearTimeout(docSearchDebounce);
+      const value = e.target.value;
+      docSearchDebounce = setTimeout(async () => {
+        documentsSearchQuery = value;
+        await renderDocuments(content);
+        const el = content.querySelector('#docSearch');
+        if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+      }, 250);
+    });
+    content.querySelector('#btnExportDocsCsv').addEventListener('click', () => exportDocumentsCsv(filteredDocs));
     // Note: no need to also set isPagcorDoc here — showFormModal auto-expands
     // the "pagcor" section whenever any section-tagged field (provider here)
     // already has a real value in `initial`, regardless of the checkbox's
@@ -3901,15 +4005,18 @@ async function renderDocuments(content) {
   // page, which is where document review/upload work actually happens.
   content.innerHTML = listToolbar({
     title: `Document Center — ${documentsFolderNav.provider} / ${documentsFolderNav.gameTitle}`, canCreate,
+    extraButtonsHtml: `<button type="button" class="btn btn-outline-secondary btn-sm" id="btnExportDocsCsv">${Icon('download', 'me-1')}Export CSV</button>`,
   }) + `
     <div class="mb-3"><a href="#" id="btnBackToList" class="small text-decoration-none">&larr; All Documents</a></div>
     <div class="card stat-card">
+      <div id="docBulkBar" class="d-none align-items-center gap-2 p-2 border-bottom bg-light"></div>
       <div class="table-responsive">
         <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>Title</th><th>File</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
+          <thead class="table-light"><tr>${canDelete ? '<th style="width:2rem"><input type="checkbox" id="docSelectAll"></th>' : ''}<th>Title</th><th>File</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
           <tbody>
             ${gameDocs.map((d) => `
               <tr>
+                ${canDelete ? `<td><input type="checkbox" class="doc-row-check" data-id="${d.id}"></td>` : ''}
                 <td>${escapeHtml(d.title)}</td>
                 <td>${d.filePath ? `<button type="button" class="btn btn-link btn-sm p-0 text-decoration-none btn-download-doc" data-id="${d.id}" data-filename="${escapeHtml(d.fileName || 'file')}">${Icon('download', 'me-1')}${escapeHtml(d.fileName || 'file')}</button>` : `<span class="text-secondary">${escapeHtml(d.fileName || '—')}</span>`}</td>
                 <td>${escapeHtml(userName(d.uploadedBy))}</td>
@@ -3921,7 +4028,7 @@ async function renderDocuments(content) {
                   ${canEdit ? `<button class="btn btn-sm btn-outline-secondary btn-edit" data-id="${d.id}">${Icon('edit')}</button>` : ''}
                   ${canDelete ? `<button class="btn btn-sm btn-outline-danger btn-del" data-id="${d.id}">${Icon('trash')}</button>` : ''}
                 </td>
-              </tr>`).join('') || `<tr><td colspan="5" class="text-center text-secondary py-3">No documents yet.</td></tr>`}
+              </tr>`).join('') || `<tr><td colspan="${canDelete ? 6 : 5}" class="text-center text-secondary py-3">No documents yet.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -3929,6 +4036,7 @@ async function renderDocuments(content) {
   content.querySelector('#btnBackToList').addEventListener('click', (e) => {
     e.preventDefault(); documentsFolderNav = { ...documentsFolderNav, gameTitle: null }; renderDocuments(content);
   });
+  content.querySelector('#btnExportDocsCsv').addEventListener('click', () => exportDocumentsCsv(gameDocs));
   if (canCreate) {
     const prefill = {};
     if (documentsFolderNav.provider !== UNCATEGORIZED_PROVIDER) prefill.provider = documentsFolderNav.provider;
@@ -3936,6 +4044,32 @@ async function renderDocuments(content) {
     wireUpload(prefill);
   }
   wireRowActions(gameDocs);
+
+  // Bulk delete (2026-08-24, at Tiffany's request — Document Center had no
+  // way to remove more than one document at a time, which is exactly what
+  // made the earlier true-duplicate cleanup this session tedious to do by
+  // hand via direct API calls). Mirrors Cases' own bulk-action-bar pattern.
+  if (canDelete) {
+    const selectAllEl = content.querySelector('#docSelectAll');
+    const rowChecks = () => Array.from(content.querySelectorAll('.doc-row-check'));
+    const bulkBar = content.querySelector('#docBulkBar');
+    const updateBulkBar = () => {
+      const selected = rowChecks().filter((c) => c.checked);
+      if (!selected.length) { bulkBar.classList.add('d-none'); bulkBar.classList.remove('d-flex'); bulkBar.innerHTML = ''; return; }
+      bulkBar.classList.remove('d-none'); bulkBar.classList.add('d-flex');
+      bulkBar.innerHTML = `<span class="small">${selected.length} selected</span><button type="button" class="btn btn-sm btn-outline-danger" id="btnBulkDeleteDocs">${Icon('trash', 'me-1')}Delete Selected</button>`;
+      bulkBar.querySelector('#btnBulkDeleteDocs').addEventListener('click', async () => {
+        if (!(await confirmDialog(`Delete ${selected.length} document(s)? This cannot be undone.`))) return;
+        for (const c of selected) { await Api.del(`/api/documents/${c.dataset.id}`); }
+        toast(`${selected.length} document(s) deleted`); route();
+      });
+    };
+    rowChecks().forEach((c) => c.addEventListener('change', updateBulkBar));
+    if (selectAllEl) selectAllEl.addEventListener('change', () => {
+      rowChecks().forEach((c) => { c.checked = selectAllEl.checked; });
+      updateBulkBar();
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -300,11 +300,28 @@ router.get('/api/lookups', async (req, res) => {
     store.all('users'), store.all('departments'), store.all('roles'),
     store.all('cases'), store.all('contracts'), getSystemSettings(),
   ]);
+  // 2026-08-24 (audit fix, at Tiffany's request): this endpoint used to
+  // return every case's title/caseNumber to ANY authenticated user
+  // regardless of their role's `cases: view` permission — a documents-only
+  // clerk could enumerate every case in the system through this one lookup
+  // call even though the actual /api/cases list is properly permission-
+  // gated. Contracts are deliberately left unfiltered: the Contracts module
+  // itself was retired (see the comment above the /api/documents routes)
+  // and its data is only ever surfaced read-only here so Tasks/Documents'
+  // existing "Related Contract" pickers keep working — there is no
+  // `contracts` permission module left to check it against.
+  const canViewCases = await auth.can(user, 'cases', 'view');
   sendJson(res, 200, {
     users: users.map((u) => ({ id: u.id, fullName: u.fullName, username: u.username })),
     departments,
     roles: roles.map((r) => ({ id: r.id, name: r.name })),
-    cases: cases.map((c) => ({ id: c.id, title: c.title, caseNumber: c.caseNumber })),
+    cases: canViewCases ? cases.map((c) => ({
+      id: c.id, title: c.title, caseNumber: c.caseNumber,
+      // Games list included (2026-08-24) so Document Center's "Related
+      // Game" picker can be populated for a multi-game case without a
+      // second round-trip — see fields() in renderDocuments (app.js).
+      games: Array.isArray(c.games) ? c.games.map((g) => ({ id: g.id, gameTitle: g.gameTitle })) : undefined,
+    })) : [],
     contracts: contracts.map((c) => ({ id: c.id, title: c.title, contractNumber: c.contractNumber })),
     // The frontend can't reach getChecklistItems() itself (plain browser
     // JS, no server import) — sent here once at boot instead, alongside
@@ -1466,6 +1483,20 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
     });
   }
 
+  // Cache hit (2026-08-24, at Tiffany's request after the Gemini free-tier
+  // daily quota got exhausted by repeated re-checks) — if the exact same
+  // document set was already checked and nothing has changed since (same
+  // staleness rule the download-all gate already relies on), return that
+  // stored result instead of burning another AI call on an answer that
+  // would come back identical. Pass { force: true } in the request body to
+  // skip this and force a fresh AI call regardless (e.g. after a code/rule
+  // change that would produce a different result for the same documents).
+  const cachedCheck = targetGame ? targetGame.lastConsistencyCheck : kase.lastConsistencyCheck;
+  const forceRefresh = !!(body && body.force);
+  if (!forceRefresh && cachedCheck && cachedCheck.fullResult && !isCheckStale(cachedCheck, relatedDocs)) {
+    return sendJson(res, 200, { ...cachedCheck.fullResult, fromCache: true, checkedAt: cachedCheck.checkedAt });
+  }
+
   try {
     const documents = [];
     const comparedDocIds = [];
@@ -1512,10 +1543,12 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
     // isConsistencyCheckStale below. Multi-game case: this lives on the
     // specific game inside `games[]` that was checked, not on the case
     // itself — each game's "ready to download" state is independent.
+    const fullResult = { ...result, documentsCompared: documents.length, documentTitles: documents.map((d) => d.fileName) };
     const lastConsistencyCheck = {
       overallStatus: result.overallStatus || null,
       checkedAt: new Date().toISOString(),
       documentIds: comparedDocIds,
+      fullResult,
     };
     if (targetGame) {
       const newGames = kase.games.map((g) => (g.id === targetGame.id ? { ...g, lastConsistencyCheck } : g));
@@ -1535,7 +1568,7 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
     // multi-game-upload bug (see the reassignment work earlier this case)
     // that don't affect a correctly-scoped check but are worth being able
     // to visually confirm aren't sneaking in.
-    sendJson(res, 200, { ...result, documentsCompared: documents.length, documentTitles: documents.map((d) => d.fileName) });
+    sendJson(res, 200, fullResult);
   } catch (err) {
     sendJson(res, 400, { error: err.message });
   }

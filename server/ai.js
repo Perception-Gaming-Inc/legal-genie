@@ -192,7 +192,28 @@ const APPROVAL_NOTICE_SCHEMA = {
   required: ['games'],
 };
 
-async function callGemini(requestBody) {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Pulls the "Please retry in Xs" hint out of Gemini's own 429 message body so
+// the retry wait roughly matches what Google itself is telling us to wait,
+// instead of guessing a fixed backoff. Falls back to a short fixed delay when
+// no hint is present (or it's absurdly long — never wait more than 10s per
+// attempt, this is a synchronous user-facing request, not a batch job).
+function retryDelayMs(detail, attempt) {
+  const match = String(detail || '').match(/retry in ([\d.]+)s/i);
+  const hinted = match ? Math.ceil(parseFloat(match[1]) * 1000) : null;
+  if (hinted && Number.isFinite(hinted)) return Math.min(hinted, 10000);
+  return Math.min(1000 * 2 ** attempt, 8000);
+}
+
+// 2026-08-24 (at Tiffany's request, after the free-tier 20-req/day quota got
+// hit mid-session and every AI feature failed hard with a raw HTTP 429):
+// retry a rate-limited call a couple of times with a short backoff before
+// giving up, and when it still fails, surface a plain-language message
+// instead of the raw Google error text — legal staff shouldn't have to parse
+// "generativelanguage.googleapis.com/generate_content_free_tier_requests" to
+// understand "try again in a bit".
+async function callGemini(requestBody, attempt = 0) {
   const apiKey = process.env.GEMINI_API_KEY;
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
   let response;
@@ -208,6 +229,13 @@ async function callGemini(requestBody) {
   if (!response.ok) {
     let detail = '';
     try { detail = (await response.json())?.error?.message || ''; } catch (e) { /* ignore */ }
+    if (response.status === 429 && attempt < 2) {
+      await sleep(retryDelayMs(detail, attempt));
+      return callGemini(requestBody, attempt + 1);
+    }
+    if (response.status === 429) {
+      throw new Error('The AI service is busy right now (rate limit reached) — please wait a minute and try again.');
+    }
     throw new Error(`AI service error (${response.status})${detail ? `: ${detail}` : ''}`);
   }
   const data = await response.json();
@@ -979,7 +1007,6 @@ async function extractFields({ module, text, fileName, fileContentBase64 }) {
   if (hasText) parts.push({ text: String(text) });
   if (hasFile) parts.push(filePart(fileName, fileContentBase64));
 
-  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
   const requestBody = {
     systemInstruction: {
       parts: [{
@@ -996,33 +1023,10 @@ async function extractFields({ module, text, fileName, fileContentBase64 }) {
     },
   };
 
-  let response;
-  try {
-    response = await fetch(`${GEMINI_API_BASE}/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify(requestBody),
-    });
-  } catch (err) {
-    throw new Error(`Failed to connect to the AI service: ${err.message}`);
-  }
-
-  if (!response.ok) {
-    let detail = '';
-    try { detail = (await response.json())?.error?.message || ''; } catch (e) { /* ignore */ }
-    throw new Error(`AI service error (${response.status})${detail ? `: ${detail}` : ''}`);
-  }
-
-  const data = await response.json();
-  const text_ = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).filter(Boolean).join('') || '';
-  if (!text_) {
-    throw new Error('The AI did not return a parseable result. Please try again, or paste the text instead.');
-  }
-  try {
-    return JSON.parse(text_);
-  } catch (err) {
-    throw new Error('The AI\'s response could not be parsed. Please try again.');
-  }
+  // Routed through the shared callGemini() (2026-08-24) instead of a second
+  // hand-rolled fetch, so Smart-Fill gets the same 429 retry/backoff and
+  // plain-language rate-limit message as every other AI feature in this file.
+  return callGemini(requestBody);
 }
 
 // ---------------------------------------------------------------------------

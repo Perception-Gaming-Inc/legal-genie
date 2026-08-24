@@ -677,7 +677,13 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
         : parsed.every((v) => v.percent >= RTP_MIN_PERCENT && v.percent <= RTP_MAX_PERCENT)
           ? 'in_range'
           : 'out_of_range';
-      return { parameter, status, values, expectedValue: `${RTP_MIN_PERCENT}%–${RTP_MAX_PERCENT}%`, detail };
+      // Normalize each document's displayed value to a percentage string
+      // (2026-08-24, at Tiffany's request) — documents state RTP in mixed
+      // formats ("94.07%" vs a raw decimal fraction like "0.9445"), and
+      // without this the modal showed them inconsistently side by side
+      // instead of e.g. "94.07%" next to "94.45%".
+      const displayValues = parsed.map((v) => ({ ...v, value: `${Math.round(v.percent * 100) / 100}%` }));
+      return { parameter, status, values: displayValues, expectedValue: `${RTP_MIN_PERCENT}%–${RTP_MAX_PERCENT}%`, detail };
     }
 
     const expectedKey = EXPECTED_VALUE_KEYS[parameter];

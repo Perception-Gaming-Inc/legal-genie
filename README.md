@@ -79,6 +79,7 @@ To run on a different port locally: `PORT=8080 node server.js`.
 - **Approval Center** – submit a request, assign a reviewer, approve/reject with comments; requester is notified of the decision. No longer has its own sidebar entry — day-to-day, pending approvals surface right on the Dashboard (see above); the full page (approval history, etc.) is still reachable at `#/approvals`.
 - **Notification Center** – contract expiry, approval decisions, task assignments. Same as Approval Center: no sidebar entry, reachable via the bell icon in the top bar (which also shows an unread-count badge); the full page is still at `#/notifications`.
 - **Settings** – Users, Roles & Permissions (view/create/edit/delete/approve per module), Departments.
+- **Audit Log** (Admin-only) – system-wide activity feed covering every module (cases, documents, tasks, knowledge base, calendar, approvals, users, roles, departments, settings), plus the original per-field diffs on 6 audited case/game fields. See "System-Wide Activity Log" below.
 
 Role-based access control is enforced on both the API (server-side, so it
 cannot be bypassed) and the UI (relevant buttons/nav items hidden per role).
@@ -303,10 +304,12 @@ Center file linked to that case (needs 2+, each with a file attached) and
 runs a **pre-submission validation** covering three things legal actually
 cares about before a PAGCOR submission goes out:
 
-1. **Document Completeness** — does each of the 6 required submission
-   document *types* exist at all: EG Form, Game Parameters, Game Manual,
+1. **Document Completeness** — does each of the 5 required submission
+   document *types* exist at all: Game Parameters, Game Manual,
    RNG Certification, RTP Verification, Content Provider Certification.
-   Each is reported present or not, with a one-line reason.
+   ("EG Form" was removed from this list 2026-08-25 at Tiffany's request —
+   it's not treated as a required submission document.) Each is reported
+   present or not, with a one-line reason.
 2. **Parameter Validation** — does each of 5 tracked parameters (Game ID,
    Game Version, Minimum Bet, Maximum Bet, RTP) have a value stated
    *anywhere* among the documents. This is a presence check only.
@@ -353,6 +356,38 @@ straight from the folder instead of a Case's linked documents) and the
 `public/js/app.js`.
 
 Shares the same `GEMINI_API_KEY` setup as AI smart-fill above.
+
+### System-Wide Activity Log
+
+The Audit Log page (nav item, and `GET /api/audit-log`) tracks two kinds of
+entries in one shared `auditLog` table:
+
+1. **Field-level diffs** — the original, narrower behavior: changes to the 6
+   audited case/game fields (Game ID, Game Version, Minimum Bet, Maximum
+   Bet, RTP, PAGCOR Stage) are logged old-value → new-value. See
+   `logCaseAudit`/`logAudit` in `server/routes.js`.
+2. **System-wide action log** (added 2026-08-25, at Tiffany's request —
+   "整個系統的activity log都要記錄") — every create/update/delete across the
+   system is now logged as well: Cases, Documents (including replace-file
+   and case notes), Tasks, Knowledge Base (documents and FAQs), Calendar
+   Events, Approvals (including decisions), Users, Roles, Departments, and
+   Settings. See the `logAction()` helper in `server/routes.js`, called from
+   each resource's `afterCreate`/`afterUpdate`/`afterDelete` crudRoutes
+   hooks.
+
+The frontend (`renderAuditLog()`, `public/js/app.js`) distinguishes the two
+entry shapes by whether `field` is set, and search matches against both the
+raw entity type/action and their display labels (`ENTITY_TYPE_LABELS`,
+`ACTION_LABELS`).
+
+**Admin-only.** Because this feed now spans every module — more sensitive
+than any single module's own `view` permission — access is restricted to
+the `Admin` role specifically (not just anyone with `settings:view`, since
+Legal Manager also holds that). Enforced both server-side (`GET
+/api/audit-log` checks `role.name === 'Admin'` directly, the same pattern
+used elsewhere in `server/routes.js` for Admin-only carve-outs) and
+client-side (`canView('auditLog')` in `public/js/app.js`, which hides the
+nav item for non-Admins).
 
 ## PAGCOR game-submission features
 
@@ -515,7 +550,7 @@ Center, and the AI Assistant/AI smart-fill you already have.
     `followUpsWidgetHtml()` in `public/js/app.js`.
 15. **AI Submission Validation (optional) + batch document upload.**
     On a PAGCOR case's detail page, "AI 參數一致性檢查" opens the "AI
-    Submission Validation" modal: Document Completeness (are the 6 required
+    Submission Validation" modal: Document Completeness (are the 5 required
     submission document types present), Parameter Validation (does Game ID
     / Game Version / Minimum Bet / Maximum Bet / RTP have a value anywhere),
     and Document Consistency (do the documents that state a value agree,
@@ -776,10 +811,11 @@ the permission model, the seed data — is identical between both paths.
 4. **HTTPS & hosting** — ✅ done. Vercel provisions HTTPS automatically.
 5. **Backups** — Supabase's paid tiers include automated backups; the free
    tier does not. Worth revisiting if/when this moves off the free tier.
-6. **Audit trail** — the data model already timestamps records
-   (`createdAt`/`updatedAt`); a dedicated audit log table for immutable
-   history (who viewed/changed what) is still a future addition, not yet
-   built.
+6. **Audit trail** — ✅ done. A dedicated `auditLog` table records every
+   create/update/delete across the system (cases, documents, tasks,
+   knowledge base, calendar, approvals, users, roles, departments,
+   settings), plus the original per-field diffs on the 6 audited case/game
+   fields. See the "System-Wide Activity Log" section below.
 7. **Testing & code review** — the Supabase/Vercel rewrite was verified
    with an in-memory mock of the Supabase client covering login/lockout,
    dashboard aggregation, sequential numbering, file upload+download

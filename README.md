@@ -299,6 +299,19 @@ report, Game Manual, approval notice, whatever's on hand):
 See `showCaseDocumentUploadModal()` and the "Uploaded Documents" list in
 `renderCaseDetail()`, `public/js/app.js`.
 
+**Duplicate-upload check** (added 2026-08-25, at Tiffany's request, after
+finding a batch of leftover documents in the R88/LuckyAce and R88/Maya Gems
+folders left over from an earlier deleted case). Scoped to one game's own
+Document Center folder: before saving, each file being uploaded (here, from
+Document Center's own "New" button, and from the AI multi-game bundle flow)
+is checked against that game's existing documents — a match is a Title or
+original file name already on file there (case-insensitive, trimmed). On a
+match, a confirm prompt offers **OK = replace** it (the old file is kept as
+a version, downloadable from that document's version history — see
+`POST /api/documents/:id/replace-file` above) or **Cancel = keep both**
+(upload as a separate document, unchanged from the old behavior). See
+`findDuplicateInGameFolder()` / `docsForGameInList()` in `public/js/app.js`.
+
 ### AI Submission Validation (button label still "AI Parameter Consistency Check")
 
 The other half of the same idea: from a case's own detail page (or
@@ -628,6 +641,28 @@ How it works:
    the checklist, instead of a blanket default.
 3. Review the per-sheet row counts and sample games, adjust Provider/Stage
    if needed, and click "Confirm Import" — only then does anything get written.
+
+**Duplicate-game prompt** (added 2026-08-25, at Tiffany's request, after
+CASE-0039 ended up with two identical "Import Source" documents because the
+same Excel got imported twice with nothing to catch it — see
+`buildExistingGameIndex()`/`findExistingGameMatch()` in `server/routes.js`).
+If any row being committed matches a game that already exists in another
+case (Provider + Game ID, or Provider + Game Title — checked against every
+existing case, not just legacy flat ones), the commit stops short of
+writing anything and reports the matches back instead; the frontend then
+asks once (OK = replace, Cancel = skip — same convention as the
+duplicate-upload check below) and re-submits the commit with that decision.
+**Replace** updates the existing game's submitted values (Game Version,
+Minimum/Maximum Bet, RTP, Jackpot RTP, Game Type, With Jackpot) in place and
+swaps in a fresh Import Source document for it, but deliberately leaves its
+PAGCOR Stage/checklist/jackpot-testing/rejection/LOA progress untouched — a
+re-import refreshes what the provider submitted, not how far Legal has
+already gotten reviewing it. **Skip** leaves the existing game and its
+documents alone and only imports the genuinely new rows. Only multi-game
+case matches support Replace; a match against a legacy flat (pre-Phase-2)
+case is always treated as Skip, since those cases are deliberately never
+migrated or appended to by import (see the Stage 3 comment in
+`server/routes.js`'s commit handler).
 
 No new npm dependency was added for this — `.xlsx` files are just ZIP
 archives of XML, and Node's built-in `zlib` already knows how to decompress

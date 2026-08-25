@@ -419,6 +419,19 @@ const CHECKED_PARAMETERS = ['Game ID', 'Game Version', 'Minimum Bet', 'Maximum B
 const RTP_MIN_PERCENT = 90;
 const RTP_MAX_PERCENT = 96.99;
 
+// Jackpot combined-RTP rule (added 2026-08-25, at Tiffany's request —
+// "有Jackpot的RTP是base game跟jackpot的RTP加起來，所以總和的RTP還是不能超過
+// 或等於97%"). For a jackpot game, the Base Game RTP stated in its documents
+// is only part of the story — the Jackpot RTP (the separate, usually small
+// percentage of each bet that feeds the jackpot pool; see server/import.js's
+// detectRtpColumn comment on real R88-template columns like "Jackpot RTP%")
+// adds on top of it, and the COMBINED total is what must stay under 97%,
+// even if the base game RTP alone already looks compliant against
+// RTP_MIN_PERCENT..RTP_MAX_PERCENT above. Strict "< 97", not "<= 96.99" —
+// Tiffany's rule is phrased as its own cutoff for the combined figure, not
+// a reuse of the base-game band.
+const JACKPOT_TOTAL_RTP_MAX_PERCENT = 97;
+
 // Parses a value pulled out of a document into a plain percentage number.
 // Different games' RTP verification/evaluation reports come from different
 // testing labs (GLI, Gaming Associates, BMM, etc.) with their own wording
@@ -564,7 +577,7 @@ const SUBMISSION_VALIDATION_SCHEMA = {
  *   summary: string,
  * }>}
  */
-async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expectedValues, documents }) {
+async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expectedValues, documents, withJackpot }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -720,6 +733,32 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
 
     if (parameter === 'RTP') {
       const parsed = values.map((v) => ({ ...v, percent: parseRtpPercent(v.value) })).filter((v) => v.percent !== null);
+
+      // Jackpot combined-RTP rule — see JACKPOT_TOTAL_RTP_MAX_PERCENT above.
+      // Only kicks in when this game is flagged With Jackpot AND a Jackpot
+      // RTP figure is actually on file (from the provider's own Excel
+      // import — server/import.js's jackpotRtp column detection); otherwise
+      // falls through to the ordinary base-game-only band check below,
+      // same as before this rule existed.
+      const jackpotRtpValue = withJackpot === 'Yes' && expectedValues && expectedValues.jackpotRtp != null
+        ? Number(expectedValues.jackpotRtp)
+        : null;
+      if (jackpotRtpValue !== null && !Number.isNaN(jackpotRtpValue) && parsed.length > 0) {
+        const combined = parsed.map((v) => ({ ...v, totalPercent: v.percent + jackpotRtpValue }));
+        const status = combined.every((v) => v.totalPercent < JACKPOT_TOTAL_RTP_MAX_PERCENT) ? 'in_range' : 'out_of_range';
+        const displayValues = combined.map((v) => ({
+          ...v,
+          value: `${Math.round(v.percent * 100) / 100}% base + ${Math.round(jackpotRtpValue * 100) / 100}% jackpot = ${Math.round(v.totalPercent * 100) / 100}% total`,
+        }));
+        return {
+          parameter,
+          status,
+          values: displayValues,
+          expectedValue: `< ${JACKPOT_TOTAL_RTP_MAX_PERCENT}% combined (base game + jackpot)`,
+          detail: detail || 'This game has a jackpot, so its combined RTP (base game RTP + jackpot RTP) must stay under 97%, per Tiffany\'s compliance rule for jackpot games.',
+        };
+      }
+
       const status = parsed.length === 0
         ? 'missing'
         : parsed.every((v) => v.percent >= RTP_MIN_PERCENT && v.percent <= RTP_MAX_PERCENT)

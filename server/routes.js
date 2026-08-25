@@ -1368,6 +1368,13 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
       minBet: row.minBet ?? null,
       maxBet: row.maxBet ?? null,
       rtp: row.rtp ?? null,
+      // Jackpot RTP (2026-08-25, at Tiffany's request) — the separate
+      // percentage of each bet that feeds the jackpot pool, kept alongside
+      // the base game `rtp` above so the combined-RTP compliance rule in
+      // server/ai.js's checkDocumentConsistency (base + jackpot must stay
+      // under 97%) has a real submitted figure to work with. null for
+      // non-jackpot games / sheets with no jackpot-RTP column.
+      jackpotRtp: row.jackpotRtp ?? null,
       gameType: row.gameType,
       withJackpot: row.withJackpot,
       // Set only for rows from a "reskin"-style sheet (see the reskinOf
@@ -1752,6 +1759,12 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
       gameVersion: expectedSource.gameVersion ?? null,
       minBet: expectedSource.minBet ?? null,
       maxBet: expectedSource.maxBet ?? null,
+      // Jackpot RTP (2026-08-25, at Tiffany's request) — feeds the
+      // combined-RTP rule in ai.checkDocumentConsistency (base game RTP +
+      // jackpot RTP must stay under 97%); only present for jackpot games
+      // imported from a sheet with a Jackpot RTP column (see
+      // server/import.js's detectJackpotRtpColumn).
+      jackpotRtp: expectedSource.jackpotRtp ?? null,
     };
     const result = await ai.checkDocumentConsistency({
       caseTitle: kase.title,
@@ -1759,6 +1772,7 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
       gameId: targetGame ? targetGame.gameId : kase.gameId,
       expectedValues,
       documents,
+      withJackpot: expectedSource.withJackpot ?? null,
     });
 
     // Persist so the Case Detail "Download All Documents" gate (see
@@ -1847,11 +1861,36 @@ router.post('/api/documents/check-consistency', async (req, res, params, body) =
     // behind it, so there's nowhere to read submitted values from unless the
     // caller passes them explicitly (not currently done by the frontend;
     // RTP's range check runs regardless since it doesn't need one).
+    // Best-effort lookup (2026-08-25, at Tiffany's request) — a Document
+    // Center folder still often corresponds to a real game sitting inside
+    // some Case's `games[]`, it's just not linked by ID from this ad hoc
+    // check. Without this, a jackpot game checked straight from its
+    // Document Center folder (no Case button click) would silently miss the
+    // combined-RTP rule below, even though the same game's Case page would
+    // catch it. Matched by gameId first (more specific), falling back to
+    // gameTitle — first match wins, same tolerance as docsForGame's own
+    // fallback matching elsewhere in this file.
+    let withJackpot = null;
+    let jackpotRtp = null;
+    if (body.gameId || body.gameTitle) {
+      const allCases = await store.all('cases');
+      const allGames = allCases.flatMap((c) => (Array.isArray(c.games) ? c.games : []));
+      const matchedGame = (body.gameId && allGames.find((g) => g.gameId && normMatchKey(g.gameId) === normMatchKey(body.gameId)))
+        || (body.gameTitle && allGames.find((g) => g.gameTitle && normMatchKey(g.gameTitle) === normMatchKey(body.gameTitle)))
+        || null;
+      if (matchedGame) {
+        withJackpot = matchedGame.withJackpot ?? null;
+        jackpotRtp = matchedGame.jackpotRtp ?? null;
+      }
+    }
+    const expectedValues = { ...(body.expectedValues || {}) };
+    if (jackpotRtp != null && expectedValues.jackpotRtp == null) expectedValues.jackpotRtp = jackpotRtp;
     const result = await ai.checkDocumentConsistency({
       gameTitle: body.gameTitle,
       gameId: body.gameId,
-      expectedValues: body.expectedValues || null,
+      expectedValues,
       documents,
+      withJackpot: body.withJackpot ?? withJackpot,
     });
     sendJson(res, 200, { ...result, documentsCompared: documents.length, documentTitles: documents.map((d) => d.fileName) });
   } catch (err) {

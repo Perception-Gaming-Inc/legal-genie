@@ -129,11 +129,32 @@ function detectRtpColumn(headerRow) {
   return idx === -1 ? undefined : idx;
 }
 
+// Companion to detectRtpColumn above — picks out the JACKPOT-specific RTP
+// column instead of the base-game one (added 2026-08-25, at Tiffany's
+// request, so the combined-RTP compliance rule in server/ai.js's
+// checkDocumentConsistency has a real submitted Jackpot RTP figure to add
+// onto the base game RTP). Same real R88 template has multiple
+// jackpot-labeled RTP-ish columns ("Jackpot RTP%", "Total Jackpot RTP %",
+// "Start Up%", "Increment%") — only the two that are actually a jackpot RTP
+// percentage should match; "start up" and "increment" describe how the pool
+// seeds/grows, not a percentage of RTP, so they're explicitly excluded.
+// Prefers "total jackpot rtp" (most specific) over a plain "jackpot rtp".
+function detectJackpotRtpColumn(headerRow) {
+  const normed = headerRow.map((c) => normalizeHeader(c));
+  const isJackpotRtp = (i) => normed[i].includes('jackpot') && normed[i].includes('rtp')
+    && !normed[i].includes('start up') && !normed[i].includes('increment');
+  let idx = normed.findIndex((n, i) => n.includes('total jackpot rtp') && isJackpotRtp(i));
+  if (idx === -1) idx = normed.findIndex((n, i) => isJackpotRtp(i));
+  return idx === -1 ? undefined : idx;
+}
+
 function detectColumns(headerRow, checklistItems) {
   const items = checklistItems || DEFAULT_CHECKLIST_ITEMS;
   const map = { checklistCols: {} };
   const rtpIdx = detectRtpColumn(headerRow);
   if (rtpIdx !== undefined) map.rtp = rtpIdx;
+  const jackpotRtpIdx = detectJackpotRtpColumn(headerRow);
+  if (jackpotRtpIdx !== undefined) map.jackpotRtp = jackpotRtpIdx;
   headerRow.forEach((cell, idx) => {
     const norm = normalizeHeader(cell);
     if (!norm) return;
@@ -399,6 +420,7 @@ function mapRow(row, colMap, sheetSettings, sheetName, checklistItems) {
     minBet: colMap.minBet !== undefined ? asNumber(cell(row, colMap.minBet)) : null,
     maxBet: colMap.maxBet !== undefined ? asNumber(cell(row, colMap.maxBet)) : null,
     rtp: colMap.rtp !== undefined ? asRtpPercent(cell(row, colMap.rtp)) : null,
+    jackpotRtp: colMap.jackpotRtp !== undefined ? asRtpPercent(cell(row, colMap.jackpotRtp)) : null,
     withJackpot: colMap.withJackpot !== undefined ? normalizeYesNo(cell(row, colMap.withJackpot)) : null,
     reskinOf,
     dateReceived,

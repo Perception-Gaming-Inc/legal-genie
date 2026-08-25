@@ -902,6 +902,31 @@ router.get('/api/cases/:id/audit-log', async (req, res, params) => {
   sendJson(res, 200, rows);
 });
 
+// Global cross-case audit feed (2026-08-25, at Tiffany's request — "把 audit
+// log 獨立出來，不要放在每個頁面裡") backing the standalone Audit Log page (see
+// renderAuditLog in public/js/app.js), which replaced the earlier per-case
+// "History" button that used to sit on every Case Detail page. Same
+// 'cases':'view' permission as the per-case endpoint above — no separate
+// permission story needed since this is just every row that endpoint could
+// already show, one case at a time, joined into a single list. Joins in
+// each row's case number/title so the page doesn't need to fetch every case
+// separately just to label its own rows; a row whose case was since deleted
+// keeps its entry (nothing here is deleted along with a case) but comes
+// back with caseNumber/caseTitle null.
+router.get('/api/audit-log', async (req, res) => {
+  const user = await requirePerm(req, res, 'cases', 'view');
+  if (!user) return;
+  const [all, cases] = await Promise.all([store.all('auditLog'), store.all('cases')]);
+  const caseById = new Map(cases.map((c) => [c.id, c]));
+  const rows = all
+    .map((r) => {
+      const kase = r.caseId ? caseById.get(r.caseId) : null;
+      return { ...r, caseNumber: kase ? kase.caseNumber : null, caseTitle: kase ? kase.title : null };
+    })
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  sendJson(res, 200, rows);
+});
+
 // Bulk stage update — select multiple cases in Case Management (e.g. a
 // batch of games that all just got their LOA) and set their PAGCOR Stage
 // in one action, instead of opening each one individually. Same "cases:

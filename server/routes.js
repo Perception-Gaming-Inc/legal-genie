@@ -1426,26 +1426,41 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
       // Link the saved source workbook (see importSourceFilePath above) onto
       // this case as a Document Center entry, so anyone reviewing the case
       // later can open the exact original file its Game ID/Version/etc.
-      // values were read from — not just the parsed-out fields.
+      // values were read from — not just the parsed-out fields. One
+      // document record per game in this case (2026-08-25, at Tiffany's
+      // request — "一開始匯入的excel檔也各存一份在各個資料夾"), all pointing at
+      // the same saved file (no extra bytes written — same filePath reused
+      // for every record, same pattern the multi-game document-upload
+      // checklist already uses for one file that covers several games), so
+      // the workbook shows up filed under each game's own Document Center
+      // folder instead of sitting alone under "Uncategorized Game" with no
+      // gameTitle. Previously this was a single case-level record with no
+      // gameTitle/relatedGameId — see the 2026-08-24 investigation of an
+      // R88 case where that made the import source hard to find per-game.
       if (importSourceFilePath) {
-        try {
-          await store.insert('documents', {
-            title: `Import Source — ${body.fileName || 'import.xlsx'}`,
-            fileName: body.fileName || 'import.xlsx',
-            filePath: importSourceFilePath,
-            // Certificates, not Other (2026-08-20, at Tiffany's request) —
-            // this workbook is the provider's own official submission form
-            // (e.g. Vertexplay's "Annex A — New Games Request for
-            // Approval"), the same kind of supplier-provided compliance
-            // document as a game manual or RNG certificate, not an
-            // internal/miscellaneous file.
-            category: 'Certificates',
-            provider: group.providerDisplay,
-            relatedCaseId: newCase.id,
-            uploadedBy: user.id,
-          });
-        } catch (err) {
-          console.error('Failed to link import source document:', err.message);
+        for (const g of newGames) {
+          try {
+            await store.insert('documents', {
+              title: `Import Source — ${body.fileName || 'import.xlsx'}`,
+              fileName: body.fileName || 'import.xlsx',
+              filePath: importSourceFilePath,
+              // Certificates, not Other (2026-08-20, at Tiffany's request) —
+              // this workbook is the provider's own official submission form
+              // (e.g. Vertexplay's "Annex A — New Games Request for
+              // Approval"), the same kind of supplier-provided compliance
+              // document as a game manual or RNG certificate, not an
+              // internal/miscellaneous file.
+              category: 'Certificates',
+              provider: group.providerDisplay,
+              gameTitle: g.gameTitle || null,
+              gameId: g.gameId || null,
+              relatedGameId: g.id,
+              relatedCaseId: newCase.id,
+              uploadedBy: user.id,
+            });
+          } catch (err) {
+            console.error('Failed to link import source document:', err.message);
+          }
         }
       }
       casesCreated++;

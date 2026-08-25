@@ -46,8 +46,14 @@
  *   - The group Q&A bot (server/routes.js's POST /api/telegram/webhook) —
  *     every message posted in a Provider's group is run past
  *     server/ai.js's answerGroupQuestion() to see if it's a real question
- *     about that Provider's cases; setWebhook() below is how this app tells
- *     Telegram where to deliver those incoming messages. One-time setup:
+ *     about that Provider's cases OR a general PAGCOR/regulatory question
+ *     answerable from an 'Active' (company-approved) Knowledge Base FAQ
+ *     entry (see Knowledge Base > FAQ in the app; added 2026-08-25, at
+ *     Tiffany's request) — never both from general AI knowledge, only from
+ *     that Provider's own case data or an approved FAQ entry, so nothing
+ *     unreviewed ever gets quoted back to a Provider. setWebhook() below is
+ *     how this app tells Telegram where to deliver those incoming messages.
+ *     One-time setup:
  *     call POST /api/telegram/register-webhook (as an Admin, from a logged-
  *     in browser tab — see that route in routes.js) once, after
  *     TELEGRAM_BOT_TOKEN is configured and the app is deployed somewhere

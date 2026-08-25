@@ -2684,7 +2684,15 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
       if (provider && looksLikeQuestion(msg.text)) {
         const allCases = await store.all('cases');
         const providerCases = allCases.filter((c) => String(c.provider || '').trim().toLowerCase() === provider.trim().toLowerCase());
-        const result = await ai.answerGroupQuestion({ providerName: provider, question: msg.text, cases: providerCases });
+        // Knowledge Base FAQ entries (added 2026-08-25, at Tiffany's request)
+        // — lets the bot also answer general PAGCOR/regulatory questions,
+        // not just this Provider's own case status. Only 'Active' (i.e.
+        // company-approved/published) entries are ever sent — Draft/Pending
+        // Review/Archived ones are deliberately excluded so nothing
+        // unreviewed or outdated ever gets quoted back to a Provider.
+        const allKbFaqs = await store.all('kbFaqs');
+        const activeKbFaqs = allKbFaqs.filter((f) => f.status === 'Active');
+        const result = await ai.answerGroupQuestion({ providerName: provider, question: msg.text, cases: providerCases, kbFaqs: activeKbFaqs });
         if (result && result.shouldRespond && result.answer) {
           await telegram.sendTelegramMessage(String(msg.chat.id), result.answer, { replyToMessageId: msg.message_id });
         }

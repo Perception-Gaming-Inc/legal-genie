@@ -1115,6 +1115,69 @@ function importDedupKey(c) {
   return `${(c.provider || '').trim().toLowerCase()}|${(c.gameTitle || c.title || '').trim().toLowerCase()}`;
 }
 
+// Indexes every EXISTING case's games (both the modern multi-game shape and
+// legacy flat single-game cases) by Provider+Title and Provider+GameId, so
+// import/commit below can tell whether an incoming row is a genuine new
+// game or a re-import of one that's already on file (added 2026-08-25, at
+// Tiffany's request, after CASE-0039 ended up with two identical "Import
+// Source" documents because the same Excel got imported twice with nothing
+// to catch it). Before this, the commit handler's own dedup check (see
+// existingKeys/existingByProviderGameId further down, pre-2026-08-25) only
+// ever looked at legacyFlatCases — a re-import that collided with an
+// existing MULTI-game case's games sailed straight through and created a
+// second case + a second copy of every document. This indexes both shapes
+// so that gap is closed, while still respecting Tiffany's earlier
+// 2026-08-20 decision that a genuinely NEW import batch gets its own new
+// case (see the Stage 3 comment below) — this index is only used to flag
+// true duplicates, never to silently merge an otherwise-new batch into an
+// old case.
+function buildExistingGameIndex(existingCases) {
+  const byTitleKey = new Map(); // "provider|gameTitle" -> [{caseId, isLegacyFlat, gameRowId, gameTitle}]
+  const byProviderGameId = new Map(); // "provider|gameId" -> same shape
+  const addEntry = (map, key, entry) => {
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(entry);
+  };
+  for (const c of existingCases) {
+    if (!c.provider) continue;
+    const providerKey = c.provider.trim().toLowerCase();
+    if (Array.isArray(c.games)) {
+      for (const g of c.games) {
+        const entry = { caseId: c.id, isLegacyFlat: false, gameRowId: g.id, gameTitle: g.gameTitle };
+        if (g.gameTitle) addEntry(byTitleKey, `${providerKey}|${g.gameTitle.trim().toLowerCase()}`, entry);
+        const gid = (g.gameId || '').trim();
+        if (gid) addEntry(byProviderGameId, `${providerKey}|${gid.toLowerCase()}`, entry);
+      }
+    } else {
+      const entry = { caseId: c.id, isLegacyFlat: true, gameRowId: null, gameTitle: c.gameTitle || c.title };
+      const title = (c.gameTitle || c.title || '').trim();
+      if (title) addEntry(byTitleKey, `${providerKey}|${title.toLowerCase()}`, entry);
+      const gid = (c.gameId || '').trim();
+      if (gid) addEntry(byProviderGameId, `${providerKey}|${gid.toLowerCase()}`, entry);
+    }
+  }
+  return { byTitleKey, byProviderGameId };
+}
+
+// Finds the best existing-game match for one incoming row, or null. Game ID
+// match (when both sides have one) is preferred as the stronger signal,
+// same preference order the rest of this file already uses; falls back to
+// an exact Provider+Title match.
+function findExistingGameMatch(row, index) {
+  const providerKey = (row.provider || '').trim().toLowerCase();
+  const gid = (row.gameId || '').trim();
+  if (gid) {
+    const byId = index.byProviderGameId.get(`${providerKey}|${gid.toLowerCase()}`);
+    if (byId && byId.length) return byId[0];
+  }
+  const title = (row.gameTitle || row.title || '').trim();
+  if (title) {
+    const byTitle = index.byTitleKey.get(`${providerKey}|${title.toLowerCase()}`);
+    if (byTitle && byTitle.length) return byTitle[0];
+  }
+  return null;
+}
+
 // Strips everything but letters/digits and lowercases, so "CATLA_S MONEY
 // MACHINE" and "CATLA'S MONEY MACHINE" (an underscore-for-apostrophe typo —
 // a real example from Tiffany's workbook) normalize to the same string.
@@ -1160,22 +1223,12 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   } catch (err) {
     return sendJson(res, 400, { error: err.message });
   }
-  // Keep the original workbook around after import (2026-08-20, at
-  // Tiffany's request) — until now the file was only ever read into memory
-  // for parsing and then discarded, so there was no way to go back and
-  // check what a Min Bet / Max Bet / RTP (or any other) column actually
-  // said once the numbers were in the app. Saved once per commit (not per
-  // case/game) and then linked as a "Other"-category document on every
-  // case this commit creates below, tagged so it's easy to tell apart from
-  // real compliance documents in the Document Center / case detail list.
-  let importSourceFilePath = null;
-  try {
-    importSourceFilePath = await storage.saveBase64File(body.fileName || 'import.xlsx', body.fileContentBase64);
-  } catch (err) {
-    // Non-fatal — losing the source-file backup shouldn't block the import
-    // itself from completing.
-    console.error('Failed to save import source file:', err.message);
-  }
+  // The original workbook is saved to storage further down, once it's
+  // confirmed this commit is actually proceeding (not stopping early for a
+  // duplicate-decision round-trip — see "needsDuplicateDecision" below) —
+  // moved 2026-08-25 so a decision round-trip never leaves an orphaned
+  // never-linked copy of the file sitting in storage. Was previously saved
+  // unconditionally right here.
   const errors = [];
   const checklistItems = getChecklistItems(await getSystemSettings());
   // Audit trail for every automatic row-merge decision this commit makes
@@ -1335,16 +1388,47 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   // only ever checked so a game already recorded on one of them isn't
   // re-imported as a duplicate elsewhere.
   const existingCases = await store.all('cases');
-  const legacyFlatCases = existingCases.filter((c) => c.provider && !Array.isArray(c.games));
-  const existingKeys = new Set(legacyFlatCases.map(importDedupKey));
-  const existingByProviderGameId = new Map();
-  for (const c of legacyFlatCases) {
-    const gid = (c.gameId || '').trim();
-    if (!gid) continue;
-    const pgKey = `${(c.provider || '').trim().toLowerCase()}|${gid.toLowerCase()}`;
-    if (!existingByProviderGameId.has(pgKey)) existingByProviderGameId.set(pgKey, []);
-    existingByProviderGameId.get(pgKey).push(c);
+  const existingIndex = buildExistingGameIndex(existingCases);
+
+  // Duplicate decision round-trip (2026-08-25, at Tiffany's request —
+  // "跳出提示，然後可以選要取代還是怎樣"). If any surviving row matches a game
+  // that already exists in ANY case (multi-game or legacy flat — see
+  // buildExistingGameIndex above) and the caller hasn't said what to do
+  // about it yet, stop here and report the duplicates instead of silently
+  // creating or skipping anything. The frontend shows this list to Tiffany
+  // as a prompt and re-calls this same endpoint with `body.duplicateAction`
+  // set once she decides — 'skip' (leave the existing game/documents
+  // untouched, don't import the duplicate rows) or 'replace' (update the
+  // existing game's submitted values and swap in a fresh Import Source
+  // document — see the replace loop below; only supported for multi-game
+  // case matches, a legacy-flat match always behaves as 'skip' regardless,
+  // since those cases are deliberately never touched by import — see the
+  // Stage 3 comment above).
+  if (!body.duplicateAction) {
+    const seen = new Set();
+    const duplicates = [];
+    for (const { row } of byKey.values()) {
+      const match = findExistingGameMatch(row, existingIndex);
+      if (!match) continue;
+      const dupKey = `${match.caseId}|${match.gameRowId || ''}`;
+      if (seen.has(dupKey)) continue;
+      seen.add(dupKey);
+      const existingCase = existingCases.find((c) => c.id === match.caseId);
+      duplicates.push({
+        provider: row.provider,
+        gameTitle: row.gameTitle || row.title,
+        gameId: row.gameId || null,
+        existingCaseId: match.caseId,
+        existingCaseNumber: existingCase ? existingCase.caseNumber : null,
+        isLegacyFlat: match.isLegacyFlat,
+      });
+    }
+    if (duplicates.length) {
+      return sendJson(res, 200, { needsDuplicateDecision: true, duplicates });
+    }
   }
+  const duplicateAction = body.duplicateAction || 'skip';
+
   function rowMatchesExistingGame(row, games) {
     return (games || []).some((g) => {
       if (row.gameId && g.gameId && row.gameId.trim().toLowerCase() === g.gameId.trim().toLowerCase()
@@ -1406,17 +1490,92 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     return 'Open';
   }
 
+  // Save the source workbook now that this commit is confirmed to actually
+  // be proceeding (see the note above `errors` for why this moved off the
+  // top of the handler — a duplicate-decision round-trip returns above
+  // before ever reaching this line, so it never leaves an orphaned,
+  // never-linked copy of the file sitting in storage).
+  let importSourceFilePath = null;
+  try {
+    importSourceFilePath = await storage.saveBase64File(body.fileName || 'import.xlsx', body.fileContentBase64);
+  } catch (err) {
+    // Non-fatal — losing the source-file backup shouldn't block the import
+    // itself from completing.
+    console.error('Failed to save import source file:', err.message);
+  }
+
+  // "Replace" pass (2026-08-25, at Tiffany's request) — for every row that
+  // matches an existing MULTI-game case's game (legacy-flat matches are
+  // never replaced, see the comment above), update that game's own
+  // submitted-value fields in place and swap in a fresh Import Source
+  // document, rather than leaving the stale one sitting alongside a new
+  // duplicate copy. Deliberately preserves the game's own `id` and its
+  // existing PAGCOR workflow state (stage, checklist, jackpot testing/
+  // rejection/LOA progress) — a re-import should refresh what the provider
+  // submitted, not silently reset how far Legal has already gotten
+  // reviewing it.
+  let gamesReplaced = 0;
+  if (duplicateAction === 'replace') {
+    for (const { row } of byKey.values()) {
+      const match = findExistingGameMatch(row, existingIndex);
+      if (!match || match.isLegacyFlat) continue;
+      const targetCase = existingCases.find((c) => c.id === match.caseId);
+      if (!targetCase || !Array.isArray(targetCase.games)) continue;
+      const targetGame = targetCase.games.find((g) => g.id === match.gameRowId);
+      if (!targetGame) continue;
+      const refreshed = rowToGame(row);
+      const updatedGame = {
+        ...targetGame,
+        gameVersion: refreshed.gameVersion,
+        minBet: refreshed.minBet,
+        maxBet: refreshed.maxBet,
+        rtp: refreshed.rtp,
+        jackpotRtp: refreshed.jackpotRtp,
+        gameType: refreshed.gameType,
+        withJackpot: refreshed.withJackpot,
+        reskinOf: refreshed.reskinOf,
+      };
+      try {
+        const newGamesArr = targetCase.games.map((g) => (g.id === targetGame.id ? updatedGame : g));
+        await store.update('cases', targetCase.id, { games: newGamesArr });
+        // Delete any existing Import Source doc(s) for this game first, so a
+        // repeated re-import never piles up duplicate copies the way
+        // CASE-0039 did (the bug this whole feature exists to fix).
+        try {
+          const allDocs = await store.all('documents');
+          const staleImportDocs = allDocs.filter((d) => d.relatedGameId === targetGame.id && String(d.title || '').startsWith('Import Source —'));
+          for (const d of staleImportDocs) await store.remove('documents', d.id);
+        } catch (err) {
+          console.error('Failed to clean up old Import Source document(s):', err.message);
+        }
+        if (importSourceFilePath) {
+          await store.insert('documents', {
+            title: `Import Source — ${body.fileName || 'import.xlsx'}`,
+            fileName: body.fileName || 'import.xlsx',
+            filePath: importSourceFilePath,
+            category: 'Certificates',
+            provider: targetCase.provider,
+            gameTitle: updatedGame.gameTitle || null,
+            gameId: updatedGame.gameId || null,
+            relatedGameId: targetGame.id,
+            relatedCaseId: targetCase.id,
+            uploadedBy: user.id,
+          });
+        }
+        try { await logAction('game', targetGame.id, 'updated', `${targetCase.caseNumber} - ${updatedGame.gameTitle || 'Game'} (re-imported)`, user, { caseId: targetCase.id, gameTitle: updatedGame.gameTitle || null }); }
+        catch (err) { console.error('Failed to log game replace:', err.message); }
+        gamesReplaced++;
+      } catch (err) {
+        errors.push(`${updatedGame.gameTitle || 'Game'}: ${err.message}`);
+      }
+    }
+  }
+
   let skippedExisting = 0;
   const groups = new Map(); // providerKey -> { providerDisplay, rows: [] }
   for (const { row, sheetName } of byKey.values()) {
-    const key = importDedupKey(row);
-    if (existingKeys.has(key)) { skippedExisting++; continue; }
-    const gid = (row.gameId || '').trim();
-    const pgKey = gid ? `${(row.provider || '').trim().toLowerCase()}|${gid.toLowerCase()}` : null;
-    if (pgKey && (existingByProviderGameId.get(pgKey) || []).some((c) => titlesLikelySameGame(c.gameTitle || c.title, row.gameTitle || row.title))) {
-      skippedExisting++;
-      continue;
-    }
+    const match = findExistingGameMatch(row, existingIndex);
+    if (match) { skippedExisting++; continue; } // 'replace' matches were already handled above; 'skip' (default) leaves them alone here
     const providerKey = (row.provider || '').trim().toLowerCase();
     if (!groups.has(providerKey)) groups.set(providerKey, { providerDisplay: row.provider, rows: [] });
     groups.get(providerKey).rows.push({ row, sheetName });
@@ -1519,6 +1678,7 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
     casesCreated,
     casesUpdated,
     gamesAdded,
+    gamesReplaced,
     skipped: collapsedByCrossSheetDedup + collapsedByGameIdDedup + skippedExisting,
     errors,
     gameIdConflicts,

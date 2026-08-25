@@ -74,7 +74,7 @@ To run on a different port locally: `PORT=8080 node server.js`.
 - **Dashboard** – pending tasks, pending approvals (with inline approve/reject, right on the Dashboard), 30-day PAGCOR follow-up reminders, upcoming deadlines (cases/contracts), PAGCOR submission pipeline overview.
 - **Case Management** – create/view/edit/close cases; owner, priority, status, deadline, notes.
 - **Contract Management** – contract records, counterparty, dates, status, and a version history log (with optional file upload per version).
-- **Document Center** – browsed via Provider tabs (全部 + one per Provider) over a game list showing Game Title/Game ID/latest upload date, drilling into each game's own document list (built from each document's own Provider/Game Title/Game ID, no separate data model); categorized (Templates, Policies, Agreements, Certificates, Other) with upload/download, linkable to a case or contract; optional AI-generated summary + key facts per document.
+- **Document Center** – browsed via Provider tabs (All + one per Provider) over a game list showing Game Title/Game ID/latest upload date, drilling into each game's own document list (built from each document's own Provider/Game Title/Game ID, no separate data model); categorized (Templates, Policies, Agreements, Certificates, Other) with upload/download, linkable to a case or contract; optional AI-generated summary + key facts per document.
 - **Task Management** – personal and team tasks with status and due dates, linkable to a case/contract.
 - **Approval Center** – submit a request, assign a reviewer, approve/reject with comments; requester is notified of the decision. No longer has its own sidebar entry — day-to-day, pending approvals surface right on the Dashboard (see above); the full page (approval history, etc.) is still reachable at `#/approvals`.
 - **Notification Center** – contract expiry, approval decisions, task assignments. Same as Approval Center: no sidebar entry, reachable via the bell icon in the top bar (which also shows an unread-count badge); the full page is still at `#/notifications`.
@@ -87,10 +87,10 @@ cannot be bypassed) and the UI (relevant buttons/nav items hidden per role).
 ## AI smart-fill (optional)
 
 The "New Case" / "New Contract" / "Upload Document"
-forms each have an **"AI 智慧填寫" (AI smart-fill)** panel at the top. Paste
+forms each have an **AI smart-fill** panel at the top. Paste
 in free text (an email, a case summary, a contract excerpt, a regulator's
 notice...) and/or upload a file (PDF, image, plain text, or **.xlsx Excel**),
-click **"AI 幫我填"**, and Gemini reads it and pre-fills the matching fields
+click **"AI Fill"**, and Gemini reads it and pre-fills the matching fields
 below — title, type, priority, dates, a summary, etc. Nothing is ever
 submitted automatically: the form is just pre-filled, so the person still
 reviews and edits before saving, same as filling it by hand.
@@ -106,7 +106,7 @@ first (`xlsxToText()`) and sent the same way pasted-in text is. Legacy
 
 **This is entirely optional.** Every other part of the app works exactly
 the same with or without it configured — if the API key below isn't set,
-only the "AI 幫我填" button itself shows a message asking to set it up;
+only the "AI Fill" button itself shows a message asking to set it up;
 nothing else is affected.
 
 Uses **Google's Gemini API** specifically (rather than a paid-only
@@ -171,7 +171,7 @@ existing case/contract IDs, so it never guesses those.
 See `server/ai.js` for the implementation (all extraction schemas per
 module live there, in one place, if you want to adjust what it looks for).
 
-## AI document summary — "AI 幫我抓重點" (optional)
+## AI document summary — "AI Key Points" (optional)
 
 Any Document Center row with a file attached gets a sparkle-icon button.
 Click it and Gemini reads the actual stored file (RNG report, LOA letter,
@@ -198,12 +198,14 @@ A chat panel — the **"AI Assistant"** item at the top of the sidebar,
 available to everyone regardless of role. Instead of navigating to a
 specific module, just describe what you want in plain language:
 
-- *"幫我找去年所有菲律賓客戶的授權合約"* (find something) — the assistant
-  searches cases/contracts/documents and answers directly.
-- *"幫我開一個高優先度的商務案件，負責人是我自己"* (create something) — the
+- *"Find all Philippine client license agreements from last year"* (find
+  something) — the assistant searches cases/contracts/documents and answers
+  directly.
+- *"Create a high-priority commercial case with me as the owner"* (create
+  something) — the
   assistant proposes the record it would create (title, type, priority,
   owner, etc. — resolved to your team's real names) as a card with
-  **"確認執行" / "取消"** buttons. Nothing is written to the database until
+  **"Confirm" / "Cancel"** buttons. Nothing is written to the database until
   you click confirm — the assistant never creates or changes a record on
   its own.
 
@@ -233,11 +235,12 @@ The grouping is built from fields documents already carry (`provider` /
 `gameTitle` — set on upload, by AI smart-fill, or by the batch upload on a
 Case's own detail page below), so there's no new data model: a document
 with no Provider set falls
-into a "未分類廠商" tab, and one with a Provider but no Game Title falls
-into a "未分類遊戲" row within that Provider, rather than disappearing.
+into an "Uncategorized Provider" tab, and one with a Provider but no Game
+Title falls into an "Uncategorized Game" row within that Provider, rather
+than disappearing.
 
-The tab bar reads **全部 (All)** + one tab per Provider that actually has
-documents; clicking a tab filters the game list below it in place — "全部"
+The tab bar reads **All** + one tab per Provider that actually has
+documents; clicking a tab filters the game list below it in place — "All"
 shows every game across every Provider. Each row in that list is one game,
 showing only **Game Title / Game ID / most recent upload date** — everything
 else (Category, Report Type, individual files, who uploaded what) stays
@@ -268,7 +271,7 @@ type once, so it's been dropped in favor of a plainer split: **you create
 the Case, the system takes over from there once you start uploading its
 documents.**
 
-The **"上傳文件"** button on a Case's own detail page is for the moment
+The **"Upload Documents"** button on a Case's own detail page is for the moment
 that case's documents come in — select every file for it at once (RNG
 report, Game Manual, approval notice, whatever's on hand):
 
@@ -293,10 +296,10 @@ report, Game Manual, approval notice, whatever's on hand):
    download), so what's on file is visible without a trip to Document
    Center.
 
-See `showCaseDocumentUploadModal()` and the "已上傳文件" list in
+See `showCaseDocumentUploadModal()` and the "Uploaded Documents" list in
 `renderCaseDetail()`, `public/js/app.js`.
 
-### AI Submission Validation (button label still "AI 參數一致性檢查")
+### AI Submission Validation (button label still "AI Parameter Consistency Check")
 
 The other half of the same idea: from a case's own detail page (or
 automatically after a batch upload there), Gemini reads every Document
@@ -346,7 +349,7 @@ filed directly through Document Center's own "New" button never gain a
 Related Case unless someone sets one by hand. Requiring a Case first would
 mean the one folder Tiffany's actually looking at (with 2+ files sitting
 right there) couldn't be compared until she went and created one. Instead,
-opening a game's document list shows the same "AI 參數一致性檢查" button
+opening a game's document list shows the same "AI Parameter Consistency Check" button
 whenever that folder has 2+ files, running the identical validation against
 exactly those documents (picked by ID, not by any Related Case link). See
 `POST /api/documents/check-consistency` in `server/routes.js` (same
@@ -367,7 +370,7 @@ entries in one shared `auditLog` table:
    Bet, RTP, PAGCOR Stage) are logged old-value → new-value. See
    `logCaseAudit`/`logAudit` in `server/routes.js`.
 2. **System-wide action log** (added 2026-08-25, at Tiffany's request —
-   "整個系統的activity log都要記錄") — every create/update/delete across the
+   "the entire system's activity log must be recorded") — every create/update/delete across the
    system is now logged as well: Cases, Documents (including replace-file
    and case notes), Tasks, Knowledge Base (documents and FAQs), Calendar
    Events, Approvals (including decisions), Users, Roles, Departments, and
@@ -409,7 +412,7 @@ Center, and the AI Assistant/AI smart-fill you already have.
    sheet records. Click the checklist button on a case row to tick items off
    as they're done — see `server/pagcor.js` for the shared list,
    `showPagcorChecklistModal()` in `public/js/app.js` for the modal.
-2. **Document Center auto-tagging.** The "AI 智慧填寫" button on Upload
+2. **Document Center auto-tagging.** The "AI smart-fill" button on Upload
    Document now also detects `provider`, `gameTitle`, and `reportType` (Math
    Model Report / RNG Test Report / Game Rules & Paytable / Submission
    Letter / LOA / Other) straight from the uploaded file or pasted text — see
@@ -436,7 +439,7 @@ Center, and the AI Assistant/AI smart-fill you already have.
    more date field feeding the existing widget (see `/api/dashboard/summary`
    in `server/routes.js`).
 4. **AI Assistant drafts the PAGCOR cover letter.** Ask it directly, e.g.
-   *"幫我起草一封 PAGCOR 送審公文，Provider 是 FC，遊戲是 Fortune Dragon"* —
+   *"Draft a PAGCOR submission letter for Provider FC, game Fortune Dragon"* —
    it writes the actual letter text in its reply. This is pure text
    generation (nothing is saved), so it does **not** go through the
    propose-then-confirm flow the create_* actions use — see the system
@@ -549,21 +552,21 @@ Center, and the AI Assistant/AI smart-fill you already have.
     `onCreate`/`onUpdate` and `/api/dashboard/summary`'s `followUps`, and
     `followUpsWidgetHtml()` in `public/js/app.js`.
 15. **AI Submission Validation (optional) + batch document upload.**
-    On a PAGCOR case's detail page, "AI 參數一致性檢查" opens the "AI
+    On a PAGCOR case's detail page, "AI Parameter Consistency Check" opens the "AI
     Submission Validation" modal: Document Completeness (are the 5 required
     submission document types present), Parameter Validation (does Game ID
     / Game Version / Minimum Bet / Maximum Bet / RTP have a value anywhere),
     and Document Consistency (do the documents that state a value agree,
     shown per source document) across that case's related documents, with
-    an overall Ready/Not Ready for Submission banner; the "上傳文件" button
+    an overall Ready/Not Ready for Submission banner; the "Upload Documents" button
     on that same page runs this automatically right after a batch upload
     once the case has 2+ documents on file. See the dedicated "Case detail
     — batch document upload, auto-filed, auto-compared" section and the "AI
     Submission Validation" section above for the full writeup.
 16. **LOA-approval notification draft.** Once a case's PAGCOR Stage is "LOA
-    Approved," a "核准通知草稿" button on its detail page assembles a
+    Approved," an "Approval Notice Draft" button on its detail page assembles a
     ready-to-copy message (game title, Game ID, Provider, approval date,
-    LOA expiry) from that case's own fields, with a one-click "複製文字"
+    LOA expiry) from that case's own fields, with a one-click "Copy Text"
     button. This does **not** send anything anywhere — it only prepares
     text for you to paste into Telegram (or wherever) and send yourself,
     same as every other "draft, don't send" feature in this app. See
@@ -608,7 +611,7 @@ How it works:
    uses that row's own Game Manual/Parameter/RTP Certification values for
    the checklist, instead of a blanket default.
 3. Review the per-sheet row counts and sample games, adjust Provider/Stage
-   if needed, and click "確認匯入" — only then does anything get written.
+   if needed, and click "Confirm Import" — only then does anything get written.
 
 No new npm dependency was added for this — `.xlsx` files are just ZIP
 archives of XML, and Node's built-in `zlib` already knows how to decompress
@@ -625,18 +628,18 @@ the same "cases: create" permission the normal "New Case" button uses.
 A month-grid Calendar page (sidebar, styled after the iOS/Google Calendar
 apps) that plots four kinds of events together, each with its own color:
 
-- **Submit Date (繳交日期)** — every open Case's `deadline` field (red).
+- **Submit Date** — every open Case's `deadline` field (red).
   Read-only here — Submit Dates are only ever set in Case Management.
-- **Task Management due dates** — including the auto-generated "追進度"
+- **Task Management due dates** — including the auto-generated "Follow-up"
   follow-up task `syncDeadlineFollowUpTask()` in `server/routes.js` keeps in
   sync 30 days after each Case's Submit Date (amber), and everything else
   in Task Management (blue). See that function's comment for exactly how
   the follow-up task is created/resynced/cleaned up as a Case's Submit Date
   changes. Also read-only here — Tasks are only ever created in Task
   Management.
-- **行程 (calendar events)** (purple) — freeform items that are neither a
+- **Calendar events** (purple) — freeform items that are neither a
   Case nor a Task, e.g. a meeting or a personal reminder. These ARE created
-  directly from the Calendar page's own "+ 新增行程" button, backed by their
+  directly from the Calendar page's own "+ New Event" button, backed by their
   own `/api/calendar-events` collection (`server/routes.js`) rather than
   `cases`/`tasks`. Visible to everyone, but only the creator (or an Admin)
   gets the inline edit/delete icons on one.
@@ -649,7 +652,7 @@ apps) that plots four kinds of events together, each with its own color:
   add a matching `PH_HOLIDAYS_<year>` array (and register it in
   `PH_HOLIDAYS_BY_YEAR`) for any other year the page gets browsed into.
 
-Above the big grid: a "近 7 天待辦事項" panel (always the next 7 days,
+Above the big grid: a "Next 7 Days" panel (always the next 7 days,
 regardless of what's selected in the grid) and a single selected day's
 agenda (defaults to today; clicking a grid cell switches it to that day).
 

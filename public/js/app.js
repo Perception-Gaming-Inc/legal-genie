@@ -1929,6 +1929,17 @@ function caseBaseFormFields() {
   ];
 }
 
+// Blank clears the field back to null (rather than keeping whatever was
+// imported), matching how these number inputs render an empty string for
+// null/undefined above — so clearing the box and saving is a real way to
+// unset a value, not a no-op.
+function parseNumericFieldOrNull(raw) {
+  const s = String(raw ?? '').trim();
+  if (s === '') return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
 function caseGameRowHtml(game, idx) {
   const g = game || {};
   return `
@@ -1964,6 +1975,18 @@ function caseGameRowHtml(game, idx) {
               <option value="">—</option>
               ${YES_NO_OPTIONS.map((v) => `<option value="${v}" ${v === g.withJackpot ? 'selected' : ''}>${v}</option>`).join('')}
             </select>
+          </div>
+          <div class="col-md-4">
+            <label class="small text-secondary">Minimum Bet</label>
+            <input type="number" step="any" class="form-control form-control-sm case-game-minBet" value="${g.minBet ?? ''}">
+          </div>
+          <div class="col-md-4">
+            <label class="small text-secondary">Maximum Bet</label>
+            <input type="number" step="any" class="form-control form-control-sm case-game-maxBet" value="${g.maxBet ?? ''}">
+          </div>
+          <div class="col-md-4">
+            <label class="small text-secondary">RTP (%)</label>
+            <input type="number" step="any" class="form-control form-control-sm case-game-rtp" value="${g.rtp ?? ''}">
           </div>
         </div>
       </div>
@@ -2075,6 +2098,9 @@ function showCaseFormModal({ title, initial = {}, submitLabel = 'Save', onSubmit
           gameVersion: rowEl.querySelector('.case-game-gameVersion').value,
           gameType: rowEl.querySelector('.case-game-gameType').value,
           withJackpot: rowEl.querySelector('.case-game-withJackpot').value,
+          minBet: parseNumericFieldOrNull(rowEl.querySelector('.case-game-minBet').value),
+          maxBet: parseNumericFieldOrNull(rowEl.querySelector('.case-game-maxBet').value),
+          rtp: parseNumericFieldOrNull(rowEl.querySelector('.case-game-rtp').value),
         };
       });
       if (!data.games.length) {
@@ -2376,6 +2402,9 @@ async function renderCaseDetail(content, id) {
           ${field('Game ID', g.gameId)}
           ${field('Game Type', g.gameType)}
           ${field('Game Version', g.gameVersion)}
+          ${field('Minimum Bet', g.minBet)}
+          ${field('Maximum Bet', g.maxBet)}
+          ${field('RTP', g.rtp != null ? `${g.rtp}%` : null)}
           ${field('With Jackpot', g.withJackpot)}
           ${g.withJackpot === 'Yes' ? field('PAGCOR Game Testing Date', fmtDate(g.jackpotTestingDate)) : ''}
           ${g.withJackpot === 'Yes' ? field('Jackpot Report Submitted', g.jackpotReportSubmitted) : ''}

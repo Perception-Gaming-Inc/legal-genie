@@ -2688,6 +2688,31 @@ async function renderCaseDetail(content, id) {
 // `relatedDocs` is every document already linked to this case (not just a
 // count — Phase 2 needs the actual rows to work out how many already belong
 // to whichever game gets picked below, see gameDocCount()).
+
+// Every document already on file for one game within this case — same
+// relatedGameId-first, gameTitle-fallback matching the "existingGameDocCount"
+// logic further below (kept as one small helper now that the duplicate-
+// upload check needs the actual list, not just a count).
+function docsForGameInList(relatedDocs, game) {
+  return relatedDocs.filter((d) => d.filePath).filter((d) => (game.id && d.relatedGameId === game.id)
+    || (!d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === (game.gameTitle || '').trim().toLowerCase()));
+}
+
+// Duplicate-upload check (2026-08-25, at Tiffany's request, after finding a
+// batch of leftover documents in the R88/LuckyAce and R88/Maya Gems folders
+// from an earlier deleted case — "應該是說每個遊戲資料夾如果有重複的就跳出是否
+// 取代視窗"). Scoped to one game's own folder (not the whole case/provider),
+// matching how Document Center's own folders are organized. A "duplicate" is
+// a same-game document whose Title or original file name matches the one
+// about to be uploaded (case-insensitive, trimmed) — catches both "re-typed
+// the same title" and "picked the same file again" without needing to read
+// file bytes.
+function findDuplicateInGameFolder(relatedDocs, game, title, fileName) {
+  const gameDocs = docsForGameInList(relatedDocs, game);
+  const t = (title || '').trim().toLowerCase();
+  const f = (fileName || '').trim().toLowerCase();
+  return gameDocs.find((d) => (t && (d.title || '').trim().toLowerCase() === t) || (f && (d.fileName || '').trim().toLowerCase() === f)) || null;
+}
 function showCaseDocumentUploadModal(item, relatedDocs) {
   const games = caseGamesList(item);
   const isMultiGameCase = Array.isArray(item.games);
@@ -2881,18 +2906,33 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
       for (let i = 0; i < rows.length; i++) {
         step++;
         uploadBtn.innerHTML = `Uploading… (${step}/${totalSteps})`;
+        const title = rows[i].title || rows[i].file.name;
+        // Duplicate check, scoped to this one game's own folder — a title or
+        // original file name that already exists there prompts a Replace/
+        // Keep-Both choice instead of silently filing a second copy (see
+        // findDuplicateInGameFolder above).
+        const dup = findDuplicateInGameFolder(relatedDocs, selectedGame, title, rows[i].file.name);
+        const shouldReplace = dup && await confirmDialog(
+          `"${selectedGame.gameTitle || item.title}" already has "${dup.title || dup.fileName}" on file (uploaded ${fmtDate(dup.createdAt)}).\n\n` +
+          `OK = replace it with this new file (the old file is kept as a version you can still download).\n` +
+          `Cancel = keep both — upload this as a separate document.`
+        );
         try {
-          await Api.post('/api/documents', {
-            title: rows[i].title || rows[i].file.name, category: rows[i].category, reportType: rows[i].reportType,
-            provider: item.provider, gameTitle: selectedGame.gameTitle, gameId: selectedGame.gameId,
-            relatedCaseId: item.id,
-            // Stable link to this specific game (not just its title) — see
-            // docsForGame in server/routes.js for why this is preferred over
-            // matching by gameTitle text. Legacy flat cases have no real game
-            // id of their own to link to, so this is left unset for them.
-            relatedGameId: isMultiGameCase ? selectedGame.id : undefined,
-            fileName: rows[i].file.name, fileContentBase64: rows[i].base64,
-          });
+          if (shouldReplace) {
+            await Api.post(`/api/documents/${dup.id}/replace-file`, { fileName: rows[i].file.name, fileContentBase64: rows[i].base64 });
+          } else {
+            await Api.post('/api/documents', {
+              title, category: rows[i].category, reportType: rows[i].reportType,
+              provider: item.provider, gameTitle: selectedGame.gameTitle, gameId: selectedGame.gameId,
+              relatedCaseId: item.id,
+              // Stable link to this specific game (not just its title) — see
+              // docsForGame in server/routes.js for why this is preferred over
+              // matching by gameTitle text. Legacy flat cases have no real game
+              // id of their own to link to, so this is left unset for them.
+              relatedGameId: isMultiGameCase ? selectedGame.id : undefined,
+              fileName: rows[i].file.name, fileContentBase64: rows[i].base64,
+            });
+          }
           perGameUploaded.set(selectedGame, perGameUploaded.get(selectedGame) + 1);
         } catch (err) {
           toast(`Failed to upload "${rows[i].file.name}"${selectedGames.length > 1 ? ` for "${selectedGame.gameTitle || item.title}"` : ''}: ${err.message}`, 'danger');
@@ -2918,8 +2958,7 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
       const gameUploaded = perGameUploaded.get(selectedGame) || 0;
       if (!gameUploaded) continue;
       const existingGameDocCount = isMultiGameCase
-        ? relatedDocs.filter((d) => d.filePath).filter((d) => (selectedGame.id && d.relatedGameId === selectedGame.id)
-          || (!d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === (selectedGame.gameTitle || '').trim().toLowerCase())).length
+        ? docsForGameInList(relatedDocs, selectedGame).length
         : relatedDocs.length;
       if (existingGameDocCount + gameUploaded < 2) continue;
       try {
@@ -3826,7 +3865,33 @@ async function renderDocuments(content) {
       showFormModal({
         title: 'Upload Document', fields: fields(prefill && prefill.relatedCaseId), initial: prefill || {}, submitLabel: 'Upload',
         aiAssist: { module: 'documents' },
-        onSubmit: async (data) => { await Api.post('/api/documents', data); toast('Document uploaded'); route(); },
+        onSubmit: async (data) => {
+          // Duplicate-upload check (2026-08-25, at Tiffany's request), same
+          // rule as the per-case batch upload modal: scoped to this
+          // document's own Provider/Game Title folder (how Document Center
+          // groups things — see normProviderKey/normKey above), a duplicate
+          // being a Title or original file name already on file there.
+          const folderDocs = rawDocs.filter((d) => d.filePath
+            && normProviderKey(d.provider || UNCATEGORIZED_PROVIDER) === normProviderKey(data.provider || UNCATEGORIZED_PROVIDER)
+            && normKey(d.gameTitle || UNCATEGORIZED_GAME) === normKey(data.gameTitle || UNCATEGORIZED_GAME));
+          const t = (data.title || '').trim().toLowerCase();
+          const f = (data.fileName || '').trim().toLowerCase();
+          const dup = folderDocs.find((d) => (t && (d.title || '').trim().toLowerCase() === t) || (f && (d.fileName || '').trim().toLowerCase() === f));
+          if (dup) {
+            const shouldReplace = await confirmDialog(
+              `This folder already has "${dup.title || dup.fileName}" on file (uploaded ${fmtDate(dup.createdAt)}).\n\n` +
+              `OK = replace it with this new file (the old file is kept as a version you can still download).\n` +
+              `Cancel = keep both — upload this as a separate document.`
+            );
+            if (shouldReplace) {
+              const { fileName, fileContentBase64 } = data;
+              await Api.post(`/api/documents/${dup.id}/replace-file`, { fileName, fileContentBase64 });
+              toast('Document replaced'); route();
+              return;
+            }
+          }
+          await Api.post('/api/documents', data); toast('Document uploaded'); route();
+        },
       });
     });
   };
@@ -4382,6 +4447,15 @@ async function renderNotifications(content) {
 // what was it before" across the whole system, filterable by case number/
 // title/game/field/user.
 const AUDIT_FIELD_LABELS = { gameId: 'Game ID', gameVersion: 'Game Version', minBet: 'Minimum Bet', maxBet: 'Maximum Bet', rtp: 'RTP', pagcorStage: 'PAGCOR Stage' };
+// entityType/action labels for the non-field-diff "action" entries logged by
+// server/routes.js's logAction() (created/updated/deleted/etc. across every
+// module) — see that function's header comment for the full inventory.
+const ENTITY_TYPE_LABELS = {
+  case: 'Case', game: 'Game', document: 'Document', task: 'Task', kbDocument: 'Knowledge Base Doc',
+  kbFaq: 'FAQ', calendarEvent: 'Calendar Event', approval: 'Approval', user: 'User', role: 'Role',
+  department: 'Department', settings: 'Settings', caseNote: 'Case Note', documentVersion: 'Document Version',
+};
+const ACTION_LABELS = { created: 'Created', updated: 'Updated', deleted: 'Deleted', replaced: 'Replaced', imported: 'Imported', decided: 'Decided' };
 let auditLogSearchQuery = '';
 
 async function renderAuditLog(content) {
@@ -4392,6 +4466,7 @@ async function renderAuditLog(content) {
     const q = auditLogSearchQuery.trim().toLowerCase();
     const filtered = !q ? entries : entries.filter((e) => [
       e.caseNumber, e.caseTitle, e.gameTitle, AUDIT_FIELD_LABELS[e.field] || e.field, e.userName,
+      e.label, ENTITY_TYPE_LABELS[e.entityType], ACTION_LABELS[e.action],
     ].some((v) => v && String(v).toLowerCase().includes(q)));
 
     content.innerHTML = `
@@ -4406,11 +4481,12 @@ async function renderAuditLog(content) {
               <div class="list-group-item">
                 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
                   <div>
-                    ${e.caseNumber ? `<a href="#/cases/${e.caseId}" class="fw-semibold text-decoration-none">${escapeHtml(e.caseNumber)}</a>` : '<span class="text-secondary">(case deleted)</span>'}
+                    ${e.caseNumber ? `<a href="#/cases/${e.caseId}" class="fw-semibold text-decoration-none">${escapeHtml(e.caseNumber)}</a>` : (e.caseId ? '<span class="text-secondary">(case deleted)</span>' : '<span class="text-secondary">(no related case)</span>')}
                     ${e.caseTitle ? `<span class="text-secondary"> — ${escapeHtml(e.caseTitle)}</span>` : ''}
                   </div>
                   <div class="small text-secondary">${escapeHtml(e.userName || 'system')} · ${fmtDate(e.createdAt)}</div>
                 </div>
+                ${e.field ? `
                 <div class="mt-1">
                   <span class="fw-semibold">${escapeHtml(AUDIT_FIELD_LABELS[e.field] || e.field)}</span>
                   ${e.gameTitle ? `<span class="text-secondary"> — ${escapeHtml(e.gameTitle)}</span>` : ''}
@@ -4419,11 +4495,16 @@ async function renderAuditLog(content) {
                   ${e.oldValue === null || e.oldValue === undefined ? '<span class="text-secondary">(empty)</span>' : escapeHtml(String(e.oldValue))}
                   &rarr;
                   ${e.newValue === null || e.newValue === undefined ? '<span class="text-secondary">(empty)</span>' : `<strong>${escapeHtml(String(e.newValue))}</strong>`}
-                </div>
+                </div>` : `
+                <div class="mt-1">
+                  <span class="fw-semibold">${escapeHtml(ENTITY_TYPE_LABELS[e.entityType] || e.entityType || 'Item')} ${escapeHtml(ACTION_LABELS[e.action] || e.action || '')}</span>
+                  ${e.label ? ` — ${escapeHtml(e.label)}` : ''}
+                  ${e.gameTitle ? `<span class="text-secondary"> — ${escapeHtml(e.gameTitle)}</span>` : ''}
+                </div>`}
               </div>`).join('')}
           </div>
         </div>`
-        : `<div class="small text-secondary">${entries.length ? 'No changes match your search.' : 'No tracked field changes recorded yet (Game ID, Game Version, Minimum/Maximum Bet, RTP, PAGCOR Stage).'}</div>`}
+        : `<div class="small text-secondary">${entries.length ? 'No changes match your search.' : 'No activity recorded yet.'}</div>`}
     `;
     const searchEl = content.querySelector('#auditLogSearch');
     if (searchEl) {

@@ -1132,18 +1132,25 @@ const GROUP_QA_SCHEMA = {
 };
 
 /**
- * @param {{providerName: string, question: string, cases: Array<object>, kbFaqs?: Array<object>}} input
- *   `kbFaqs` (added 2026-08-25, at Tiffany's request) — the company-approved
- *   Knowledge Base FAQ entries (Settings/Knowledge Base > FAQ) with
- *   status 'Active', so the bot can also answer general PAGCOR/regulatory
- *   questions that aren't about any one specific case, as long as there's a
- *   matching approved FAQ entry to ground the answer in. Draft/Pending
- *   Review/Archived entries are deliberately excluded by the caller
- *   (server/routes.js's telegram webhook handler) before this is called —
- *   only Tiffany-approved content should ever be quoted back to a Provider.
+ * @param {{providerName: string, question: string, cases: Array<object>, kbFaqs?: Array<object>, kbDocuments?: Array<object>}} input
+ *   `kbFaqs`/`kbDocuments` (added 2026-08-25, at Tiffany's request) — the
+ *   company-approved Knowledge Base content (Knowledge Base > FAQ /
+ *   Documents) with status 'Active', so the bot can also answer general
+ *   PAGCOR/regulatory questions that aren't about any one specific case, as
+ *   long as there's approved KB content to ground the answer in.
+ *   Draft/Pending Review/Archived entries are deliberately excluded by the
+ *   caller (server/routes.js's telegram webhook handler) before this is
+ *   called — only Tiffany-approved content should ever be quoted back to a
+ *   Provider. kbDocuments only contributes its `notes` (a human-written
+ *   summary) — the underlying linked/uploaded file's actual content is
+ *   never fetched or sent here, so a document with no notes written
+ *   contributes nothing beyond its title (most real KB question-answering
+ *   value ends up coming from kbFaqs' short direct answers and from
+ *   kbDocuments entries that do have a notes summary; both are optional and
+ *   independently useful — pass whichever exist).
  * @returns {Promise<{shouldRespond: boolean, answer: string}>}
  */
-async function answerGroupQuestion({ providerName, question, cases, kbFaqs }) {
+async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDocuments }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured on the server.');
   if (!question || !String(question).trim()) throw new Error('No message text to answer.');
@@ -1159,7 +1166,13 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs }) {
     return `- ${c.gameTitle || c.title}${c.caseNumber ? ` (Case ${c.caseNumber})` : ''}: ${bits}`;
   });
 
-  const kbLines = (Array.isArray(kbFaqs) ? kbFaqs : []).map((f) => `- Q: ${f.question}\n  A: ${f.answer}`);
+  const kbFaqLines = (Array.isArray(kbFaqs) ? kbFaqs : []).map((f) => `- Q: ${f.question}\n  A: ${f.answer}`);
+  // Only documents that actually have a written summary are worth sending —
+  // a bare title/category with no notes gives the model nothing to answer
+  // from and would just be noise in the prompt.
+  const kbDocLines = (Array.isArray(kbDocuments) ? kbDocuments : [])
+    .filter((d) => d.notes && String(d.notes).trim())
+    .map((d) => `- ${d.title}${d.category ? ` (${d.category})` : ''}: ${d.notes}`);
 
   const requestBody = {
     systemInstruction: {
@@ -1167,16 +1180,16 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs }) {
         text:
           'You are a helpful assistant embedded in a Telegram group chat between a legal/regulatory team and one of ' +
           'their game Providers, for tracking PAGCOR game submissions. You are shown ONE message from the group, ' +
-          'a list of this Provider\'s current cases from the internal tracking system, and a set of company-approved ' +
-          'Knowledge Base FAQ entries (general PAGCOR/regulatory reference answers, not tied to any one case). First ' +
-          'decide whether the message is genuinely a question you can answer from what\'s given — either about this ' +
-          'Provider\'s own cases (status, stage, required documents, dates, rejection reasons), or a general ' +
-          'regulatory/process question that one of the Knowledge Base FAQ entries below directly answers. If it ' +
-          'looks like ordinary conversation between people, a greeting, or a question neither the case data nor the ' +
-          'Knowledge Base entries actually answer, set shouldRespond to false and leave answer empty. ' +
-          'Never guess or invent information not present in the case data or the Knowledge Base entries given — if ' +
-          'no Knowledge Base entry covers it, do not answer from general/outside knowledge, even if you believe you ' +
-          'know the answer. Keep answers short and friendly.',
+          'a list of this Provider\'s current cases from the internal tracking system, and company-approved ' +
+          'Knowledge Base content (FAQ entries and reference-document summaries — general PAGCOR/regulatory ' +
+          'material, not tied to any one case). First decide whether the message is genuinely a question you can ' +
+          'answer from what\'s given — either about this Provider\'s own cases (status, stage, required documents, ' +
+          'dates, rejection reasons), or a general regulatory/process question that the Knowledge Base content below ' +
+          'directly answers. If it looks like ordinary conversation between people, a greeting, or a question ' +
+          'neither the case data nor the Knowledge Base content actually answers, set shouldRespond to false and ' +
+          'leave answer empty. Never guess or invent information not present in the case data or the Knowledge Base ' +
+          'content given — if nothing given covers it, do not answer from general/outside knowledge, even if you ' +
+          'believe you know the answer. Keep answers short and friendly.',
       }],
     },
     contents: [{
@@ -1184,7 +1197,8 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs }) {
         text:
           `Provider: ${providerName}\n\n` +
           `This Provider's cases on file:\n${caseLines.length ? caseLines.join('\n') : '(no cases on file for this Provider yet)'}\n\n` +
-          `Company-approved Knowledge Base FAQ entries:\n${kbLines.length ? kbLines.join('\n') : '(no Knowledge Base FAQ entries on file yet)'}\n\n` +
+          `Company-approved Knowledge Base FAQ entries:\n${kbFaqLines.length ? kbFaqLines.join('\n') : '(none on file yet)'}\n\n` +
+          `Company-approved Knowledge Base reference document summaries:\n${kbDocLines.length ? kbDocLines.join('\n') : '(none on file yet)'}\n\n` +
           `Group message: "${question}"`,
       }],
     }],

@@ -489,10 +489,11 @@ function canView(moduleKey) {
   // sees deadlines on the calendar, without needing its own roles-table row).
   if (moduleKey === 'calendar') return true;
   // Audit Log has no permissions row of its own (see MODULES in
-  // server/auth.js) — it's a read-only view over the same case field
-  // changes the per-case audit-log endpoint already gated on 'cases':'view',
-  // so anyone who can see cases can see what changed on them.
-  if (moduleKey === 'auditLog') return canView('cases');
+  // server/auth.js). Since 2026-08-25 it's a system-wide activity feed
+  // (documents, tasks, users, roles, settings, etc.), not just case field
+  // changes — Admin-only per Tiffany's request, matching the server-side
+  // check on GET /api/audit-log.
+  if (moduleKey === 'auditLog') return !!(State.role && State.role.name === 'Admin');
   if (!State.role) return false;
   if (State.role.name === 'Admin') return true;
   const p = (State.role.permissions || {})[moduleKey];

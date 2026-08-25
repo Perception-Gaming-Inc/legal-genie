@@ -100,9 +100,40 @@ function normalizeHeader(h) {
 // column still auto-maps to the "Game Manual" checklist item, but so would
 // a newly-added "Content Provider Certification" item once someone adds a
 // matching column to their sheet — no code change needed).
+// RTP priority pass — must run before the generic per-column passes below.
+// Real workbooks with progressive jackpots have MULTIPLE columns whose
+// header contains "RTP" (e.g. PAGCOR's R88 template: "Jackpot RTP% / Start
+// Up% / Increment%", "Total Jackpot RTP %", "Base Game RTP %" — found
+// 2026-08-24 diagnosing why CASE-0039's imported RTP came back null). The
+// generic "first column left-to-right wins" passes below would grab
+// whichever RTP-labeled column appears first, which in this template is
+// the jackpot-specific one ("N/A" for non-jackpot games, or a different,
+// much smaller number for ones that have a jackpot) — NOT the actual
+// base/total RTP PAGCOR cares about for compliance (matched against
+// RTP_MIN_PERCENT..RTP_MAX_PERCENT in server/ai.js). Prefer, in order:
+//   1. a header containing "base game rtp" (most specific — the real
+//      submitted RTP for the base game)
+//   2. a header containing "total rtp" but not "jackpot" (older templates'
+//      plain "Total RTP (%)" column)
+//   3. any header containing "rtp" but not "jackpot" at all
+// Only if NONE of those exist does the generic fallback below get a
+// chance to pick a jackpot-labeled RTP column — better than leaving rtp
+// completely undetected, and identical to the old behavior for any sheet
+// that has no jackpot-RTP column at all (the common case).
+function detectRtpColumn(headerRow) {
+  const normed = headerRow.map((c) => normalizeHeader(c));
+  const nonJackpot = (i) => !normed[i].includes('jackpot');
+  let idx = normed.findIndex((n, i) => n.includes('base game rtp') && nonJackpot(i));
+  if (idx === -1) idx = normed.findIndex((n, i) => n.includes('total rtp') && nonJackpot(i));
+  if (idx === -1) idx = normed.findIndex((n, i) => n.includes('rtp') && nonJackpot(i));
+  return idx === -1 ? undefined : idx;
+}
+
 function detectColumns(headerRow, checklistItems) {
   const items = checklistItems || DEFAULT_CHECKLIST_ITEMS;
   const map = { checklistCols: {} };
+  const rtpIdx = detectRtpColumn(headerRow);
+  if (rtpIdx !== undefined) map.rtp = rtpIdx;
   headerRow.forEach((cell, idx) => {
     const norm = normalizeHeader(cell);
     if (!norm) return;

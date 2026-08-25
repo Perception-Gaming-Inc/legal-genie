@@ -937,12 +937,20 @@ router.get('/api/cases/:id/audit-log', async (req, res, params) => {
 // keeps its entry (nothing here is deleted along with a case) but comes
 // back with caseNumber/caseTitle null.
 router.get('/api/audit-log', async (req, res) => {
-  // 'settings' rather than 'cases' — this feed now spans every module
-  // (documents, tasks, users, roles, etc.), and 'settings' is the closest
-  // existing permission to "can see system-wide activity" (it already
-  // gates Users/Roles/Departments/System Settings).
-  const user = await requirePerm(req, res, 'settings', 'view');
+  // Admin-only (2026-08-25, at Tiffany's request) — this feed now spans
+  // every module (documents, tasks, users, roles, settings, etc.), which is
+  // more sensitive than any single permission module covers. 'settings:
+  // view' alone isn't enough since Legal Manager also holds that. Checking
+  // the role name directly here is the same pattern already used elsewhere
+  // in this file for Admin-only carve-outs (see `role.name === 'Admin'` at
+  // the top of GET /api/cases and GET /api/tasks).
+  const user = await requireAuth(req, res);
   if (!user) return;
+  const role = await store.find('roles', user.roleId);
+  if (!role || role.name !== 'Admin') {
+    sendJson(res, 403, { error: 'Only Admins can view the system-wide activity log' });
+    return;
+  }
   const [all, cases] = await Promise.all([store.all('auditLog'), store.all('cases')]);
   const caseById = new Map(cases.map((c) => [c.id, c]));
   const rows = all

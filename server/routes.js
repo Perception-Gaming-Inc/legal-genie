@@ -2822,4 +2822,13 @@ router.get('/api/cron/follow-up-reminders', async (req, res) => {
   }
 });
 
+// Exported for the automated test suite only (test/routes.test.js) — attached
+// as a property on the router rather than changing `module.exports` itself,
+// so this is purely additive and doesn't touch how server.js consumes this
+// module. Lets the duplicate-game-detection logic (buildExistingGameIndex /
+// findExistingGameMatch / titlesLikelySameGame) be unit-tested directly
+// instead of only through a full API call. Added 2026-08-25 at Tiffany's
+// request, alongside the same test-only export added to server/ai.js.
+router._testables = { buildExistingGameIndex, findExistingGameMatch, normalizeGameName, titlesLikelySameGame, importDedupKey };
+
 module.exports = router;

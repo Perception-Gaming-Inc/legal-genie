@@ -474,9 +474,13 @@ function valuesMatch(expected, actual, isCurrencyAmount) {
     // symbol/label attached (e.g. "PHP 0.50", "₱1,000.00") rather than as a
     // bare number, so pull out the first number-looking substring the same
     // way parseRtpPercent does, rather than requiring the whole string to
-    // parse cleanly as a number.
-    const expMatch = String(expected).trim().match(/-?\d+(?:\.\d+)?/);
-    const actMatch = String(actual).trim().match(/-?\d+(?:\.\d+)?/);
+    // parse cleanly as a number. Thousand-separator commas are stripped
+    // first (bug found 2026-08-25 while writing test/ai.test.js: the old
+    // regex stopped at the first comma, so "₱1,000.00" — this function's OWN
+    // doc-comment example above — parsed as 1, not 1000, and silently
+    // reported a real match as a mismatch).
+    const expMatch = String(expected).trim().replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+    const actMatch = String(actual).trim().replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
     const expNum = expMatch ? Number(expMatch[0]) : NaN;
     const actNum = actMatch ? Number(actMatch[0]) : NaN;
     if (Number.isFinite(expNum) && Number.isFinite(actNum)) return expNum === actNum;
@@ -1173,4 +1177,14 @@ async function answerGroupQuestion({ providerName, question, cases }) {
   return callGemini(requestBody);
 }
 
-module.exports = { extractFields, extractApprovalNotice, summarizeDocument, checkDocumentConsistency, extractCaseFromDocuments, answerGroupQuestion, MODULE_SCHEMAS, toGeminiResponseSchema };
+module.exports = {
+  extractFields, extractApprovalNotice, summarizeDocument, checkDocumentConsistency,
+  extractCaseFromDocuments, answerGroupQuestion, MODULE_SCHEMAS, toGeminiResponseSchema,
+  // Exported for the automated test suite only (test/ai.test.js) — these were
+  // previously internal-only helpers. Purely additive (no behavior change);
+  // lets the RTP range-check / value-comparison logic underneath
+  // checkDocumentConsistency be unit-tested directly instead of only via a
+  // full mocked Gemini call. Added 2026-08-25 at Tiffany's request, first
+  // step toward automated test coverage for the compliance-critical logic.
+  parseRtpPercent, valuesMatch, JACKPOT_TOTAL_RTP_MAX_PERCENT, RTP_MIN_PERCENT, RTP_MAX_PERCENT,
+};

@@ -2000,6 +2000,10 @@ function caseGameRowHtml(game, idx) {
             <label class="small text-secondary">RTP (%)</label>
             <input type="number" step="any" class="form-control form-control-sm case-game-rtp" value="${g.rtp ?? ''}">
           </div>
+          <div class="col-md-4">
+            <label class="small text-secondary">Jackpot RTP (%, jackpot games only)</label>
+            <input type="number" step="any" class="form-control form-control-sm case-game-jackpotRtp" value="${g.jackpotRtp ?? ''}">
+          </div>
         </div>
       </div>
     </div>`;
@@ -2113,6 +2117,7 @@ function showCaseFormModal({ title, initial = {}, submitLabel = 'Save', onSubmit
           minBet: parseNumericFieldOrNull(rowEl.querySelector('.case-game-minBet').value),
           maxBet: parseNumericFieldOrNull(rowEl.querySelector('.case-game-maxBet').value),
           rtp: parseNumericFieldOrNull(rowEl.querySelector('.case-game-rtp').value),
+          jackpotRtp: parseNumericFieldOrNull(rowEl.querySelector('.case-game-jackpotRtp').value),
         };
       });
       if (!data.games.length) {
@@ -2147,7 +2152,7 @@ function caseGamesList(item) {
   if (item.gameTitle || item.gameId || item.pagcorStage || item.provider) {
     return [{
       id: item.id, gameTitle: item.gameTitle, gameId: item.gameId, gameVersion: item.gameVersion,
-      gameType: item.gameType, withJackpot: item.withJackpot, pagcorStage: item.pagcorStage,
+      gameType: item.gameType, withJackpot: item.withJackpot, jackpotRtp: item.jackpotRtp, pagcorStage: item.pagcorStage,
       pagcorStageChangedAt: item.pagcorStageChangedAt, checklist: item.checklist,
       jackpotTestingDate: item.jackpotTestingDate, jackpotReportSubmitted: item.jackpotReportSubmitted,
       testingScreenshotsSubmitted: item.testingScreenshotsSubmitted, rejectionReason: item.rejectionReason,
@@ -2418,6 +2423,10 @@ async function renderCaseDetail(content, id) {
           ${field('Maximum Bet', g.maxBet)}
           ${field('RTP', g.rtp != null ? `${g.rtp}%` : null)}
           ${field('With Jackpot', g.withJackpot)}
+          ${g.withJackpot === 'Yes' ? field('Jackpot RTP', g.jackpotRtp != null ? `${g.jackpotRtp}%` : null) : ''}
+          ${g.withJackpot === 'Yes' && g.rtp != null && g.jackpotRtp != null
+            ? field('Combined RTP (base + jackpot)', `${Math.round((Number(g.rtp) + Number(g.jackpotRtp)) * 100) / 100}%${(Number(g.rtp) + Number(g.jackpotRtp)) >= 97 ? ' ⚠️ ≥97%' : ''}`)
+            : ''}
           ${g.withJackpot === 'Yes' ? field('PAGCOR Game Testing Date', fmtDate(g.jackpotTestingDate)) : ''}
           ${g.withJackpot === 'Yes' ? field('Jackpot Report Submitted', g.jackpotReportSubmitted) : ''}
           ${g.withJackpot === 'Yes' ? field('Testing Screenshots Submitted', g.testingScreenshotsSubmitted) : ''}

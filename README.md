@@ -877,8 +877,11 @@ the permission model, the seed data — is identical between both paths.
    sandbox has no network access to test against a *real* Supabase project
    or a real Vercel deployment, so that first real end-to-end check happens
    after you deploy (the Go-Live Guide has a smoke-test checklist for
-   exactly that). There is still no automated test suite committed to the
-   project — add one before treating this as fully production-grade.
+   exactly that). ✅ partially done (2026-08-25): a first automated test
+   suite now exists — see "Automated tests" below. It covers the
+   highest-risk compliance logic (RTP band checks, the Jackpot combined-RTP
+   rule, duplicate-game detection) but not the whole app yet; expand it as
+   more logic is added.
 8. **Basic security headers** — ✅ done (`X-Content-Type-Options`,
    `X-Frame-Options`, `Referrer-Policy` on every response). A stricter
    Content-Security-Policy is a further improvement, but would need the
@@ -888,6 +891,61 @@ the permission model, the seed data — is identical between both paths.
 None of the above require rewriting the module logic (cases, contracts,
 documents, etc.) — they are infrastructure hardening steps around the
 existing application.
+
+## Automated tests
+
+A first automated test suite lives in `test/` (added 2026-08-25). It uses
+Node's own built-in test runner (`node:test` — no extra npm package to
+install, works on the Node 22 this project already requires) rather than a
+third-party framework like Jest, so `npm test` works with zero setup beyond
+what `npm install` already gives you.
+
+**Run it:**
+
+```bash
+npm test
+```
+
+(equivalent to `SUPABASE_URL=http://local-mock SUPABASE_SERVICE_ROLE_KEY=test-only node --test` — the same offline mock database described in
+`local-mock/README.md`, so tests never touch a real Supabase project.)
+
+**What's covered so far** — deliberately scoped to the highest-risk,
+most compliance-critical logic first, not the whole app:
+
+- `test/import.test.js` — Excel column detection for RTP / Jackpot RTP
+  (picking the right column out of a real R88-template sheet that has
+  several RTP-labeled columns), and the Excel-fraction-to-percentage
+  conversion in `mapRow()`.
+- `test/ai.test.js` — the RTP 90%–96.99% band check, the Jackpot
+  combined-RTP rule (base + jackpot must stay strictly under 97%,
+  `JACKPOT_TOTAL_RTP_MAX_PERCENT` in `server/ai.js`), and the underlying
+  `parseRtpPercent`/`valuesMatch` helpers — run against a mocked Gemini
+  response so no network access or `GEMINI_API_KEY` is needed. Writing this
+  test surfaced and fixed a real bug: `valuesMatch()`'s own doc-comment used
+  `"₱1,000.00"` as an example of a currency-formatted Minimum/Maximum Bet
+  value it should handle, but the number-extraction regex stopped at the
+  first comma, silently reading it as `1` instead of `1000` and reporting a
+  real match as a mismatch. Fixed by stripping thousand-separator commas
+  before parsing.
+- `test/routes.test.js` — the duplicate-game detection behind the Excel
+  import's Replace/Skip prompt (`buildExistingGameIndex` /
+  `findExistingGameMatch`, matching by Game ID first then by an exact
+  Provider+Title, and correctly catching duplicates against BOTH a modern
+  multi-game case and a legacy flat one), plus `titlesLikelySameGame`'s
+  typo/punctuation tolerance.
+
+A few internal helper functions (`parseRtpPercent`, `valuesMatch` in
+`server/ai.js`; `buildExistingGameIndex`, `findExistingGameMatch`,
+`normalizeGameName`, `titlesLikelySameGame`, `importDedupKey` in
+`server/routes.js`) are exported purely for this test suite to reach — via
+`module.exports`'s extra entries in `ai.js` and a `router._testables`
+property in `routes.js` — with no change to how the rest of the app uses
+either file.
+
+**Not covered yet** (good next additions, in priority order): document
+completeness checks, the Document Center duplicate-upload Replace/Keep-Both
+flow, PAGCOR stage-change notification rules, and an end-to-end smoke test
+against the local-mock server (not just its pure logic in isolation).
 
 ## Future expansion (from the original proposal)
 

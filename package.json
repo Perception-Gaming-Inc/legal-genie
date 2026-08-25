@@ -7,7 +7,8 @@
     "node": "22.x"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "SUPABASE_URL=http://local-mock SUPABASE_SERVICE_ROLE_KEY=test-only node --test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.9"

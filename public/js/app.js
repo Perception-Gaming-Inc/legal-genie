@@ -1809,8 +1809,33 @@ async function showImportCasesModal() {
     const originalLabel = btn.textContent;
     btn.textContent = 'Importing…';
     try {
-      const result = await Api.post('/api/cases/import/commit', { fileName, fileContentBase64, sheets });
+      let result = await Api.post('/api/cases/import/commit', { fileName, fileContentBase64, sheets });
+      // Duplicate-decision round-trip (2026-08-25, at Tiffany's request —
+      // "跳出提示，然後可以選要取代還是怎樣") — server/routes.js's commit
+      // handler stops short of creating/skipping anything and reports
+      // `needsDuplicateDecision` when a row matches a game that already
+      // exists in some other case; ask once, then re-call commit with the
+      // decision so the same rows aren't re-parsed from scratch. Same
+      // OK=replace / Cancel=skip convention as the Document Center
+      // duplicate-upload check above, for consistency.
+      if (result.needsDuplicateDecision) {
+        const dups = result.duplicates || [];
+        const preview = dups.slice(0, 15)
+          .map((d) => `• ${d.gameTitle || '(untitled)'} (${d.provider || '—'}${d.existingCaseNumber ? `, already in ${d.existingCaseNumber}` : ''})`)
+          .join('\n');
+        const more = dups.length > 15 ? `\n…and ${dups.length - 15} more` : '';
+        const shouldReplace = await confirmDialog(
+          `${dups.length} game(s) in this import already exist in another case:\n\n${preview}${more}\n\n` +
+          `OK = replace the existing games' submitted data and re-file their Import Source document ` +
+          `(PAGCOR Stage/checklist/testing progress is kept — only the submitted values and the source file are refreshed).\n` +
+          `Cancel = skip these and import only the new games.`
+        );
+        result = await Api.post('/api/cases/import/commit', {
+          fileName, fileContentBase64, sheets, duplicateAction: shouldReplace ? 'replace' : 'skip',
+        });
+      }
       modal.hide();
+      const replacedMsg = result.gamesReplaced ? `, ${result.gamesReplaced} existing game(s) replaced` : '';
       const skippedMsg = result.skipped ? `, ${result.skipped} already existed (same Provider + game name) and were skipped` : '';
       const errorMsg = result.errors && result.errors.length ? `, ${result.errors.length} error(s) (see the browser console)` : '';
       const conflictMsg = result.gameIdConflicts && result.gameIdConflicts.length
@@ -1826,7 +1851,7 @@ async function showImportCasesModal() {
       if (result.casesCreated) caseSummary.push(`${result.casesCreated} new case(s)`);
       if (result.casesUpdated) caseSummary.push(`${result.casesUpdated} existing case(s) updated`);
       const caseSummaryMsg = caseSummary.length ? ` across ${caseSummary.join(' and ')}` : '';
-      toast(`Imported ${gamesAdded} game(s)${caseSummaryMsg}${skippedMsg}${errorMsg}${conflictMsg}${mergeMsg}`);
+      toast(`Imported ${gamesAdded} game(s)${caseSummaryMsg}${replacedMsg}${skippedMsg}${errorMsg}${conflictMsg}${mergeMsg}`);
       if (result.errors && result.errors.length) console.warn('Import errors:', result.errors);
       if (result.gameIdConflicts && result.gameIdConflicts.length) console.warn('Game ID conflicts (not auto-merged):', result.gameIdConflicts);
       if (result.mergeDecisions && result.mergeDecisions.length) console.warn('Rows auto-merged as duplicates:', result.mergeDecisions);

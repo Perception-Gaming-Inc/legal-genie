@@ -406,7 +406,10 @@ async function summarizeDocument({ fileName, fileContentBase64, text }) {
 // this only ever says whether something is present/consistent, never
 // whether it is legally correct or PAGCOR-acceptable.
 // ---------------------------------------------------------------------------
-const REQUIRED_DOCUMENT_TYPES = ['EG Form', 'Game Parameters', 'Game Manual', 'RNG Certification', 'RTP Verification', 'Content Provider Certification'];
+// 'EG Form' removed from this list 2026-08-25 at Tiffany's request — it's
+// not treated as a required submission document for AI Submission
+// Validation purposes.
+const REQUIRED_DOCUMENT_TYPES = ['Game Parameters', 'Game Manual', 'RNG Certification', 'RTP Verification', 'Content Provider Certification'];
 const CHECKED_PARAMETERS = ['Game ID', 'Game Version', 'Minimum Bet', 'Maximum Bet', 'RTP'];
 
 // PAGCOR's allowed RTP band (2026-08-20, at Tiffany's request) — RTP is

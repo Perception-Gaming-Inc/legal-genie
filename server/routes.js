@@ -758,6 +758,21 @@ async function logCaseAudit(row, user, existing) {
   }
 }
 
+// System-wide activity log (2026-08-25, at Tiffany's request) — a sibling to
+// logAudit/logCaseAudit above for the many actions that aren't a field diff
+// on a tracked case/game field: creating/deleting a record, replacing a
+// document's file, deciding an approval, importing a case from Excel, etc.
+// Deliberately best-effort — every call site wraps this in try/catch and
+// never lets a logging failure block the actual CRUD operation (same
+// pattern already used by the import-source-document linking above).
+async function logAction(entityType, entityId, action, label, user, extra) {
+  await store.insert('auditLog', {
+    entityType, entityId, action, label,
+    userId: user ? user.id : null, userName: user ? (user.fullName || user.username) : 'system',
+    ...extra,
+  });
+}
+
 // Provider-scoped row-level visibility (2026-08-24, at Tiffany's request —
 // today, any role with `cases: view` sees every case system-wide with no
 // way to restrict a paralegal to only the Provider(s) they actually handle).
@@ -876,13 +891,21 @@ crudRoutes({
   // sync with its Submit Date field (see syncDeadlineFollowUpTask above),
   // and — when the PAGCOR Stage actually changed this update — notify the
   // case's Owner, gated by Settings > Notification Settings.
-  afterCreate: async (row) => syncDeadlineFollowUpTask(row),
+  afterCreate: async (row, user) => {
+    await syncDeadlineFollowUpTask(row);
+    try { await logAction('case', row.id, 'created', `${row.caseNumber} - ${row.provider || row.title || ''}`, user, { caseId: row.id }); }
+    catch (err) { console.error('Failed to log case create:', err.message); }
+  },
   afterUpdate: async (row, user, id, existing) => {
     await syncDeadlineFollowUpTask(row);
     await notifyCaseStageChange(row, existing, user);
     await logCaseAudit(row, user, existing);
   },
-  afterDelete: async (row) => syncDeadlineFollowUpTask({ ...row, deadline: null }),
+  afterDelete: async (row, user) => {
+    await syncDeadlineFollowUpTask({ ...row, deadline: null });
+    try { await logAction('case', row.id, 'deleted', `${row.caseNumber} - ${row.provider || row.title || ''}`, user, { caseId: row.id }); }
+    catch (err) { console.error('Failed to log case delete:', err.message); }
+  },
 });
 
 // Bulk-update-stage (below) also changes pagcorStage outside the normal
@@ -914,7 +937,11 @@ router.get('/api/cases/:id/audit-log', async (req, res, params) => {
 // keeps its entry (nothing here is deleted along with a case) but comes
 // back with caseNumber/caseTitle null.
 router.get('/api/audit-log', async (req, res) => {
-  const user = await requirePerm(req, res, 'cases', 'view');
+  // 'settings' rather than 'cases' — this feed now spans every module
+  // (documents, tasks, users, roles, etc.), and 'settings' is the closest
+  // existing permission to "can see system-wide activity" (it already
+  // gates Users/Roles/Departments/System Settings).
+  const user = await requirePerm(req, res, 'settings', 'view');
   if (!user) return;
   const [all, cases] = await Promise.all([store.all('auditLog'), store.all('cases')]);
   const caseById = new Map(cases.map((c) => [c.id, c]));
@@ -1463,6 +1490,8 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
           }
         }
       }
+      try { await logAction('case', newCase.id, 'imported', `${newCase.caseNumber} - ${newCase.title}`, user, { caseId: newCase.id }); }
+      catch (err) { console.error('Failed to log case import:', err.message); }
       casesCreated++;
       gamesAdded += newGames.length;
     } catch (err) {
@@ -1486,6 +1515,10 @@ router.post('/api/cases/:id/notes', async (req, res, params, body) => {
   const user = await requirePerm(req, res, 'cases', 'edit');
   if (!user) return;
   const note = await store.insert('caseNotes', { caseId: params.id, note: body.note, createdBy: user.id });
+  try {
+    const preview = String(body.note || '').slice(0, 60);
+    await logAction('caseNote', note.id, 'created', preview || 'Note added', user, { caseId: params.id });
+  } catch (err) { console.error('Failed to log case note create:', err.message); }
   sendJson(res, 201, note);
 });
 
@@ -1504,6 +1537,18 @@ crudRoutes({
     const filePath = await storage.saveBase64File(body.fileName, body.fileContentBase64);
     const { fileContentBase64, ...rest } = body;
     return { ...rest, filePath, uploadedBy: user.id };
+  },
+  afterCreate: async (row, user) => {
+    try { await logAction('document', row.id, 'created', row.title || row.fileName || 'Document', user, { caseId: row.relatedCaseId || null, gameTitle: row.gameTitle || null }); }
+    catch (err) { console.error('Failed to log document create:', err.message); }
+  },
+  afterUpdate: async (row, user) => {
+    try { await logAction('document', row.id, 'updated', row.title || row.fileName || 'Document', user, { caseId: row.relatedCaseId || null, gameTitle: row.gameTitle || null }); }
+    catch (err) { console.error('Failed to log document update:', err.message); }
+  },
+  afterDelete: async (row, user) => {
+    try { await logAction('document', row.id, 'deleted', row.title || row.fileName || 'Document', user, { caseId: row.relatedCaseId || null, gameTitle: row.gameTitle || null }); }
+    catch (err) { console.error('Failed to log document delete:', err.message); }
   },
 });
 
@@ -1575,6 +1620,8 @@ router.post('/api/documents/:id/replace-file', async (req, res, params, body) =>
   const updated = await store.update('documents', params.id, {
     fileName: body.fileName || doc.fileName, filePath, uploadedBy: user.id,
   });
+  try { await logAction('document', doc.id, 'replaced', doc.title || doc.fileName || 'Document', user, { caseId: doc.relatedCaseId || null, gameTitle: doc.gameTitle || null }); }
+  catch (err) { console.error('Failed to log document replace:', err.message); }
   sendJson(res, 200, updated);
 });
 
@@ -1949,6 +1996,18 @@ crudRoutes({
     if (!fileContentBase64) return rest;
     return { ...rest, filePath: await storage.saveBase64File(body.fileName, fileContentBase64) };
   },
+  afterCreate: async (row, user) => {
+    try { await logAction('kbDocument', row.id, 'created', row.title || row.fileName || 'KB Document', user, {}); }
+    catch (err) { console.error('Failed to log kbDocument create:', err.message); }
+  },
+  afterUpdate: async (row, user) => {
+    try { await logAction('kbDocument', row.id, 'updated', row.title || row.fileName || 'KB Document', user, {}); }
+    catch (err) { console.error('Failed to log kbDocument update:', err.message); }
+  },
+  afterDelete: async (row, user) => {
+    try { await logAction('kbDocument', row.id, 'deleted', row.title || row.fileName || 'KB Document', user, {}); }
+    catch (err) { console.error('Failed to log kbDocument delete:', err.message); }
+  },
 });
 
 router.get('/api/kb-documents/:id/download', async (req, res, params) => {
@@ -1970,6 +2029,18 @@ router.get('/api/kb-documents/:id/download', async (req, res, params) => {
 crudRoutes({
   base: '/api/kb-faqs', moduleName: 'knowledgeBase', collection: 'kbFaqs',
   onCreate: async (body, user) => ({ ...body, createdBy: user.id }),
+  afterCreate: async (row, user) => {
+    try { await logAction('kbFaq', row.id, 'created', row.question || 'FAQ', user, {}); }
+    catch (err) { console.error('Failed to log kbFaq create:', err.message); }
+  },
+  afterUpdate: async (row, user) => {
+    try { await logAction('kbFaq', row.id, 'updated', row.question || 'FAQ', user, {}); }
+    catch (err) { console.error('Failed to log kbFaq update:', err.message); }
+  },
+  afterDelete: async (row, user) => {
+    try { await logAction('kbFaq', row.id, 'deleted', row.question || 'FAQ', user, {}); }
+    catch (err) { console.error('Failed to log kbFaq delete:', err.message); }
+  },
 });
 
 // Tasks -----------------------------------------------------------------
@@ -1985,8 +2056,20 @@ crudRoutes({
   base: '/api/tasks', moduleName: 'tasks', collection: 'tasks',
   onCreate: async (body, user) => ({ ...normalizeTaskAssignees(body), createdBy: user.id }),
   onUpdate: async (body) => normalizeTaskAssignees(body),
-  afterCreate: async (row, user) => notifyTaskAssignees(row, null, user),
-  afterUpdate: async (row, user, id, existing) => notifyTaskAssignees(row, existing, user),
+  afterCreate: async (row, user) => {
+    await notifyTaskAssignees(row, null, user);
+    try { await logAction('task', row.id, 'created', row.title || 'Task', user, {}); }
+    catch (err) { console.error('Failed to log task create:', err.message); }
+  },
+  afterUpdate: async (row, user, id, existing) => {
+    await notifyTaskAssignees(row, existing, user);
+    try { await logAction('task', row.id, 'updated', row.title || 'Task', user, {}); }
+    catch (err) { console.error('Failed to log task update:', err.message); }
+  },
+  afterDelete: async (row, user) => {
+    try { await logAction('task', row.id, 'deleted', row.title || 'Task', user, {}); }
+    catch (err) { console.error('Failed to log task delete:', err.message); }
+  },
   filterList: filterPersonalTasks,
 });
 
@@ -2013,6 +2096,8 @@ router.post('/api/calendar-events', async (req, res, params, body) => {
   const row = await store.insert('calendarEvents', {
     title: body.title.trim(), date: body.date, note: body.note || '', createdBy: user.id,
   });
+  try { await logAction('calendarEvent', row.id, 'created', row.title, user, {}); }
+  catch (err) { console.error('Failed to log calendar event create:', err.message); }
   sendJson(res, 201, row);
 });
 
@@ -2026,25 +2111,29 @@ async function requireCalendarEventOwner(req, res, id) {
     sendJson(res, 403, { error: 'Only the creator (or an Admin) can modify this event.' });
     return null;
   }
-  return existing;
+  return { existing, user };
 }
 
 router.put('/api/calendar-events/:id', async (req, res, params, body) => {
-  const existing = await requireCalendarEventOwner(req, res, params.id);
-  if (!existing) return;
+  const owned = await requireCalendarEventOwner(req, res, params.id);
+  if (!owned) return;
   if (!String(body.title || '').trim() || !body.date) {
     return sendJson(res, 400, { error: 'Title and Date are required.' });
   }
   const row = await store.update('calendarEvents', params.id, {
     title: body.title.trim(), date: body.date, note: body.note || '',
   });
+  try { await logAction('calendarEvent', row.id, 'updated', row.title, owned.user, {}); }
+  catch (err) { console.error('Failed to log calendar event update:', err.message); }
   sendJson(res, 200, row);
 });
 
 router.delete('/api/calendar-events/:id', async (req, res, params) => {
-  const existing = await requireCalendarEventOwner(req, res, params.id);
-  if (!existing) return;
+  const owned = await requireCalendarEventOwner(req, res, params.id);
+  if (!owned) return;
   await store.remove('calendarEvents', params.id);
+  try { await logAction('calendarEvent', owned.existing.id, 'deleted', owned.existing.title, owned.user, {}); }
+  catch (err) { console.error('Failed to log calendar event delete:', err.message); }
   sendJson(res, 200, { ok: true });
 });
 
@@ -2052,6 +2141,18 @@ router.delete('/api/calendar-events/:id', async (req, res, params) => {
 crudRoutes({
   base: '/api/approvals', moduleName: 'approvals', collection: 'approvals',
   onCreate: async (body, user) => ({ ...body, requestedBy: user.id, status: 'Pending', comments: [] }),
+  afterCreate: async (row, user) => {
+    try { await logAction('approval', row.id, 'created', row.title || 'Approval Request', user, {}); }
+    catch (err) { console.error('Failed to log approval create:', err.message); }
+  },
+  afterUpdate: async (row, user) => {
+    try { await logAction('approval', row.id, 'updated', row.title || 'Approval Request', user, {}); }
+    catch (err) { console.error('Failed to log approval update:', err.message); }
+  },
+  afterDelete: async (row, user) => {
+    try { await logAction('approval', row.id, 'deleted', row.title || 'Approval Request', user, {}); }
+    catch (err) { console.error('Failed to log approval delete:', err.message); }
+  },
 });
 
 router.post('/api/approvals/:id/decide', async (req, res, params, body) => {
@@ -2063,6 +2164,8 @@ router.post('/api/approvals/:id/decide', async (req, res, params, body) => {
   const comments = [...(approval.comments || [])];
   if (body.comment) comments.push({ by: user.id, text: body.comment, at: new Date().toISOString() });
   const updated = await store.update('approvals', params.id, { status: decision, comments, decidedAt: new Date().toISOString() });
+  try { await logAction('approval', approval.id, 'decided', `${approval.title || 'Approval Request'} - ${decision}`, user, {}); }
+  catch (err) { console.error('Failed to log approval decide:', err.message); }
   const settings = await getSystemSettings();
   if (notificationsEnabled(settings, 'notifyOnApprovalDecision') && approval.requestedBy !== user.id) {
     await notifyUser(approval.requestedBy, 'approval_decision', `Your request "${approval.title}" was ${decision.toLowerCase()}`, approval.id, 'approval');
@@ -2115,6 +2218,8 @@ router.post('/api/users', async (req, res, params, body) => {
     departmentId: body.departmentId, roleId: body.roleId, status: body.status || 'active',
     passwordHash: auth.hashPassword(body.password || 'changeme123'),
   });
+  try { await logAction('user', created.id, 'created', created.fullName || created.username, user, {}); }
+  catch (err) { console.error('Failed to log user create:', err.message); }
   sendJson(res, 201, publicUser(created));
 });
 
@@ -2128,6 +2233,9 @@ router.put('/api/users/:id', async (req, res, params, body) => {
   delete patch.password;
   const updated = await store.update('users', params.id, patch);
   if (!updated) return sendJson(res, 404, { error: 'Not found' });
+  // Never log password/passwordHash — just who the record identifies.
+  try { await logAction('user', updated.id, 'updated', updated.fullName || updated.username, user, {}); }
+  catch (err) { console.error('Failed to log user update:', err.message); }
   sendJson(res, 200, publicUser(updated));
 });
 
@@ -2135,16 +2243,47 @@ router.delete('/api/users/:id', async (req, res, params) => {
   const user = await requirePerm(req, res, 'settings', 'delete');
   if (!user) return;
   if (params.id === user.id) return sendJson(res, 400, { error: 'Cannot delete your own account' });
+  const existing = await store.find('users', params.id);
   const ok = await store.remove('users', params.id);
   if (!ok) return sendJson(res, 404, { error: 'Not found' });
+  try { await logAction('user', params.id, 'deleted', existing ? (existing.fullName || existing.username) : 'User', user, {}); }
+  catch (err) { console.error('Failed to log user delete:', err.message); }
   sendJson(res, 200, { ok: true });
 });
 
 // Settings: Roles ---------------------------------------------------------
-crudRoutes({ base: '/api/roles', moduleName: 'settings', collection: 'roles' });
+crudRoutes({
+  base: '/api/roles', moduleName: 'settings', collection: 'roles',
+  afterCreate: async (row, user) => {
+    try { await logAction('role', row.id, 'created', row.name || 'Role', user, {}); }
+    catch (err) { console.error('Failed to log role create:', err.message); }
+  },
+  afterUpdate: async (row, user) => {
+    try { await logAction('role', row.id, 'updated', row.name || 'Role', user, {}); }
+    catch (err) { console.error('Failed to log role update:', err.message); }
+  },
+  afterDelete: async (row, user) => {
+    try { await logAction('role', row.id, 'deleted', row.name || 'Role', user, {}); }
+    catch (err) { console.error('Failed to log role delete:', err.message); }
+  },
+});
 
 // Settings: Departments ------------------------------------------------
-crudRoutes({ base: '/api/departments', moduleName: 'settings', collection: 'departments' });
+crudRoutes({
+  base: '/api/departments', moduleName: 'settings', collection: 'departments',
+  afterCreate: async (row, user) => {
+    try { await logAction('department', row.id, 'created', row.name || 'Department', user, {}); }
+    catch (err) { console.error('Failed to log department create:', err.message); }
+  },
+  afterUpdate: async (row, user) => {
+    try { await logAction('department', row.id, 'updated', row.name || 'Department', user, {}); }
+    catch (err) { console.error('Failed to log department update:', err.message); }
+  },
+  afterDelete: async (row, user) => {
+    try { await logAction('department', row.id, 'deleted', row.name || 'Department', user, {}); }
+    catch (err) { console.error('Failed to log department delete:', err.message); }
+  },
+});
 
 // Settings: System Settings (Notification / Submission / Required Document
 // Settings tabs) — a single row, see getSystemSettings above. Not run
@@ -2229,6 +2368,8 @@ router.put('/api/settings', async (req, res, params, body) => {
     patch.checklistItems = clean;
   }
   const updated = await store.update('settings', 'system', patch);
+  try { await logAction('settings', 'system', 'updated', 'System settings updated', user, {}); }
+  catch (err) { console.error('Failed to log settings update:', err.message); }
   sendJson(res, 200, updated);
 });
 

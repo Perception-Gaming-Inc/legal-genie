@@ -224,6 +224,11 @@ const NAV = [
   { key: 'documents', label: 'Document Center', icon: 'folder' },
   { key: 'tasks', label: 'Task Management', icon: 'checklist' },
   { key: 'knowledgeBase', label: 'Knowledge Base', icon: 'book' },
+  // Added 2026-08-25 at Tiffany's request — was a "History" button repeated
+  // on every Case Detail page; now one standalone page covering every case's
+  // tracked field changes (Game ID/Version/Min-Max Bet/RTP/PAGCOR Stage) at
+  // once. See canView()'s 'auditLog' special case and renderAuditLog below.
+  { key: 'auditLog', label: 'Audit Log', icon: 'history' },
   { key: 'settings', label: 'Settings', icon: 'gear' },
 ];
 
@@ -483,6 +488,11 @@ function canView(moduleKey) {
   // canView('tasks') is true, so a viewer without Case access simply never
   // sees deadlines on the calendar, without needing its own roles-table row).
   if (moduleKey === 'calendar') return true;
+  // Audit Log has no permissions row of its own (see MODULES in
+  // server/auth.js) — it's a read-only view over the same case field
+  // changes the per-case audit-log endpoint already gated on 'cases':'view',
+  // so anyone who can see cases can see what changed on them.
+  if (moduleKey === 'auditLog') return canView('cases');
   if (!State.role) return false;
   if (State.role.name === 'Admin') return true;
   const p = (State.role.permissions || {})[moduleKey];
@@ -1020,6 +1030,7 @@ const ROUTES = {
   approvals: renderApprovals,
   notifications: renderNotifications,
   knowledgeBase: renderKnowledgeBase,
+  auditLog: renderAuditLog,
   settings: renderSettings,
 };
 
@@ -2439,7 +2450,6 @@ async function renderCaseDetail(content, id) {
         ${canUploadDocs ? `<button class="btn btn-outline-secondary btn-sm" id="btnUploadCaseDocs">${Icon('upload', 'me-1')}Upload Documents</button>` : ''}
         ${!isMultiGameCase && item.provider ? `<button class="btn btn-outline-secondary btn-sm" id="btnCheckConsistency">${Icon('sparkle', 'me-1')}AI Parameter Consistency Check</button>` : ''}
         ${approvedGame ? `<button class="btn btn-outline-primary btn-sm" id="btnLoaNotice">${Icon('bell', 'me-1')}Approval Notice Draft</button>` : ''}
-        <button class="btn btn-outline-secondary btn-sm" id="btnCaseHistory">${Icon('history', 'me-1')}History</button>
         ${canEdit ? `<button class="btn btn-outline-secondary btn-sm" id="btnEditCase">${Icon('edit', 'me-1')}Edit</button>` : ''}
         ${canDelete ? `<button class="btn btn-outline-danger btn-sm" id="btnDeleteCase">${Icon('trash', 'me-1')}Delete</button>` : ''}
       </div>
@@ -2641,34 +2651,11 @@ async function renderCaseDetail(content, id) {
 
   // Audit trail (2026-08-24, at Tiffany's request) — see logCaseAudit in
   // server/routes.js for what gets recorded (Game ID/Version/Min-Max Bet/
-  // RTP/PAGCOR Stage, per-game for a multi-game case). Read-only, no edit/
-  // revert action here — just "who changed what, and what was it before".
-  const AUDIT_FIELD_LABELS = { gameId: 'Game ID', gameVersion: 'Game Version', minBet: 'Minimum Bet', maxBet: 'Maximum Bet', rtp: 'RTP', pagcorStage: 'PAGCOR Stage' };
-  const historyBtn = content.querySelector('#btnCaseHistory');
-  if (historyBtn) historyBtn.addEventListener('click', async () => {
-    let entries = [];
-    try { entries = await Api.get(`/api/cases/${item.id}/audit-log`); } catch (err) { toast(err.message, 'danger'); return; }
-    showInfoModal({
-      title: 'Change History',
-      bodyHtml: entries.length ? `
-        <div class="list-group list-group-flush">
-          ${entries.map((e) => `
-            <div class="list-group-item px-0">
-              <div>
-                <span class="fw-semibold">${escapeHtml(AUDIT_FIELD_LABELS[e.field] || e.field)}</span>
-                ${e.gameTitle ? `<span class="text-secondary"> — ${escapeHtml(e.gameTitle)}</span>` : ''}
-              </div>
-              <div class="small">
-                ${e.oldValue === null || e.oldValue === undefined ? '<span class="text-secondary">(empty)</span>' : escapeHtml(String(e.oldValue))}
-                &rarr;
-                ${e.newValue === null || e.newValue === undefined ? '<span class="text-secondary">(empty)</span>' : `<strong>${escapeHtml(String(e.newValue))}</strong>`}
-              </div>
-              <div class="small text-secondary">${escapeHtml(e.userName || 'system')} · ${fmtDate(e.createdAt)}</div>
-            </div>`).join('')}
-        </div>`
-        : '<div class="small text-secondary">No tracked field changes recorded yet for this case (Game ID, Game Version, Minimum/Maximum Bet, RTP, PAGCOR Stage).</div>',
-    });
-  });
+  // RTP/PAGCOR Stage, per-game for a multi-game case). Moved 2026-08-25 (at
+  // Tiffany's request — "把 audit log 獨立出來，不要放在每個頁面裡") off this
+  // page's own "History" button and into a single standalone Audit Log page
+  // (see renderAuditLog / NAV) covering every case at once, rather than a
+  // per-case button repeated on every Case Detail page.
 
   const editBtn = content.querySelector('#btnEditCase');
   if (editBtn) editBtn.addEventListener('click', () => {
@@ -4381,6 +4368,75 @@ async function renderNotifications(content) {
     refreshNotifBadge();
     route();
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Page: Audit Log
+// ---------------------------------------------------------------------------
+// Standalone page (2026-08-25, at Tiffany's request — "把 audit log 獨立出來，
+// 不要放在每個頁面裡") covering every case's tracked field changes (Game ID/
+// Version/Min-Max Bet/RTP/PAGCOR Stage — see AUDITED_CASE_FIELDS in
+// server/routes.js) in one place, instead of the earlier per-case "History"
+// button that used to sit on every Case Detail page (see renderCaseDetail).
+// Read-only, no edit/revert action here — just "who changed what, when, and
+// what was it before" across the whole system, filterable by case number/
+// title/game/field/user.
+const AUDIT_FIELD_LABELS = { gameId: 'Game ID', gameVersion: 'Game Version', minBet: 'Minimum Bet', maxBet: 'Maximum Bet', rtp: 'RTP', pagcorStage: 'PAGCOR Stage' };
+let auditLogSearchQuery = '';
+
+async function renderAuditLog(content) {
+  let entries = [];
+  try { entries = await Api.get('/api/audit-log'); } catch (err) { content.innerHTML = `<div class="alert alert-danger">${escapeHtml(err.message)}</div>`; return; }
+
+  const render = () => {
+    const q = auditLogSearchQuery.trim().toLowerCase();
+    const filtered = !q ? entries : entries.filter((e) => [
+      e.caseNumber, e.caseTitle, e.gameTitle, AUDIT_FIELD_LABELS[e.field] || e.field, e.userName,
+    ].some((v) => v && String(v).toLowerCase().includes(q)));
+
+    content.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <input type="search" class="form-control form-control-sm" id="auditLogSearch" style="min-width:280px; max-width:360px;" placeholder="Search Case # / Title / Game / Field / User…" value="${escapeHtml(auditLogSearchQuery)}">
+        <div class="small text-secondary">${filtered.length} of ${entries.length} change${entries.length === 1 ? '' : 's'}</div>
+      </div>
+      ${filtered.length ? `
+        <div class="card">
+          <div class="list-group list-group-flush">
+            ${filtered.map((e) => `
+              <div class="list-group-item">
+                <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                  <div>
+                    ${e.caseNumber ? `<a href="#/cases/${e.caseId}" class="fw-semibold text-decoration-none">${escapeHtml(e.caseNumber)}</a>` : '<span class="text-secondary">(case deleted)</span>'}
+                    ${e.caseTitle ? `<span class="text-secondary"> — ${escapeHtml(e.caseTitle)}</span>` : ''}
+                  </div>
+                  <div class="small text-secondary">${escapeHtml(e.userName || 'system')} · ${fmtDate(e.createdAt)}</div>
+                </div>
+                <div class="mt-1">
+                  <span class="fw-semibold">${escapeHtml(AUDIT_FIELD_LABELS[e.field] || e.field)}</span>
+                  ${e.gameTitle ? `<span class="text-secondary"> — ${escapeHtml(e.gameTitle)}</span>` : ''}
+                </div>
+                <div class="small">
+                  ${e.oldValue === null || e.oldValue === undefined ? '<span class="text-secondary">(empty)</span>' : escapeHtml(String(e.oldValue))}
+                  &rarr;
+                  ${e.newValue === null || e.newValue === undefined ? '<span class="text-secondary">(empty)</span>' : `<strong>${escapeHtml(String(e.newValue))}</strong>`}
+                </div>
+              </div>`).join('')}
+          </div>
+        </div>`
+        : `<div class="small text-secondary">${entries.length ? 'No changes match your search.' : 'No tracked field changes recorded yet (Game ID, Game Version, Minimum/Maximum Bet, RTP, PAGCOR Stage).'}</div>`}
+    `;
+    const searchEl = content.querySelector('#auditLogSearch');
+    if (searchEl) {
+      searchEl.addEventListener('input', () => {
+        auditLogSearchQuery = searchEl.value;
+        const selStart = searchEl.selectionStart, selEnd = searchEl.selectionEnd;
+        render();
+        const refocused = content.querySelector('#auditLogSearch');
+        if (refocused) { refocused.focus(); refocused.setSelectionRange(selStart, selEnd); }
+      });
+    }
+  };
+  render();
 }
 
 // ---------------------------------------------------------------------------

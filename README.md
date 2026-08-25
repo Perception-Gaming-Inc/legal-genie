@@ -322,6 +322,22 @@ cares about before a PAGCOR submission goes out:
    value}]`) so it's clear exactly which document said what, then marked
    **match** / **mismatch** / **missing**.
 
+**Jackpot combined-RTP rule** (added 2026-08-25, at Tiffany's request — a
+jackpot game's RTP is Base Game RTP + Jackpot RTP added together, and that
+combined total still can't reach 97%). For a game flagged **With Jackpot**
+that also has a submitted Jackpot RTP figure on file (from the Excel
+import's Jackpot RTP column — see `detectJackpotRtpColumn()` in
+`server/import.js`), the RTP row's `in_range`/`out_of_range` check switches
+from the ordinary `RTP_MIN_PERCENT`–`RTP_MAX_PERCENT` band to this instead:
+each document's stated (base game) RTP + the submitted Jackpot RTP must sum
+to **under 97%** (strict — 97% itself already fails). Non-jackpot games, and
+jackpot games with no Jackpot RTP figure on file, are unaffected and keep
+using the ordinary band. See `JACKPOT_TOTAL_RTP_MAX_PERCENT` and the RTP
+branch of `checkDocumentConsistency()` in `server/ai.js`. The Jackpot RTP
+figure itself is also editable directly on a game (Case Edit form, and the
+read-only game card shows the combined total once both figures are set) —
+see the `case-game-jackpotRtp` field in `public/js/app.js`.
+
 The overall **🟢 Ready for Submission / 🔴 Not Ready for Submission**
 banner is computed in `server/ai.js` from those three arrays — not trusted
 as an AI-authored boolean — so it always follows the same fixed rule: every

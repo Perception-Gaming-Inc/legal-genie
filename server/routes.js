@@ -1045,30 +1045,47 @@ router.post('/api/cases/bulk-update-stage', async (req, res, params, body) => {
 // conservative match-or-report-back behavior as the other PAGCOR routes —
 // a game the AI reads but can't match to exactly one case is reported back
 // as unmatched/ambiguous rather than guessed at.
-router.post('/api/cases/import-approval-notice', async (req, res, params, body) => {
+//
+// Scoped to ONE case (:id), 2026-08-26 at Tiffany's request — this used to
+// be a standalone global route (matching the letter against every case in
+// the system) reached via its own separate "Upload Approval Notice"
+// wizard, but that wizard had no button left calling it (dead UI) and
+// matching against the whole system when the user is already looking at
+// one specific case's "Upload Documents" flow was more than she wanted:
+// "只搜這個案件,配不到就列為 unmatched" — only search this case, list
+// anything else as unmatched rather than guessing it belongs elsewhere.
+// See public/js/app.js's showCaseDocumentUploadModal for the new caller —
+// its "Identify Approved Games (AI)" step, shown when a file's Report Type
+// is set to "Letter of Approval (LOA)".
+router.post('/api/cases/:id/import-approval-notice', async (req, res, params, body) => {
   const user = await requirePerm(req, res, 'cases', 'edit');
   if (!user) return;
+  const existing = await store.find('cases', params.id);
+  if (!existing) return sendJson(res, 404, { error: 'Not found' });
   try {
     const extracted = await ai.extractApprovalNotice({ fileName: body.fileName, fileContentBase64: body.fileContentBase64 });
-    const cases = await store.all('cases');
-    // updateFn used to call store.update() directly, bypassing the same
-    // pagcorStageChangedAt stamping + notifyCaseStageChange (owner
-    // notification + Telegram post to the Provider's group) that
-    // bulk-update-stage and a normal case Edit both go through — meaning
-    // approving a game via a real scanned PAGCOR notice letter (arguably
-    // the most important moment to notify anyone) silently notified no
-    // one. `cases` here is the same pre-fetched snapshot
-    // applyApprovalNoticeGames matches against, so looking a case up in it
-    // gives the correct "before" state for the change without an extra
-    // store.find() round trip.
+    // updateFn goes through the same pagcorStageChangedAt stamping +
+    // notifyCaseStageChange (owner notification + Telegram post to the
+    // Provider's group) that bulk-update-stage and a normal case Edit both
+    // go through — approving a game via a real scanned PAGCOR notice
+    // letter is arguably the most important moment to notify someone, so
+    // this shouldn't silently bypass that the way a raw store.update()
+    // call would. `cases` here is just the one case being edited — reread
+    // fresh each time in case an earlier game in the same batch already
+    // changed it (a multi-game case can have more than one game matched
+    // out of the same letter).
+    let current = existing;
+    const cases = [current];
     const updateFn = async (id, patch) => {
-      const existing = cases.find((c) => c.id === id) || null;
+      const before = current;
       const fullPatch = { ...patch };
-      if (existing && existing.pagcorStage !== patch.pagcorStage) fullPatch.pagcorStageChangedAt = new Date().toISOString();
+      if (before && before.pagcorStage !== patch.pagcorStage) fullPatch.pagcorStageChangedAt = new Date().toISOString();
       const row = await store.update('cases', id, fullPatch);
       if (row) {
-        await notifyCaseStageChange(row, existing, user);
-        await logCaseAudit(row, user, existing); // bypasses crudRoutes' own afterUpdate too — see comment above
+        current = row;
+        cases[0] = row;
+        await notifyCaseStageChange(row, before, user);
+        await logCaseAudit(row, user, before); // bypasses crudRoutes' own afterUpdate too — see comment above
       }
       return row;
     };

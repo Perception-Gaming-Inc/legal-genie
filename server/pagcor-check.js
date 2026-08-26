@@ -76,9 +76,18 @@ async function applyApprovalNoticeGames(cases, noticeGames, updateFn) {
   const skippedRejected = [];
   const unmatched = [];
   const ambiguous = [];
-  const entries = candidateEntries(cases);
+  // Kept as a mutable id->case map (refreshed after every successful
+  // update) rather than a one-time snapshot — a single notice letter very
+  // often names 2+ games belonging to the SAME multi-game case (that's the
+  // norm for an "Annex A"-style approval table, not an edge case). Each
+  // match below patches that case's whole `games` array, so the SECOND
+  // match within the same case must be computed from the first match's
+  // updated state, not the original pre-loop snapshot — otherwise its
+  // write would silently overwrite (undo) the first game's approval.
+  const caseById = new Map(cases.map((c) => [c.id, c]));
 
   for (const g of noticeGames || []) {
+    const entries = candidateEntries(Array.from(caseById.values()));
     const gameId = g.gameId ? String(g.gameId).trim() : '';
     let candidates = [];
     if (gameId) {
@@ -116,24 +125,37 @@ async function applyApprovalNoticeGames(cases, noticeGames, updateFn) {
     const currentStage = game ? game.pagcorStage : c.pagcorStage;
     const currentGameId = game ? game.gameId : c.gameId;
     const currentTitle = game ? game.gameTitle : c.title;
+    // gameRowId: the specific game's own id within c.games (multi-game
+    // case), or null for a legacy flat case (there `game` is null — the
+    // case itself IS the one game, identified by caseId alone). Added
+    // 2026-08-26 so callers can file the source document under the exact
+    // matched game's folder (relatedGameId) — see public/js/app.js's
+    // showCaseDocumentUploadModal's "Identify Approved Games (AI)" step.
+    const gameRowId = game ? game.id : null;
     if (currentStage === 'Approved') {
-      alreadyApproved.push({ caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId });
+      alreadyApproved.push({ caseId: c.id, gameRowId, caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId });
       continue;
     }
     if (currentStage === 'Rejected') {
-      skippedRejected.push({ caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId });
+      skippedRejected.push({ caseId: c.id, gameRowId, caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId });
       continue;
     }
     const oldStage = currentStage || 'Pending Documents';
+    let updatedRow;
     if (game) {
       const newGames = c.games.map((gg) => (gg.id === game.id
         ? { ...gg, pagcorStage: 'Approved', pagcorStageChangedAt: new Date().toISOString() }
         : gg));
-      await updateFn(c.id, { games: newGames });
+      updatedRow = await updateFn(c.id, { games: newGames });
     } else {
-      await updateFn(c.id, { pagcorStage: 'Approved', status: 'Closed' });
+      updatedRow = await updateFn(c.id, { pagcorStage: 'Approved', status: 'Closed' });
     }
-    updatedCases.push({ caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId, provider: c.provider, oldStage, newStage: 'Approved' });
+    // Reflect the just-applied update in caseById so the NEXT noticeGames
+    // iteration (if it matches another game in this same case) starts from
+    // the updated state rather than clobbering this change — see the
+    // comment above caseById's declaration.
+    if (updatedRow) caseById.set(c.id, updatedRow);
+    updatedCases.push({ caseId: c.id, gameRowId, caseNumber: c.caseNumber, title: currentTitle, gameId: currentGameId, provider: c.provider, oldStage, newStage: 'Approved' });
   }
 
   return { updatedCases, alreadyApproved, skippedRejected, unmatched, ambiguous };

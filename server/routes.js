@@ -401,9 +401,8 @@ router.get('/api/dashboard/summary', async (req, res) => {
   const today = new Date();
   const in14 = new Date(today.getTime() + 14 * 86400000);
 
-  const [tasks, cases, notifications, approvals] = await Promise.all([
-    store.all('tasks'), store.all('cases'),
-    store.all('notifications'), store.all('approvals'),
+  const [tasks, cases, notifications] = await Promise.all([
+    store.all('tasks'), store.all('cases'), store.all('notifications'),
   ]);
 
   const myTasks = tasks.filter((t) => taskAssigneeIds(t).includes(user.id) && t.status !== 'Completed');
@@ -518,14 +517,33 @@ router.get('/api/dashboard/summary', async (req, res) => {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 10);
 
-  // Org-wide, not "assigned to me" — 2026-08-26 change at Tiffany's request:
-  // the Dashboard's Pending Approvals card/list should let ANYONE see how
-  // many cases are under review across the whole team, not just the count
-  // for whichever reviewer happens to be logged in. The Approve/Reject
-  // buttons below still only render for users who actually hold the
-  // 'approvals'/'approve' permission (see renderDashboard in
-  // public/js/app.js) — this only widens who can SEE the queue.
-  const pendingApprovals = approvals.filter((a) => a.status === 'Pending');
+  // "Cases Under Review" — 2026-08-26, at Tiffany's request: the Dashboard's
+  // middle stat card/list was originally driven by the internal Approval
+  // Center queue (approvals with status:'Pending', scoped to the logged-in
+  // reviewer), which turned out to be confusing — it's a different concept
+  // from "how many submitted games are actually sitting at PAGCOR in the
+  // For Review stage right now" (which is what "審核中" meant here), and it
+  // stayed at 0 whenever nobody had an Approval Center request open even
+  // though there were plenty of cases genuinely under PAGCOR review. This
+  // now counts PAGCOR game entries (see pagcorGameEntries above — one entry
+  // per game, same flattening the Follow-ups widget and PAGCOR board use)
+  // whose Stage is 'For Review', org-wide, so it always reflects the real
+  // review queue regardless of who's logged in. The Approval Center itself
+  // (its own submit/approve/reject workflow) is untouched and still lives
+  // at #/approvals — this dashboard slot just no longer doubles as its
+  // quick-view widget.
+  const casesUnderReview = pagcorEntries
+    .filter((e) => e.pagcorStage === 'For Review')
+    .sort((a, b) => new Date(a.stageSince) - new Date(b.stageSince))
+    .map((e) => ({
+      id: e.caseId,
+      caseNumber: e.caseNumber,
+      title: e.caseTitle,
+      gameTitle: e.gameTitle,
+      provider: e.provider,
+      stageSince: e.stageSince,
+      daysSince: Math.floor((today - new Date(e.stageSince)) / 86400000),
+    }));
 
   // PAGCOR submission pipeline, grouped by Stage, for the Dashboard's Kanban
   // overview (see public/js/app.js's renderDashboard). Only cases with a
@@ -567,8 +585,8 @@ router.get('/api/dashboard/summary', async (req, res) => {
     unreadNotificationsCount: notifications.filter((n) => n.userId === user.id && !n.isRead).length,
     followUps: followUps.slice(0, 10),
     followUpsCount: followUps.length,
-    pendingApprovals,
-    pendingApprovalsCount: pendingApprovals.length,
+    casesUnderReview: casesUnderReview.slice(0, 10),
+    casesUnderReviewCount: casesUnderReview.length,
     counts: {
       cases: cases.filter((c) => c.status !== 'Closed').length,
     },

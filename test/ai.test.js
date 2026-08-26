@@ -15,7 +15,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  parseRtpPercent, valuesMatch, checkDocumentConsistency,
+  parseRtpPercent, valuesMatch, checkDocumentConsistency, answerGroupQuestion,
   RTP_MIN_PERCENT, RTP_MAX_PERCENT, JACKPOT_TOTAL_RTP_MAX_PERCENT,
 } = require('../server/ai.js');
 
@@ -294,6 +294,68 @@ test('checkDocumentConsistency: missing a genuinely REQUIRED doc (e.g. Game Manu
         withJackpot: 'No',
       });
       assert.equal(result.overallStatus, 'not_ready');
+    }
+  );
+});
+
+// ---------------------------------------------------------------------------
+// answerGroupQuestion: admin/internal chat cross-Provider access
+// (2026-08-26, at Tiffany's request) — the one designated admin chat (see
+// server/routes.js's telegramAdminChatId) should see every Provider's cases
+// and have the prompt reflect that, instead of being locked to one Provider.
+// ---------------------------------------------------------------------------
+function withCapturedFetch(responseBody, fn) {
+  const originalFetch = global.fetch;
+  const originalKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = 'test-key';
+  let capturedBody = null;
+  global.fetch = async (url, opts) => {
+    capturedBody = JSON.parse(opts.body);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: JSON.stringify(responseBody) }] } }],
+      }),
+    };
+  };
+  return Promise.resolve(fn(() => capturedBody)).finally(() => {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalKey;
+  });
+}
+
+test('answerGroupQuestion: isAdmin sends every case (labelled by Provider) instead of one Provider\'s own', async () => {
+  await withCapturedFetch(
+    { shouldRespond: true, answer: 'test' },
+    async (getCapturedBody) => {
+      const cases = [
+        { gameTitle: 'Game A', provider: 'FC', pagcorStage: 'Approved' },
+        { gameTitle: 'Game B', provider: 'Galatics', pagcorStage: 'On Process' },
+      ];
+      await answerGroupQuestion({
+        providerName: null, question: 'What is the status of Game A?', cases, isAdmin: true,
+      });
+      const promptText = getCapturedBody().contents[0].parts[0].text;
+      assert.match(promptText, /Provider=FC/);
+      assert.match(promptText, /Provider=Galatics/);
+      assert.match(promptText, /internal\/admin/i);
+    }
+  );
+});
+
+test('answerGroupQuestion: non-admin (regular Provider chat) omits per-line Provider labels', async () => {
+  await withCapturedFetch(
+    { shouldRespond: true, answer: 'test' },
+    async (getCapturedBody) => {
+      const cases = [{ gameTitle: 'Game A', provider: 'FC', pagcorStage: 'Approved' }];
+      await answerGroupQuestion({
+        providerName: 'FC', question: 'What is the status of Game A?', cases, isAdmin: false,
+      });
+      const promptText = getCapturedBody().contents[0].parts[0].text;
+      assert.doesNotMatch(promptText, /Provider=FC/);
+      assert.match(promptText, /^Provider: FC/);
     }
   );
 });

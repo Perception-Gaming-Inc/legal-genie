@@ -266,8 +266,8 @@ const PAGCOR_LINEAR_STAGES = [
 // is a simple, manually-maintained tracking checklist. (The "Download All
 // Documents" .zip button that used to be gated on the AI Parameter
 // Consistency Check was removed 2026-08-20 at Tiffany's request; the
-// GET /api/cases/:id/download-all route in server/routes.js still exists
-// but is no longer linked from the UI.)
+// GET /api/cases/:id/download-all route in server/routes.js was itself
+// removed 2026-08-26, since nothing in the UI called it anymore.)
 //
 // `let`, not `const`, since 2026-08-12 (later the same day): the actual
 // list of items is now editable in Settings > Required Document Settings

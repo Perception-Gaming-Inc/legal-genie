@@ -518,7 +518,14 @@ router.get('/api/dashboard/summary', async (req, res) => {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 10);
 
-  const pendingApprovals = approvals.filter((a) => a.status === 'Pending' && a.reviewerId === user.id);
+  // Org-wide, not "assigned to me" — 2026-08-26 change at Tiffany's request:
+  // the Dashboard's Pending Approvals card/list should let ANYONE see how
+  // many cases are under review across the whole team, not just the count
+  // for whichever reviewer happens to be logged in. The Approve/Reject
+  // buttons below still only render for users who actually hold the
+  // 'approvals'/'approve' permission (see renderDashboard in
+  // public/js/app.js) — this only widens who can SEE the queue.
+  const pendingApprovals = approvals.filter((a) => a.status === 'Pending');
 
   // PAGCOR submission pipeline, grouped by Stage, for the Dashboard's Kanban
   // overview (see public/js/app.js's renderDashboard). Only cases with a
@@ -2710,8 +2717,24 @@ function looksLikeQuestion(text) {
   // Common Traditional/Simplified Chinese question particles and
   // case-tracking vocabulary — covers "怎麼樣了", "進度如何", "審核了嗎",
   // "現在到哪個階段", "什麼時候", "為什麼被拒" etc. without requiring "?".
+  // (Still checked here even though isChineseText below now blocks a
+  // reply for Chinese-language messages — kept so a MIXED-language message
+  // with Chinese question wording but no "?" still correctly registers as
+  // "looks like a question" for whichever other check runs on it later.)
   const QUESTION_HINTS = /(嗎|呢\b|怎麼|怎样|如何|進度|进度|狀態|状态|階段|阶段|審核|审核|核准|拒絕|拒绝|何時|何时|什麼時候|什么时候|為什麼|为什么|多久|status|progress|when|why|how)/i;
   return QUESTION_HINTS.test(s);
+}
+
+// Added 2026-08-26, at Tiffany's request — the group Q&A bot should not
+// reply to Chinese-language messages at all (English only). Checked via a
+// simple CJK Unicode range test rather than anything more elaborate: this
+// only has to catch "is there Chinese text in here", not identify the
+// language precisely. A message with ANY Chinese characters in it is
+// treated as Chinese and skipped entirely — not just "no data to answer",
+// genuinely never sent to Gemini at all, same as any other message this
+// bot ignores (no reply, no Gemini quota spent).
+function isChineseText(text) {
+  return /[一-鿿㐀-䶿]/.test(String(text || ''));
 }
 
 router.post('/api/telegram/webhook', async (req, res, params, body) => {
@@ -2739,7 +2762,7 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
       // per-Provider lookup so a chat can't accidentally be both.
       const isAdminChat = !!(settings.telegramAdminChatId && String(settings.telegramAdminChatId) === String(msg.chat.id));
       const provider = isAdminChat ? null : findProviderForChatId(settings, msg.chat.id);
-      if ((isAdminChat || provider) && looksLikeQuestion(msg.text)) {
+      if ((isAdminChat || provider) && looksLikeQuestion(msg.text) && !isChineseText(msg.text)) {
         const allCases = await store.all('cases');
         const relevantCases = isAdminChat
           ? allCases
@@ -2762,7 +2785,7 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
         if (result && result.shouldRespond && result.answer) {
           await telegram.sendTelegramMessage(String(msg.chat.id), result.answer, { replyToMessageId: msg.message_id });
         }
-      } // else: not a known Provider group/DM and not the admin chat — nothing to do
+      } // else: not a known Provider group/DM, not the admin chat, or a Chinese-language message — nothing to do
     } catch (err) {
       console.error('[telegram webhook] failed to process incoming message:', err.message);
     }
@@ -2937,6 +2960,9 @@ router.get('/api/cron/follow-up-reminders', async (req, res) => {
 // findExistingGameMatch / titlesLikelySameGame) be unit-tested directly
 // instead of only through a full API call. Added 2026-08-25 at Tiffany's
 // request, alongside the same test-only export added to server/ai.js.
-router._testables = { buildExistingGameIndex, findExistingGameMatch, normalizeGameName, titlesLikelySameGame, importDedupKey };
+router._testables = {
+  buildExistingGameIndex, findExistingGameMatch, normalizeGameName, titlesLikelySameGame, importDedupKey,
+  looksLikeQuestion, isChineseText,
+};
 
 module.exports = router;

@@ -2256,7 +2256,18 @@ function loaNotificationDraftText(item) {
 // "AI Parameter Consistency Check" button. Only this modal's own content
 // changes for the "AI Submission Validation" redesign — none of those four
 // call sites' surrounding page layout is touched.
-function presenceMeta(present) {
+// isSupplementary (2026-08-25, at Tiffany's request) — a document type
+// demoted from required to supplementary (e.g. Content Provider
+// Certification) still gets checked and shown, but a missing one is
+// expected/normal, not a compliance gap — so it gets a neutral badge
+// instead of the same red ❌ "Missing" a genuinely required document gets.
+// See server/ai.js's SUPPLEMENTARY_DOCUMENT_TYPES / supplementaryDocumentTypes.
+function presenceMeta(present, isSupplementary) {
+  if (isSupplementary) {
+    return present
+      ? { icon: '✅', label: 'Present (Supplementary)' }
+      : { icon: 'ℹ️', label: 'Not Included (Supplementary)' };
+  }
   return present
     ? { icon: '✅', label: 'Present' }
     : { icon: '❌', label: 'Missing' };
@@ -2282,6 +2293,7 @@ function showConsistencyResultModal(context, result) {
   // which would otherwise look identical to a genuine failed check.
   const isError = result.overallStatus === 'error';
   const documentCompleteness = result.documentCompleteness || [];
+  const supplementaryDocumentTypes = result.supplementaryDocumentTypes || [];
   const parameterValidation = result.parameterValidation || [];
   const documentConsistency = result.documentConsistency || [];
 
@@ -2345,7 +2357,7 @@ function showConsistencyResultModal(context, result) {
         ${isError ? '⚠️ AI Check Incomplete — Please Re-run' : ready ? '🟢 Ready for Submission' : '🔴 Not Ready for Submission'}
       </div>
       ${isError ? '<p class="small text-secondary mb-3">The AI did not return a value for every required document type / parameter this run (likely a rate limit or a truncated response, not a real compliance finding). Whatever is shown below is incomplete — please re-run the check before treating this as a result.</p>' : ''}
-      ${checklistSection('Document Completeness', documentCompleteness, (d) => presenceMeta(d.present), (d) => d.documentType)}
+      ${checklistSection('Document Completeness', documentCompleteness, (d) => presenceMeta(d.present, supplementaryDocumentTypes.includes(d.documentType)), (d) => d.documentType)}
       ${checklistSection('Parameter Validation', parameterValidation, (p) => presenceMeta(p.present), (p) => p.parameter)}
       ${consistencySection}
       ${result.summary ? `<p class="small text-secondary mb-2">${escapeHtml(result.summary)}</p>` : ''}

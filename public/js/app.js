@@ -1586,10 +1586,12 @@ function recentlyUpdatedCasesWidgetHtml(recentlyUpdatedCases) {
 // above) now shows EVERY pending approval org-wide, not just the ones
 // assigned to the logged-in reviewer — so anyone on the team can see how
 // many cases are under review at a glance, not just whoever happens to be
-// the reviewer. Each row now names its reviewer since the list is no
-// longer implicitly "mine". The Approve/Reject buttons still only render
-// for users holding the 'approvals'/'approve' permission (server enforces
-// this too) — viewing the queue is now open to everyone, acting on it is not.
+// the reviewer. These are the whole company's cases, so who the reviewer
+// is isn't shown here (kept as "requested by" only, i.e. who submitted
+// it) — see #/approvals for reviewer-level detail. The Approve/Reject
+// buttons still only render for users holding the 'approvals'/'approve'
+// permission (server enforces this too) — viewing the queue is now open
+// to everyone, acting on it is not.
 function pendingApprovalsWidgetHtml(pendingApprovals) {
   if (!pendingApprovals || !pendingApprovals.length) return '';
   const canApprove = canDo('approvals', 'approve');
@@ -1604,7 +1606,7 @@ function pendingApprovalsWidgetHtml(pendingApprovals) {
           <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
             <div>
               <div class="fw-semibold">${escapeHtml(a.title)}</div>
-              <div class="small text-secondary text-capitalize">${escapeHtml(a.type)} · requested by ${escapeHtml(userName(a.requestedBy))} · reviewer: ${escapeHtml(userName(a.reviewerId))}</div>
+              <div class="small text-secondary text-capitalize">${escapeHtml(a.type)} · requested by ${escapeHtml(userName(a.requestedBy))}</div>
             </div>
             ${canApprove ? `
               <div class="d-flex gap-2">

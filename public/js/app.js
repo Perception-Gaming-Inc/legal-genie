@@ -1517,7 +1517,44 @@ function listToolbar({ title, canCreate, onCreate, extraButtonsHtml }) {
 // reviews/adjusts Provider & PAGCOR Stage per sheet -> confirm actually
 // creates the records. Nothing is written until "Confirm Import" is clicked.
 // ---------------------------------------------------------------------------
-function importSheetSettingsHtml(sheet) {
+// Manual column-mapping picker (2026-08-26, at Tiffany's request) — Excel
+// header-text detection (see server/import.js's COLUMN_ALIASES) only knows
+// known phrasings; a brand-new template's header wording can come back
+// completely undetected for a field, silently (or, for Game Name, with the
+// whole sheet showing 0 rows — see mapRow's guard). Rather than requiring a
+// code change every time, this renders one dropdown per undetected field
+// (sheet.mappableFields with detected:false) letting the user say "field X
+// is actually this column in my file" — picking one re-triggers a full
+// re-analyze (see showImportCasesModal's runAnalyze) so rowCount/samples
+// reflect it immediately. Only ever shown for fields NOT already detected,
+// so a normally-formatted sheet looks exactly as it did before this existed.
+function importColumnMappingHtml(sheet, overridesForSheet) {
+  const missing = (sheet.mappableFields || []).filter((f) => !f.detected);
+  if (!missing.length) return '';
+  const overrides = overridesForSheet || {};
+  const headerOptions = (sheet.headerColumns || [])
+    .map((h) => `<option value="${h.index}">${escapeHtml(h.label)}</option>`)
+    .join('');
+  return `
+    <div class="mt-2 p-2 border rounded bg-body-tertiary">
+      <div class="small fw-semibold mb-1">Some columns weren't auto-detected in this sheet — map them manually if this file has them:</div>
+      <div class="d-flex flex-wrap gap-2">
+        ${missing.map((f) => {
+          const selectedIdx = overrides[f.key];
+          return `
+          <div>
+            <label class="form-label small mb-1">${escapeHtml(f.label)}${f.required ? ' <span class="text-danger">*</span>' : ''}</label>
+            <select class="form-select form-select-sm sheet-column-override" style="width:200px;" data-field="${escapeHtml(f.key)}">
+              <option value="">— Not in this file —</option>
+              ${(sheet.headerColumns || []).map((h) => `<option value="${h.index}" ${String(selectedIdx) === String(h.index) ? 'selected' : ''}>${escapeHtml(h.label)}</option>`).join('')}
+            </select>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
+
+function importSheetSettingsHtml(sheet, overridesForSheet) {
   const needsProvider = !sheet.hasProviderColumn;
   const needsStage = !sheet.hasStatusColumn;
   const sampleNames = sheet.sampleRows.map((r) => escapeHtml(r.title)).join(', ');
@@ -1545,6 +1582,7 @@ function importSheetSettingsHtml(sheet) {
                 </select>
               </div>` : `<div class="small text-secondary">Status column detected — stage will be inferred per row.</div>`}
           </div>
+          ${importColumnMappingHtml(sheet, overridesForSheet)}
         </div>
       </div>
     </div>`;
@@ -1585,31 +1623,80 @@ async function showImportCasesModal() {
 
   let fileContentBase64 = null;
   let fileName = null;
+  // Manual column-mapping picks the user has made so far (see
+  // importColumnMappingHtml above) — keyed by sheet name -> { fieldKey:
+  // columnIndex }. Kept outside runAnalyze() so it survives the re-render
+  // that a mapping change itself triggers.
+  let columnOverridesBySheet = {};
+
+  async function runAnalyze() {
+    const msgEl = modalEl.querySelector('#importAnalyzeMsg');
+    const sheetsEl = modalEl.querySelector('#importSheets');
+    const confirmBtn = modalEl.querySelector('#importConfirmBtn');
+    // A mapping change re-runs this same analyze — capture whatever the
+    // user already set for each sheet's include/Provider/Stage first, so
+    // rebuilding #importSheets' HTML below doesn't reset those back to
+    // their defaults out from under them.
+    const priorSheetSettings = {};
+    sheetsEl.querySelectorAll('.import-sheet-row').forEach((row) => {
+      const includeEl = row.querySelector('.sheet-include');
+      const providerEl = row.querySelector('.sheet-provider');
+      const stageEl = row.querySelector('.sheet-stage');
+      priorSheetSettings[row.dataset.sheet] = {
+        include: includeEl ? includeEl.checked : undefined,
+        provider: providerEl ? providerEl.value : undefined,
+        stage: stageEl ? stageEl.value : undefined,
+      };
+    });
+    msgEl.textContent = 'Analyzing…';
+    confirmBtn.style.display = 'none';
+    try {
+      const resp = await Api.post('/api/cases/import/preview', { fileName, fileContentBase64, columnOverrides: columnOverridesBySheet });
+      const sheets = resp.sheets || [];
+      const totalRows = sheets.reduce((sum, s) => sum + s.rowCount, 0);
+      msgEl.textContent = totalRows > 0
+        ? `Detected ${sheets.length} sheet(s) with ${totalRows} total row(s). Review each sheet's settings below before importing.`
+        : 'No data rows detected — please check the file content.';
+      sheetsEl.innerHTML = sheets.map((s) => importSheetSettingsHtml(s, columnOverridesBySheet[s.name])).join('');
+      sheetsEl.querySelectorAll('.import-sheet-row').forEach((row) => {
+        const prior = priorSheetSettings[row.dataset.sheet];
+        if (!prior) return;
+        const includeEl = row.querySelector('.sheet-include');
+        if (includeEl && prior.include !== undefined && !includeEl.disabled) includeEl.checked = prior.include;
+        const providerEl = row.querySelector('.sheet-provider');
+        if (providerEl && prior.provider !== undefined) providerEl.value = prior.provider;
+        const stageEl = row.querySelector('.sheet-stage');
+        if (stageEl && prior.stage !== undefined) stageEl.value = prior.stage;
+      });
+      confirmBtn.style.display = totalRows > 0 ? '' : 'none';
+    } catch (err) {
+      msgEl.textContent = '';
+      sheetsEl.innerHTML = `<div class="text-danger small">${escapeHtml(err.message)}</div>`;
+    }
+  }
 
   modalEl.querySelector('#importFile').addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     fileName = file.name;
     fileContentBase64 = await fileToBase64(file);
-    const msgEl = modalEl.querySelector('#importAnalyzeMsg');
-    const sheetsEl = modalEl.querySelector('#importSheets');
-    const confirmBtn = modalEl.querySelector('#importConfirmBtn');
-    msgEl.textContent = 'Analyzing…';
-    sheetsEl.innerHTML = '';
-    confirmBtn.style.display = 'none';
-    try {
-      const resp = await Api.post('/api/cases/import/preview', { fileName, fileContentBase64 });
-      const sheets = resp.sheets || [];
-      const totalRows = sheets.reduce((sum, s) => sum + s.rowCount, 0);
-      msgEl.textContent = totalRows > 0
-        ? `Detected ${sheets.length} sheet(s) with ${totalRows} total row(s). Review each sheet's settings below before importing.`
-        : 'No data rows detected — please check the file content.';
-      sheetsEl.innerHTML = sheets.map((s) => importSheetSettingsHtml(s)).join('');
-      confirmBtn.style.display = totalRows > 0 ? '' : 'none';
-    } catch (err) {
-      msgEl.textContent = '';
-      sheetsEl.innerHTML = `<div class="text-danger small">${escapeHtml(err.message)}</div>`;
-    }
+    columnOverridesBySheet = {}; // a new file's columns don't relate to the old one's mappings
+    modalEl.querySelector('#importSheets').innerHTML = '';
+    await runAnalyze();
+  });
+
+  // Delegated (not bound per-element) since runAnalyze() replaces
+  // #importSheets' innerHTML wholesale on every re-analyze.
+  modalEl.querySelector('#importSheets').addEventListener('change', (e) => {
+    if (!e.target.classList.contains('sheet-column-override')) return;
+    const row = e.target.closest('.import-sheet-row');
+    const sheetName = row.dataset.sheet;
+    const field = e.target.dataset.field;
+    const value = e.target.value;
+    if (!columnOverridesBySheet[sheetName]) columnOverridesBySheet[sheetName] = {};
+    if (value === '') delete columnOverridesBySheet[sheetName][field];
+    else columnOverridesBySheet[sheetName][field] = Number(value);
+    runAnalyze();
   });
 
   modalEl.querySelector('#importConfirmBtn').addEventListener('click', async () => {
@@ -1623,6 +1710,7 @@ async function showImportCasesModal() {
         include: row.querySelector('.sheet-include').checked,
         provider: providerEl ? providerEl.value : undefined,
         pagcorStage: stageEl ? stageEl.value : undefined,
+        columnOverrides: columnOverridesBySheet[row.dataset.sheet],
       };
     });
     btn.disabled = true;

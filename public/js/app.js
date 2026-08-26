@@ -1318,7 +1318,12 @@ async function renderDashboard(content) {
   const leftHtml = todaysTasksWidgetHtml(s.todaysTasks);
   const rightHtml = [
     recentlyUpdatedCasesWidgetHtml(s.recentlyUpdatedCases),
-    casesUnderReviewWidgetHtml(s.casesUnderReview),
+    // Cases Under Review LIST widget removed 2026-08-26 at Tiffany's
+    // request — the stat card above (bound to s.casesUnderReviewCount)
+    // stays as the org-wide "how many are in review" number; the list
+    // itself was redundant with Case Management's own PAGCOR Stage filter
+    // (see the card's "View all" link, still wired to #/cases?stage=For
+    // Review).
     followUpsWidgetHtml(s.followUps),
   ].join('');
   let widgetRowHtml = '';
@@ -1416,30 +1421,11 @@ function recentlyUpdatedCasesWidgetHtml(recentlyUpdatedCases) {
 // that), and stayed at 0 whenever nobody had an Approval Center request
 // open even though plenty of games were genuinely sitting at PAGCOR in the
 // For Review stage — and the Approval Center feature itself was removed
-// entirely shortly after (unused, and confusing alongside this). This
-// widget (and the matching stat card above) lists every game org-wide
-// whose PAGCOR Stage is currently "For Review" — see
-// /api/dashboard/summary's casesUnderReview — clicking a row goes to the
-// case (no Approve/Reject actions here; that was the removed feature).
-function casesUnderReviewWidgetHtml(casesUnderReview) {
-  if (!casesUnderReview || !casesUnderReview.length) return '';
-  return `
-    <div class="mt-4">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 class="mb-0">Cases Under Review (org-wide)</h6>
-        <a href="#/cases?stage=${encodeURIComponent('For Review')}" class="small text-decoration-none">View all &rarr;</a>
-      </div>
-      <div class="card stat-card"><div class="list-group list-group-flush">
-        ${casesUnderReview.map((c) => `
-          <a href="#/cases/${c.id}" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;">
-            <div>
-              <div class="fw-semibold">${escapeHtml(c.gameTitle || c.title)}${c.provider ? ` <span class="text-secondary fw-normal">· ${escapeHtml(c.provider)}</span>` : ''}</div>
-              <div class="small text-secondary">In review for ${c.daysSince} day${c.daysSince === 1 ? '' : 's'}</div>
-            </div>
-          </a>`).join('')}
-      </div></div>
-    </div>`;
-}
+// entirely shortly after (unused, and confusing alongside this). A list
+// widget used to sit here too (one row per game currently "For Review",
+// clicking through to its case); removed 2026-08-26 at Tiffany's request
+// as redundant with Case Management's own PAGCOR Stage filter — only the
+// stat card above (s.casesUnderReviewCount) remains.
 
 // 30-day PAGCOR follow-up reminder — a game sitting in "For Review"
 // or "On Process" for 30+ days with no Stage change is

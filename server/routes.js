@@ -1159,7 +1159,12 @@ router.post('/api/cases/import/preview', async (req, res, params, body) => {
     // Document Settings right now, not just the original hardcoded 3 — see
     // DEFAULT_CHECKLIST_ITEMS / detectColumns in server/import.js.
     const checklistItems = getChecklistItems(await getSystemSettings());
-    const sheets = caseImport.preview(buffer, body.fileName, checklistItems);
+    // columnOverrides (2026-08-26, at Tiffany's request) — { sheetName: {
+    // fieldKey: columnIndex } } the user picked in the Import modal for any
+    // field auto-detection couldn't find in this file (see import.js's file
+    // header comment and FIELD_LABELS). Re-sent on every re-analyze after a
+    // mapping change, so the preview reflects it immediately.
+    const sheets = caseImport.preview(buffer, body.fileName, checklistItems, body.columnOverrides);
     sendJson(res, 200, { sheets });
   } catch (err) {
     sendJson(res, 400, { error: err.message });
@@ -1306,7 +1311,7 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   for (const s of sheetSettings) {
     if (!s || s.include === false) continue;
     try {
-      const rows = caseImport.buildCasesForSheet(buffer, body.fileName, s.name, { provider: s.provider, pagcorStage: s.pagcorStage }, checklistItems);
+      const rows = caseImport.buildCasesForSheet(buffer, body.fileName, s.name, { provider: s.provider, pagcorStage: s.pagcorStage, columnOverrides: s.columnOverrides }, checklistItems);
       rows.forEach((row) => allRows.push({ row, sheetName: s.name }));
     } catch (err) {
       errors.push(`${s.name}: ${err.message}`);

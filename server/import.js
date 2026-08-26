@@ -20,6 +20,19 @@
  *      sheet, using the user-confirmed settings (see routes.js for how this
  *      is turned into real store.insert('cases', ...) calls).
  *
+ * Column detection (COLUMN_ALIASES/detectColumns below) is a known header
+ * text -> field lookup, not real language understanding — a brand new
+ * template whose header wording shares nothing with any known alias comes
+ * back with that field undetected (silently, for optional fields; the whole
+ * row skipped, for gameTitle — see mapRow's guard). Added 2026-08-26 at
+ * Tiffany's request: `columnOverrides` (accepted by both preview() and
+ * buildCasesForSheet() below, keyed by sheet name in the routes.js layer)
+ * lets the Import modal's user manually pick, per field that came back
+ * undetected, which actual column in THIS file it corresponds to — see
+ * applyColumnOverrides() below. Applied AFTER auto-detection, so it only
+ * ever fills a gap or corrects a specific field; a sheet the user never
+ * touches behaves exactly as before.
+ *
  * Uses server/xlsx-lite.js (a small dependency-free .xlsx reader written for
  * this project — see that file's header comment for why) rather than an npm
  * package.
@@ -86,6 +99,29 @@ const COLUMN_ALIASES = {
   // app.js) can show "Reskin of: <original>" on the card.
   reskinOf: ['original game title', 'original title', 'reskin of', 'based on'],
 };
+
+// Human-readable labels for the manual column-mapping picker (see
+// applyColumnOverrides below) — one entry per COLUMN_ALIASES key, in the
+// order they're most useful to show. gameTitle is the only field mapRow()
+// treats as required (everything else just comes back null on that row if
+// undetected/unmapped).
+const FIELD_LABELS = {
+  gameTitle: 'Game Name / Title',
+  provider: 'Provider',
+  gameType: 'Game Type',
+  gameId: 'Game ID',
+  gameVersion: 'Game Version',
+  minBet: 'Minimum Bet',
+  maxBet: 'Maximum Bet',
+  rtp: 'Total RTP (%)',
+  jackpotRtp: 'Jackpot RTP (%)',
+  withJackpot: 'With Jackpot',
+  status: 'Status',
+  dateReceived: 'Date Received',
+  remarks: 'Remarks',
+  reskinOf: 'Reskin Of (Original Game)',
+};
+const REQUIRED_FIELD_KEYS = new Set(['gameTitle']);
 
 function normalizeHeader(h) {
   return String(h == null ? '' : h).trim().toLowerCase().replace(/\s+/g, ' ');
@@ -496,11 +532,31 @@ function findHeaderRowIndex(rows) {
   return -1;
 }
 
-function sheetToRows(sheet, checklistItems) {
+// See the file header comment and FIELD_LABELS above — `overrides` is a
+// flat { fieldKey: columnIndex } object (fieldKey being either a
+// FIELD_LABELS key or "checklist:<itemKey>"), as chosen by the user in the
+// Import modal for whichever fields auto-detection left undetected in this
+// sheet. A blank/non-numeric index for a key is ignored (treated as "no
+// override"), so clearing a dropdown back to "— Not in this file —" behaves
+// the same as never having set it.
+function applyColumnOverrides(colMap, overrides) {
+  if (!overrides || typeof overrides !== 'object') return colMap;
+  const next = { ...colMap, checklistCols: { ...(colMap.checklistCols || {}) } };
+  for (const [key, rawIdx] of Object.entries(overrides)) {
+    if (rawIdx === null || rawIdx === undefined || rawIdx === '') continue;
+    const idx = Number(rawIdx);
+    if (!Number.isInteger(idx) || idx < 0) continue;
+    if (key.startsWith('checklist:')) next.checklistCols[key.slice('checklist:'.length)] = idx;
+    else next[key] = idx;
+  }
+  return next;
+}
+
+function sheetToRows(sheet, checklistItems, columnOverrides) {
   const headerIdx = findHeaderRowIndex(sheet.rows);
   if (headerIdx === -1) return { headerRow: [], dataRows: [], colMap: { checklistCols: {} } };
   const headerRow = sheet.rows[headerIdx];
-  const colMap = detectColumns(headerRow, checklistItems);
+  let colMap = detectColumns(headerRow, checklistItems);
   // See detectTwoRowHeader()'s own header comment — handles templates like
   // "Bet (PHP)" / "Minimum" / "Maximum" split across the header row and the
   // row directly beneath it. Only ever fills in colMap keys the single-row
@@ -509,6 +565,7 @@ function sheetToRows(sheet, checklistItems) {
   // real first data row.
   const twoRowHeader = detectTwoRowHeader(headerRow, sheet.rows[headerIdx + 1], colMap);
   if (twoRowHeader.used) Object.assign(colMap, twoRowHeader.colMap);
+  colMap = applyColumnOverrides(colMap, columnOverrides);
   const dataRows = sheet.rows.slice(headerIdx + (twoRowHeader.used ? 2 : 1));
   return { headerRow, dataRows, colMap };
 }
@@ -556,10 +613,11 @@ function loadWorkbook(buffer, fileName) {
   return readXlsx(buffer);
 }
 
-function preview(buffer, fileName, checklistItems) {
+function preview(buffer, fileName, checklistItems, columnOverridesBySheet) {
   const sheets = loadWorkbook(buffer, fileName);
   return sheets.map((sheet) => {
-    const { headerRow, dataRows, colMap } = sheetToRows(sheet, checklistItems);
+    const overridesForSheet = columnOverridesBySheet && columnOverridesBySheet[sheet.name];
+    const { headerRow, dataRows, colMap } = sheetToRows(sheet, checklistItems, overridesForSheet);
     const suggestedProvider = suggestedProviderFromSheetName(sheet.name);
     const previewSettings = { provider: suggestedProvider, pagcorStage: 'Pending Documents' };
     const mapped = [];
@@ -587,6 +645,29 @@ function preview(buffer, fileName, checklistItems) {
       suggestedProvider,
       detectedColumns,
       headerRow: headerRow.filter((h) => h !== null && h !== undefined && String(h).trim() !== ''),
+      // Index-preserving version of headerRow, for the manual column-mapping
+      // picker (see FIELD_LABELS/applyColumnOverrides above) — the plain
+      // headerRow above drops blank cells and therefore loses each column's
+      // real position, which a mapping dropdown needs in order to tell the
+      // server "field X is column index N".
+      headerColumns: headerRow
+        .map((h, index) => ({ index, label: asTrimmedString(h) }))
+        .filter((c) => c.label !== null),
+      // Every field the user could manually map, and whether this sheet's
+      // own header row already matched it — the Import modal only shows a
+      // mapping picker for entries where detected is false (see file header
+      // comment). gameTitle is flagged required since mapRow() skips a row
+      // entirely without it; every other field just comes back null on the
+      // row when neither detected nor mapped.
+      mappableFields: [
+        ...Object.entries(FIELD_LABELS).map(([key, label]) => ({
+          key, label, required: REQUIRED_FIELD_KEYS.has(key), detected: colMap[key] !== undefined,
+        })),
+        ...(checklistItems || DEFAULT_CHECKLIST_ITEMS).map((item) => ({
+          key: `checklist:${item.key}`, label: item.label, required: false,
+          detected: (colMap.checklistCols || {})[item.key] !== undefined,
+        })),
+      ],
       sampleRows: mapped.map((m) => ({ title: m.title, provider: m.provider, gameType: m.gameType, pagcorStage: m.pagcorStage, status: m.status })),
     };
   });
@@ -596,7 +677,7 @@ function buildCasesForSheet(buffer, fileName, sheetName, settings, checklistItem
   const sheets = loadWorkbook(buffer, fileName);
   const sheet = sheets.find((s) => s.name === sheetName);
   if (!sheet) throw new Error(`Sheet "${sheetName}" not found in this file.`);
-  const { dataRows, colMap } = sheetToRows(sheet, checklistItems);
+  const { dataRows, colMap } = sheetToRows(sheet, checklistItems, settings && settings.columnOverrides);
   const out = [];
   for (const row of dataRows) {
     const m = mapRow(row, colMap, settings || {}, sheetName, checklistItems);

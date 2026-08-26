@@ -231,3 +231,69 @@ test('checkDocumentConsistency: throws when fewer than 2 documents are provided'
     else process.env.GEMINI_API_KEY = originalKey;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Supplementary document types (2026-08-25, at Tiffany's request) —
+// "Content Provider Certification" was demoted from required to
+// supplementary: still checked/shown, but a missing one must NOT block
+// "Ready for Submission" the way a missing required document does.
+// ---------------------------------------------------------------------------
+function fullReadyMockResponse({ contentProviderCertPresent }) {
+  return {
+    documentCompleteness: [
+      { documentType: 'Game Parameters', present: true, detail: '' },
+      { documentType: 'Game Manual', present: true, detail: '' },
+      { documentType: 'RNG Certification', present: true, detail: '' },
+      { documentType: 'RTP Verification', present: true, detail: '' },
+      { documentType: 'Content Provider Certification', present: contentProviderCertPresent, detail: '' },
+    ],
+    parameterValidation: [
+      { parameter: 'Game ID', present: true, detail: '' },
+      { parameter: 'Game Version', present: true, detail: '' },
+      { parameter: 'Minimum Bet', present: true, detail: '' },
+      { parameter: 'Maximum Bet', present: true, detail: '' },
+      { parameter: 'RTP', present: true, detail: '' },
+    ],
+    documentConsistency: [
+      { parameter: 'Game ID', status: 'match', values: [{ source: 'doc1.pdf', value: 'ABC-1' }], detail: '' },
+      { parameter: 'Game Version', status: 'match', values: [{ source: 'doc1.pdf', value: '1.0' }], detail: '' },
+      { parameter: 'Minimum Bet', status: 'match', values: [{ source: 'doc1.pdf', value: '0.5' }], detail: '' },
+      { parameter: 'Maximum Bet', status: 'match', values: [{ source: 'doc1.pdf', value: '100' }], detail: '' },
+      { parameter: 'RTP', status: 'in_range', values: [{ source: 'doc1.pdf', value: '94.45%' }], detail: '' },
+    ],
+    summary: 'test',
+  };
+}
+
+test('checkDocumentConsistency: missing supplementary doc (Content Provider Certification) does NOT block Ready for Submission', async () => {
+  await withMockedFetch(
+    fullReadyMockResponse({ contentProviderCertPresent: false }),
+    async () => {
+      const result = await checkDocumentConsistency({
+        documents: TWO_DUMMY_DOCS,
+        expectedValues: { gameId: 'ABC-1', gameVersion: '1.0', minBet: 0.5, maxBet: 100 },
+        withJackpot: 'No',
+      });
+      assert.equal(result.overallStatus, 'ready');
+      const cpc = result.documentCompleteness.find((d) => d.documentType === 'Content Provider Certification');
+      assert.equal(cpc.present, false);
+      assert.deepEqual(result.supplementaryDocumentTypes, ['Content Provider Certification']);
+    }
+  );
+});
+
+test('checkDocumentConsistency: missing a genuinely REQUIRED doc (e.g. Game Manual) still blocks Ready for Submission', async () => {
+  const response = fullReadyMockResponse({ contentProviderCertPresent: true });
+  response.documentCompleteness.find((d) => d.documentType === 'Game Manual').present = false;
+  await withMockedFetch(
+    response,
+    async () => {
+      const result = await checkDocumentConsistency({
+        documents: TWO_DUMMY_DOCS,
+        expectedValues: { gameId: 'ABC-1', gameVersion: '1.0', minBet: 0.5, maxBet: 100 },
+        withJackpot: 'No',
+      });
+      assert.equal(result.overallStatus, 'not_ready');
+    }
+  );
+});

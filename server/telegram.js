@@ -172,4 +172,30 @@ async function getWebhookInfo() {
   return data;
 }
 
-module.exports = { sendTelegramMessage, setWebhook, getWebhookInfo };
+/**
+ * Diagnostic helper, added alongside getWebhookInfo above (2026-08-26) —
+ * calls Telegram's getMe so we can confirm exactly which bot username
+ * TELEGRAM_BOT_TOKEN actually belongs to. Useful when a group's messages
+ * never reach the webhook at all despite webhook registration looking
+ * healthy: if the group's members were @-mentioning a DIFFERENT bot
+ * username than the one this token controls (e.g. a bot added to that one
+ * group by hand, separately from the shared bot every other Provider group
+ * uses), Telegram would never deliver those messages here in the first
+ * place — no error, just silence, because as far as Telegram's concerned
+ * they're two unrelated bots.
+ * @returns {Promise<object>} Telegram's decoded JSON response (`result` has
+ *   shape { id, is_bot, first_name, username, ... }).
+ */
+async function getMe() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) throw new Error('TELEGRAM_BOT_TOKEN is not configured on the server.');
+  const res = await fetch(`${TELEGRAM_API_BASE}${token}/getMe`);
+  let data = {};
+  try { data = await res.json(); } catch { /* non-JSON error body — data stays {} */ }
+  if (!res.ok || !data.ok) {
+    throw new Error(`Telegram API error: ${data.description || res.statusText || res.status}`);
+  }
+  return data;
+}
+
+module.exports = { sendTelegramMessage, setWebhook, getWebhookInfo, getMe };

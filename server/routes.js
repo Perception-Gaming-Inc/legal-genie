@@ -2631,8 +2631,8 @@ router.get('/api/telegram/webhook-info', async (req, res) => {
   const user = await requirePerm(req, res, 'settings', 'edit');
   if (!user) return;
   try {
-    const result = await telegram.getWebhookInfo();
-    sendJson(res, 200, result);
+    const [webhookInfo, me] = await Promise.all([telegram.getWebhookInfo(), telegram.getMe()]);
+    sendJson(res, 200, { webhookInfo, me });
   } catch (err) {
     sendJson(res, 400, { error: err.message });
   }

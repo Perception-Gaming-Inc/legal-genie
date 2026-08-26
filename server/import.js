@@ -353,6 +353,28 @@ function statusForStage(stage) {
   return 'In Progress';
 }
 
+// The Status column on a real "APPROVED" sheet is free text someone typed by
+// hand, not the app's own fixed PAGCOR_STAGE_OPTIONS enum — so it shows up as
+// "Approved (Final)", "APPROVED - FINAL", "Fully Approved", "Conditionally
+// Approved", etc. as often as a bare "Approved". The old exact-match
+// (rawStatus.toUpperCase() === 'APPROVED') only recognized that one literal
+// spelling, so any of those real-world variants silently fell through to the
+// "not approved" branch below — the row kept whatever default Stage the
+// sheet was set to (e.g. "Pending Documents") instead of "Approved", and
+// lost the APPROVED-tab tie-break preference in routes.js's import-commit
+// merge (see its "Stage 2"/"Stage 3" comments above). Fixed 2026-08-26 at
+// Tiffany's request: treat any status containing the word "APPROVED" as an
+// approved row, unless it's explicitly negated ("Not Approved", "Not Yet
+// Approved") — word-boundary matching also naturally excludes "Disapproved"
+// / "Unapproved", since there's no boundary before "APPROVED" in those.
+function isApprovedStatusText(rawStatus) {
+  if (!rawStatus) return false;
+  const s = String(rawStatus).toUpperCase();
+  if (!/\bAPPROVED\b/.test(s)) return false;
+  if (/\bNOT\b/.test(s)) return false;
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Row -> Case mapping
 // ---------------------------------------------------------------------------
@@ -372,7 +394,7 @@ function mapRow(row, colMap, sheetSettings, sheetName, checklistItems) {
   if (!gameTitle) return null;
 
   const rawStatus = asTrimmedString(cell(row, colMap.status));
-  const isApprovedRow = rawStatus && rawStatus.toUpperCase() === 'APPROVED';
+  const isApprovedRow = isApprovedStatusText(rawStatus);
 
   // Normalize Provider spelling (e.g. "OP" -> "Omniplay") so an Excel sheet
   // using a shorthand doesn't fragment into a separate provider/case group

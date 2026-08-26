@@ -516,18 +516,11 @@ router.get('/api/dashboard/summary', async (req, res) => {
   // review queue regardless of who's logged in. (The Approval Center
   // feature itself was removed entirely shortly after — see the comment
   // near the old /api/approvals routes further down this file.)
-  const casesUnderReview = pagcorEntries
-    .filter((e) => e.pagcorStage === 'For Review')
-    .sort((a, b) => new Date(a.stageSince) - new Date(b.stageSince))
-    .map((e) => ({
-      id: e.caseId,
-      caseNumber: e.caseNumber,
-      title: e.caseTitle,
-      gameTitle: e.gameTitle,
-      provider: e.provider,
-      stageSince: e.stageSince,
-      daysSince: Math.floor((today - new Date(e.stageSince)) / 86400000),
-    }));
+  // The dashboard used to also show a list built from this (one row per
+  // game, linking to its case); removed 2026-08-26 at Tiffany's request as
+  // redundant with Case Management's own PAGCOR Stage filter, so only the
+  // count is needed here now.
+  const casesUnderReviewCount = pagcorEntries.filter((e) => e.pagcorStage === 'For Review').length;
 
   // PAGCOR submission pipeline, grouped by Stage, for the Dashboard's Kanban
   // overview (see public/js/app.js's renderDashboard). Only cases with a
@@ -569,8 +562,7 @@ router.get('/api/dashboard/summary', async (req, res) => {
     unreadNotificationsCount: notifications.filter((n) => n.userId === user.id && !n.isRead).length,
     followUps: followUps.slice(0, 10),
     followUpsCount: followUps.length,
-    casesUnderReview: casesUnderReview.slice(0, 10),
-    casesUnderReviewCount: casesUnderReview.length,
+    casesUnderReviewCount,
     counts: {
       cases: cases.filter((c) => c.status !== 'Closed').length,
     },
@@ -736,6 +728,27 @@ async function syncDeadlineFollowUpTask(caseRow) {
   } else if (existing.status !== 'Completed' && existing.sourceDeadline !== caseRow.deadline) {
     await store.update('tasks', existing.id, { title, dueDate: followUpDate, sourceDeadline: caseRow.deadline });
   }
+}
+
+// When every game in a case (or the case itself, for a legacy flat
+// single-game case) has reached PAGCOR Stage "Approved", the case no
+// longer needs its "follow up N days later" reminder from
+// syncDeadlineFollowUpTask above — added 2026-08-26 at Tiffany's request.
+// For a multi-game case this only fires once ALL of its games are
+// Approved, not just one, so the reminder isn't lost while other games in
+// the same case are still under review.
+async function removeFollowUpIfFullyApproved(caseRow) {
+  if (!caseRow || !caseRow.id) return;
+  const fullyApproved = (Array.isArray(caseRow.games) && caseRow.games.length)
+    ? caseRow.games.every((g) => g.pagcorStage === 'Approved')
+    : caseRow.pagcorStage === 'Approved';
+  if (!fullyApproved) return;
+  const tasks = await store.all('tasks');
+  const existing = tasks.find((t) => t.relatedCaseId === caseRow.id && t.isDeadlineFollowUp);
+  // Same care as syncDeadlineFollowUpTask: never remove a task someone
+  // already marked Completed — that's real history of a follow-up that
+  // happened, not bookkeeping to be silently cleaned up.
+  if (existing && existing.status !== 'Completed') await store.remove('tasks', existing.id);
 }
 
 // Audit log for compliance-critical case/game fields (2026-08-24, at
@@ -917,11 +930,13 @@ crudRoutes({
   // case's Owner, gated by Settings > Notification Settings.
   afterCreate: async (row, user) => {
     await syncDeadlineFollowUpTask(row);
+    await removeFollowUpIfFullyApproved(row);
     try { await logAction('case', row.id, 'created', `${row.caseNumber} - ${row.provider || row.title || ''}`, user, { caseId: row.id }); }
     catch (err) { console.error('Failed to log case create:', err.message); }
   },
   afterUpdate: async (row, user, id, existing) => {
     await syncDeadlineFollowUpTask(row);
+    await removeFollowUpIfFullyApproved(row);
     await notifyCaseStageChange(row, existing, user);
     await logCaseAudit(row, user, existing);
   },
@@ -1043,6 +1058,7 @@ router.post('/api/cases/bulk-update-stage', async (req, res, params, body) => {
         updated++;
         await notifyCaseStageChange(row, existing, user);
         await logCaseAudit(row, user, existing); // this route bypasses crudRoutes' own afterUpdate, so it needs its own audit call
+        await removeFollowUpIfFullyApproved(row); // ditto — see its own comment above
       }
       else errors.push(`${id}: not found`);
     } catch (err) {
@@ -1101,6 +1117,7 @@ router.post('/api/cases/:id/import-approval-notice', async (req, res, params, bo
         cases[0] = row;
         await notifyCaseStageChange(row, before, user);
         await logCaseAudit(row, user, before); // bypasses crudRoutes' own afterUpdate too — see comment above
+        await removeFollowUpIfFullyApproved(row); // ditto — see its own comment above
       }
       return row;
     };

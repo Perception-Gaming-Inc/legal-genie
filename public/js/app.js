@@ -1469,7 +1469,7 @@ async function renderDashboard(content) {
   const leftHtml = todaysTasksWidgetHtml(s.todaysTasks);
   const rightHtml = [
     recentlyUpdatedCasesWidgetHtml(s.recentlyUpdatedCases),
-    pendingApprovalsWidgetHtml(s.pendingApprovals),
+    casesUnderReviewWidgetHtml(s.casesUnderReview),
     followUpsWidgetHtml(s.followUps),
   ].join('');
   let widgetRowHtml = '';
@@ -1492,7 +1492,7 @@ async function renderDashboard(content) {
       </div></div></div>
       <div class="col-md-4"><div class="card stat-card"><div class="card-body">
         <div class="stat-icon tone-amber">${Icon('checkSquare')}</div>
-        <div class="stat-value">${s.pendingApprovalsCount}</div>
+        <div class="stat-value">${s.casesUnderReviewCount}</div>
         <div class="stat-label">Cases Under Review (org-wide)</div>
       </div></div></div>
       <div class="col-md-4"><div class="card stat-card"><div class="card-body">
@@ -1503,19 +1503,6 @@ async function renderDashboard(content) {
     </div>
     ${widgetRowHtml}
     ${pagcorBoardHtml(s.pagcorBoard)}`;
-
-  const canApprove = canDo('approvals', 'approve');
-  if (canApprove) {
-    content.querySelectorAll('.btn-dash-approve').forEach((btn) => btn.addEventListener('click', async () => {
-      await Api.post(`/api/approvals/${btn.dataset.id}/decide`, { decision: 'approve' });
-      toast('Approved'); route();
-    }));
-    content.querySelectorAll('.btn-dash-reject').forEach((btn) => btn.addEventListener('click', async () => {
-      const comment = window.prompt('Reason for rejection (optional):') || '';
-      await Api.post(`/api/approvals/${btn.dataset.id}/decide`, { decision: 'reject', comment });
-      toast('Rejected'); route();
-    }));
-  }
 }
 
 // "Today's To-Dos" — my own not-yet-completed tasks due today or already
@@ -1573,47 +1560,35 @@ function recentlyUpdatedCasesWidgetHtml(recentlyUpdatedCases) {
 // that checklist feature; see renderCaseDetail()'s Download All Documents
 // gate, which now relies purely on the AI Parameter Consistency Check.)
 
-// Approval Center no longer has its own permanent sidebar slot (see NAV) —
-// this is where its pending items actually surface day-to-day now. Same
-// approve/reject actions as the full Approval Center page (server does the
-// same permission check either way), just without needing a whole separate
-// page visit for the common case of "I have 1-2 things to decide on right
-// now." "View all →" still links to the full page (#/approvals — the route
-// itself was never removed, only its sidebar entry) for approval history
-// or anything beyond what's pending for this person.
-//
-// 2026-08-26, at Tiffany's request: this list (and the matching stat card
-// above) now shows EVERY pending approval org-wide, not just the ones
-// assigned to the logged-in reviewer — so anyone on the team can see how
-// many cases are under review at a glance, not just whoever happens to be
-// the reviewer. These are the whole company's cases, so who the reviewer
-// is isn't shown here (kept as "requested by" only, i.e. who submitted
-// it) — see #/approvals for reviewer-level detail. The Approve/Reject
-// buttons still only render for users holding the 'approvals'/'approve'
-// permission (server enforces this too) — viewing the queue is now open
-// to everyone, acting on it is not.
-function pendingApprovalsWidgetHtml(pendingApprovals) {
-  if (!pendingApprovals || !pendingApprovals.length) return '';
-  const canApprove = canDo('approvals', 'approve');
+// "Cases Under Review" — 2026-08-26, at Tiffany's request, this replaced
+// what used to be the Approval Center's pending-queue widget here. That
+// older widget tracked a different thing entirely (internal Approval
+// Center requests, e.g. "案件審核中" was easy to misread for that), and
+// stayed at 0 whenever nobody had an Approval Center request open even
+// though plenty of games were genuinely sitting at PAGCOR in the For
+// Review stage. This widget (and the matching stat card above) instead
+// lists every game org-wide whose PAGCOR Stage is currently "For Review"
+// — see /api/dashboard/summary's casesUnderReview — so it always reflects
+// the real review queue, not an unrelated internal workflow. The Approval
+// Center itself is untouched and still lives at #/approvals; this
+// Dashboard slot just no longer doubles as its quick-view widget (so no
+// Approve/Reject buttons here — clicking a row goes to the case instead).
+function casesUnderReviewWidgetHtml(casesUnderReview) {
+  if (!casesUnderReview || !casesUnderReview.length) return '';
   return `
     <div class="mt-4">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h6 class="mb-0">Cases Under Review (org-wide)</h6>
-        <a href="#/approvals" class="small text-decoration-none">View all &rarr;</a>
+        <a href="#/cases?stage=${encodeURIComponent('For Review')}" class="small text-decoration-none">View all &rarr;</a>
       </div>
       <div class="card stat-card"><div class="list-group list-group-flush">
-        ${pendingApprovals.map((a) => `
-          <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+        ${casesUnderReview.map((c) => `
+          <a href="#/cases/${c.id}" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;">
             <div>
-              <div class="fw-semibold">${escapeHtml(a.title)}</div>
-              <div class="small text-secondary text-capitalize">${escapeHtml(a.type)} · requested by ${escapeHtml(userName(a.requestedBy))}</div>
+              <div class="fw-semibold">${escapeHtml(c.gameTitle || c.title)}${c.provider ? ` <span class="text-secondary fw-normal">· ${escapeHtml(c.provider)}</span>` : ''}</div>
+              <div class="small text-secondary">In review for ${c.daysSince} day${c.daysSince === 1 ? '' : 's'}</div>
             </div>
-            ${canApprove ? `
-              <div class="d-flex gap-2">
-                <button class="btn btn-sm btn-success btn-dash-approve" data-id="${a.id}">${Icon('check')} Approve</button>
-                <button class="btn btn-sm btn-outline-danger btn-dash-reject" data-id="${a.id}">${Icon('x')} Reject</button>
-              </div>` : `<a href="#/approvals" class="btn btn-sm btn-outline-secondary">View</a>`}
-          </div>`).join('')}
+          </a>`).join('')}
       </div></div>
     </div>`;
 }

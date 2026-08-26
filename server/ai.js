@@ -1080,18 +1080,35 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured on the server.');
   if (!question || !String(question).trim()) throw new Error('No message text to answer.');
 
-  const caseLines = (Array.isArray(cases) ? cases : []).map((c) => {
-    const bits = [
-      // isAdmin: each line is labelled with its own Provider up front,
-      // since this list now spans every Provider instead of just one.
-      isAdmin ? `Provider=${c.provider || 'Unknown'}` : null,
-      `Stage=${c.pagcorStage || c.status || 'Unknown'}`,
-      `Submit Date=${c.deadline || 'N/A'}`,
-      c.gameId ? `Game ID=${c.gameId}` : null,
-      c.withJackpot ? `With Jackpot=${c.withJackpot}` : null,
-      c.pagcorStage === 'Rejected' && c.rejectionReason ? `Rejection Reason=${c.rejectionReason}` : null,
-    ].filter(Boolean).join(', ');
-    return `- ${c.gameTitle || c.title}${c.caseNumber ? ` (Case ${c.caseNumber})` : ''}: ${bits}`;
+  // A multi-game case (see server/routes.js's crudRoutes onCreate/onUpdate
+  // for /api/cases) never gets a case-level `pagcorStage`/`gameTitle` — each
+  // game under `c.games[]` tracks its own Stage/Game ID/With
+  // Jackpot/Rejection Reason independently, and the case row itself is left
+  // with no top-level PAGCOR fields at all. This used to read `c.pagcorStage`
+  // / `c.gameTitle` directly, so for any multi-game case the bot always saw
+  // "Stage=Unknown" (or the case's generic Open/In Progress/Closed `status`)
+  // regardless of what any individual game's real PAGCOR Stage was — asking
+  // the bot about a specific game that had just been marked Approved would
+  // report stale/wrong information even though the change was saved
+  // correctly. Fixed 2026-08-26: expand every multi-game case into one line
+  // per game (each carrying its own Stage/Game ID/With Jackpot/Rejection
+  // Reason), and only fall back to the case's own flat fields for a
+  // legacy/non-PAGCOR case that has no `games` array at all.
+  const caseLines = (Array.isArray(cases) ? cases : []).flatMap((c) => {
+    const games = Array.isArray(c.games) && c.games.length ? c.games : [c];
+    return games.map((g) => {
+      const bits = [
+        // isAdmin: each line is labelled with its own Provider up front,
+        // since this list now spans every Provider instead of just one.
+        isAdmin ? `Provider=${c.provider || 'Unknown'}` : null,
+        `Stage=${g.pagcorStage || c.status || 'Unknown'}`,
+        `Submit Date=${c.deadline || 'N/A'}`,
+        g.gameId ? `Game ID=${g.gameId}` : null,
+        g.withJackpot ? `With Jackpot=${g.withJackpot}` : null,
+        g.pagcorStage === 'Rejected' && g.rejectionReason ? `Rejection Reason=${g.rejectionReason}` : null,
+      ].filter(Boolean).join(', ');
+      return `- ${g.gameTitle || c.title}${c.caseNumber ? ` (Case ${c.caseNumber})` : ''}: ${bits}`;
+    });
   });
 
   const kbFaqLines = (Array.isArray(kbFaqs) ? kbFaqs : []).map((f) => `- Q: ${f.question}\n  A: ${f.answer}`);

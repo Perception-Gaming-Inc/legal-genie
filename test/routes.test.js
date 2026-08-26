@@ -18,7 +18,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const router = require('../server/routes.js');
-const { buildExistingGameIndex, findExistingGameMatch, titlesLikelySameGame } = router._testables;
+const { buildExistingGameIndex, findExistingGameMatch, titlesLikelySameGame, looksLikeQuestion, isChineseText } = router._testables;
 
 // A modern multi-game case (games: [...]) and a legacy flat single-game case
 // (gameTitle directly on the case), mirroring the two real shapes this
@@ -102,4 +102,45 @@ test('titlesLikelySameGame: a short generic word is NOT enough to call two diffe
   // "ACE" is a substring of "ACE OF SPADES ULTRA" but that alone shouldn't
   // match it against an unrelated game that also happens to contain "ACE".
   assert.equal(titlesLikelySameGame('ACE', 'ACE OF SPADES ULTRA'), false);
+});
+
+// ---------------------------------------------------------------------------
+// isChineseText — added 2026-08-26 at Tiffany's request ("機器人不需要回覆任何
+// 中文的問題"): the Telegram group Q&A bot should stay completely silent on
+// any Chinese-language message, checked via a simple CJK Unicode range test
+// (see routes.js's own comment on the function for why this is intentionally
+// simple rather than a full language-detection pass).
+// ---------------------------------------------------------------------------
+test('isChineseText: a message containing Chinese characters is detected', () => {
+  assert.equal(isChineseText('這是中文問題嗎'), true);
+});
+
+test('isChineseText: a plain English message is not detected as Chinese', () => {
+  assert.equal(isChineseText('What is the status of Maya Gems?'), false);
+});
+
+test('isChineseText: a mixed English/Chinese message still counts as Chinese', () => {
+  assert.equal(isChineseText('Maya Gems 狀態如何?'), true);
+});
+
+test('isChineseText: empty/undefined input is not Chinese', () => {
+  assert.equal(isChineseText(''), false);
+  assert.equal(isChineseText(undefined), false);
+});
+
+// ---------------------------------------------------------------------------
+// looksLikeQuestion — sanity checks alongside isChineseText, since the
+// webhook handler gates on BOTH (looksLikeQuestion(...) && !isChineseText(...)).
+// ---------------------------------------------------------------------------
+test('looksLikeQuestion: a short greeting is not treated as a question', () => {
+  assert.equal(looksLikeQuestion('hi'), false);
+});
+
+test('looksLikeQuestion: a message with a question mark is treated as a question', () => {
+  assert.equal(looksLikeQuestion('What is the status?'), true);
+});
+
+test('looksLikeQuestion: a Chinese question-hint keyword is still recognized (even though isChineseText will separately block the reply)', () => {
+  assert.equal(looksLikeQuestion('現在進度如何'), true);
+  assert.equal(isChineseText('現在進度如何'), true);
 });

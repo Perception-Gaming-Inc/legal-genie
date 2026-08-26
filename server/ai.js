@@ -1138,16 +1138,29 @@ async function extractFields({ module, text, fileName, fileContentBase64 }) {
 // bot that jumps into unrelated conversation with a wrong or irrelevant
 // reply is worse than one that occasionally misses a real question — see
 // server/routes.js's telegram webhook handler for how this is wired up.
+//
+// Fallback reply for a genuine-but-unanswerable question (added 2026-08-26,
+// at Tiffany's request): a real on-topic question that the bot has no data
+// for used to get total silence, indistinguishable from the bot simply
+// being broken — this is exactly what made today's Telegram-not-replying
+// troubleshooting session so hard to diagnose. Now shouldRespond stays true
+// for any genuine on-topic question, with the model falling back to a short
+// "no information on file, ask Crystal directly" reply instead of an
+// invented answer when the data doesn't cover it. Only truly off-topic/non-
+// question messages (small talk, greetings, the weather) still get total
+// silence. "Crystal" is hardcoded here at Tiffany's request as the point of
+// contact — see Settings > Users for the current Crystal Bayquen (Admin)
+// account; update this string if that contact ever changes.
 const GROUP_QA_SCHEMA = {
   type: 'OBJECT',
   properties: {
     shouldRespond: {
       type: 'BOOLEAN',
-      description: 'true ONLY if this message is clearly a question directed at the assistant about this Provider\'s case(s) in the system — status, PAGCOR stage, required documents, submit/approval dates, rejection reasons, etc. false for greetings, small talk, messages clearly directed at another person, or anything not answerable from the case data given. When genuinely unsure, prefer false.',
+      description: 'true if this message is a genuine, on-topic question the bot should reply to — either because the case data/Knowledge Base can actually answer it, OR because it\'s clearly a real question about a case/Provider/PAGCOR-regulatory topic that the bot happens to lack data for (in that second situation, still set this true and use the "no information on file, ask Crystal" fallback wording described under `answer`). Set false ONLY for messages that are not really questions at all for this bot — greetings, small talk, messages clearly directed at another person, or topics entirely unrelated to cases/PAGCOR (e.g. the weather, the stock market) — so the bot stays silent rather than replying to every stray message. When genuinely unsure whether it\'s even a real question, prefer false.',
     },
     answer: {
       type: 'STRING',
-      description: 'A short, direct, friendly reply, in the same language the question was asked in, based ONLY on the case data provided below — never invent a stage, date, or document status not present in that data. Empty string when shouldRespond is false.',
+      description: 'A short, direct, friendly reply, in the same language the question was asked in. When the case data or Knowledge Base actually covers it, answer from ONLY that data — never invent a stage, date, or document status not present in it. When it\'s a genuine on-topic question but nothing given actually answers it, instead reply with a brief, honest "I don\'t have information on that — you may want to ask Crystal directly" in that same language (never guess at an answer in this situation either). Empty string when shouldRespond is false.',
     },
   },
   required: ['shouldRespond', 'answer'],
@@ -1222,13 +1235,17 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
           'You are a helpful assistant embedded in a Telegram group chat for a legal/regulatory team tracking ' +
           'PAGCOR game submissions. ' + scopeInstruction + ' Knowledge Base content (FAQ entries and ' +
           'reference-document summaries) is general PAGCOR/regulatory material, not tied to any one case. First ' +
-          'decide whether the message is genuinely a question you can answer from what\'s given — either about ' +
-          'case status/stage/required documents/dates/rejection reasons, or a general regulatory/process question ' +
-          'that the Knowledge Base content below directly answers. If it looks like ordinary conversation between ' +
-          'people, a greeting, or a question neither the case data nor the Knowledge Base content actually answers, ' +
-          'set shouldRespond to false and leave answer empty. Never guess or invent information not present in the ' +
-          'case data or the Knowledge Base content given — if nothing given covers it, do not answer from ' +
-          'general/outside knowledge, even if you believe you know the answer. Keep answers short and friendly.',
+          'decide whether the message is a genuine, on-topic question — about case status/stage/required ' +
+          'documents/dates/rejection reasons, or a general PAGCOR/regulatory question. If it is, set shouldRespond ' +
+          'to true, EVEN IF the case data and Knowledge Base content given don\'t actually cover it — in that ' +
+          'situation, don\'t guess: reply with a short, honest "I don\'t have information on that — you may want to ' +
+          'ask Crystal directly" instead (in the same language as the question), rather than staying silent, since a ' +
+          'real on-topic question deserves some reply even when the answer is "I don\'t know." Only set ' +
+          'shouldRespond to false (and leave answer empty) when the message ISN\'T really a question for this bot at ' +
+          'all — ordinary conversation between people, a greeting, or something entirely unrelated to cases/PAGCOR ' +
+          '(e.g. the weather, the stock market) — so the bot doesn\'t reply to every stray message in a busy group. ' +
+          'Never guess or invent a stage, date, or document status that isn\'t present in the case data or the ' +
+          'Knowledge Base content given. Keep answers short and friendly.',
       }],
     },
     contents: [{

@@ -80,7 +80,6 @@ async function getSystemSettings() {
       id: 'system',
       followUpDays: 30,
       notifications: {
-        notifyOnApprovalDecision: true,
         notifyOnTaskAssignment: true,
         notifyOnCaseStageChange: true,
         notifyTelegramOnCaseStageChange: true,
@@ -528,10 +527,9 @@ router.get('/api/dashboard/summary', async (req, res) => {
   // now counts PAGCOR game entries (see pagcorGameEntries above — one entry
   // per game, same flattening the Follow-ups widget and PAGCOR board use)
   // whose Stage is 'For Review', org-wide, so it always reflects the real
-  // review queue regardless of who's logged in. The Approval Center itself
-  // (its own submit/approve/reject workflow) is untouched and still lives
-  // at #/approvals — this dashboard slot just no longer doubles as its
-  // quick-view widget.
+  // review queue regardless of who's logged in. (The Approval Center
+  // feature itself was removed entirely shortly after — see the comment
+  // near the old /api/approvals routes further down this file.)
   const casesUnderReview = pagcorEntries
     .filter((e) => e.pagcorStage === 'For Review')
     .sort((a, b) => new Date(a.stageSince) - new Date(b.stageSince))
@@ -2372,41 +2370,13 @@ router.delete('/api/calendar-events/:id', async (req, res, params) => {
   sendJson(res, 200, { ok: true });
 });
 
-// Approvals -------------------------------------------------------------
-crudRoutes({
-  base: '/api/approvals', moduleName: 'approvals', collection: 'approvals',
-  onCreate: async (body, user) => ({ ...body, requestedBy: user.id, status: 'Pending', comments: [] }),
-  afterCreate: async (row, user) => {
-    try { await logAction('approval', row.id, 'created', row.title || 'Approval Request', user, {}); }
-    catch (err) { console.error('Failed to log approval create:', err.message); }
-  },
-  afterUpdate: async (row, user) => {
-    try { await logAction('approval', row.id, 'updated', row.title || 'Approval Request', user, {}); }
-    catch (err) { console.error('Failed to log approval update:', err.message); }
-  },
-  afterDelete: async (row, user) => {
-    try { await logAction('approval', row.id, 'deleted', row.title || 'Approval Request', user, {}); }
-    catch (err) { console.error('Failed to log approval delete:', err.message); }
-  },
-});
-
-router.post('/api/approvals/:id/decide', async (req, res, params, body) => {
-  const user = await requirePerm(req, res, 'approvals', 'approve');
-  if (!user) return;
-  const approval = await store.find('approvals', params.id);
-  if (!approval) return sendJson(res, 404, { error: 'Not found' });
-  const decision = body.decision === 'approve' ? 'Approved' : 'Rejected';
-  const comments = [...(approval.comments || [])];
-  if (body.comment) comments.push({ by: user.id, text: body.comment, at: new Date().toISOString() });
-  const updated = await store.update('approvals', params.id, { status: decision, comments, decidedAt: new Date().toISOString() });
-  try { await logAction('approval', approval.id, 'decided', `${approval.title || 'Approval Request'} - ${decision}`, user, {}); }
-  catch (err) { console.error('Failed to log approval decide:', err.message); }
-  const settings = await getSystemSettings();
-  if (notificationsEnabled(settings, 'notifyOnApprovalDecision') && approval.requestedBy !== user.id) {
-    await notifyUser(approval.requestedBy, 'approval_decision', `Your request "${approval.title}" was ${decision.toLowerCase()}`, approval.id, 'approval');
-  }
-  sendJson(res, 200, updated);
-});
+// (The "Approval Center" feature — a standalone internal sign-off workflow
+// with its own /api/approvals CRUD routes and an /api/approvals/:id/decide
+// endpoint — was removed entirely 2026-08-26 at Tiffany's request: it was
+// unused and easy to confuse with actual PAGCOR case-review status. See
+// the Dashboard's casesUnderReview computation above for what replaced its
+// Dashboard widget, and server/auth.js / server/seed.js for the matching
+// removal of its 'approvals' permission module.)
 
 // Notifications ---------------------------------------------------------
 router.get('/api/notifications', async (req, res) => {
@@ -2552,7 +2522,7 @@ router.put('/api/settings', async (req, res, params, body) => {
   if (body.notifications !== undefined) {
     const existingNotifications = current.notifications || {};
     patch.notifications = { ...existingNotifications };
-    for (const key of ['notifyOnApprovalDecision', 'notifyOnTaskAssignment', 'notifyOnCaseStageChange', 'notifyTelegramOnCaseStageChange', 'notifyOnFollowUpDueTelegram']) {
+    for (const key of ['notifyOnTaskAssignment', 'notifyOnCaseStageChange', 'notifyTelegramOnCaseStageChange', 'notifyOnFollowUpDueTelegram']) {
       if (body.notifications[key] !== undefined) patch.notifications[key] = body.notifications[key] !== false;
     }
   }

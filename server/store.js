@@ -171,7 +171,7 @@ async function nextNumber(seq, prefix, pad = 4) {
 
 const COLLECTIONS = [
   'users', 'roles', 'departments', 'cases', 'caseNotes', 'contracts',
-  'contractVersions', 'documents', 'tasks', 'approvals',
+  'contractVersions', 'documents', 'tasks',
   'notifications', 'sessions', 'auditLog',
 ];
 

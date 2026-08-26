@@ -76,7 +76,7 @@ async function resetFailedLogins(user) {
 // Permission model: role -> module -> {view, create, edit, delete, approve}
 const MODULES = [
   'dashboard', 'cases', 'documents',
-  'tasks', 'approvals', 'notifications', 'knowledgeBase', 'settings',
+  'tasks', 'notifications', 'knowledgeBase', 'settings',
 ];
 
 async function can(user, moduleName, action) {

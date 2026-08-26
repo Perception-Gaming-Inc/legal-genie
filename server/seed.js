@@ -22,7 +22,7 @@ async function seed() {
 
   // ---- Roles & permissions ---------------------------------------------
   const fullAccess = {};
-  for (const m of ['dashboard', 'cases', 'documents', 'tasks', 'approvals', 'notifications', 'settings', 'knowledgeBase']) {
+  for (const m of ['dashboard', 'cases', 'documents', 'tasks', 'notifications', 'settings', 'knowledgeBase']) {
     fullAccess[m] = perm(true, true, true, true, true);
   }
   const roleAdmin = await store.insert('roles', { name: 'Admin', permissions: fullAccess });
@@ -34,7 +34,6 @@ async function seed() {
       cases: perm(true, true, true, true),
       documents: perm(true, true, true, true),
       tasks: perm(true, true, true, true),
-      approvals: perm(true, true, true, false, true),
       notifications: perm(true, false, false, false),
       settings: perm(true, false, false, false),
       // A Manager curates the Knowledge Base (approving items into "Active"
@@ -51,7 +50,6 @@ async function seed() {
       cases: perm(true, true, true, false),
       documents: perm(true, true, true, false),
       tasks: perm(true, true, true, false),
-      approvals: perm(true, true, false, false, false),
       notifications: perm(true, false, false, false),
       settings: perm(false, false, false, false),
       // Staff can browse and contribute (e.g. submit a new FAQ or upload a
@@ -68,7 +66,6 @@ async function seed() {
       cases: perm(true, false, false, false),
       documents: perm(true, false, false, false),
       tasks: perm(true, false, false, false),
-      approvals: perm(true, false, false, false),
       notifications: perm(true, false, false, false),
       settings: perm(false, false, false, false),
       knowledgeBase: perm(true, false, false, false),
@@ -376,28 +373,13 @@ async function seed() {
     relatedCaseId: case3.id, relatedContractId: null, createdBy: staff2.id,
   });
 
-  // ---- Approvals ---------------------------------------------------------
-  await store.insert('approvals', {
-    title: 'Approve PlayCloud amendment execution', type: 'contract', requestedBy: manager.id,
-    reviewerId: admin.id, status: 'Pending', comments: [], relatedId: contract1.id, relatedType: 'contract',
-  });
-  await store.insert('approvals', {
-    title: 'Approve new AML policy publication', type: 'document', requestedBy: staff1.id,
-    reviewerId: manager.id, status: 'Approved', comments: [{ by: manager.id, text: 'Looks good, approved.', at: new Date().toISOString() }],
-    relatedId: null, relatedType: 'document',
-  });
-  await store.insert('approvals', {
-    title: 'Approve MetroParts breach escalation to litigation', type: 'case', requestedBy: staff1.id,
-    reviewerId: manager.id, status: 'Rejected', comments: [{ by: manager.id, text: 'Try negotiation first before litigation.', at: new Date().toISOString() }],
-    relatedId: case2.id, relatedType: 'case',
-  });
+  // (The "Approvals" seed block that used to live here was removed
+  // 2026-08-26 along with the Approval Center feature itself — see
+  // server/routes.js and server/auth.js for the matching removal.)
 
   // ---- Notifications -------------------------------------------------
   await store.insert('notifications', {
     userId: manager.id, type: 'contract_expiry', message: 'PlayCloud License Agreement expires in 15 days', relatedId: contract1.id, relatedType: 'contract', isRead: false,
-  });
-  await store.insert('notifications', {
-    userId: admin.id, type: 'approval_pending', message: 'PlayCloud amendment execution is awaiting your approval', relatedId: null, relatedType: 'approval', isRead: false,
   });
   await store.insert('notifications', {
     userId: staff1.id, type: 'task_assigned', message: 'You were assigned: Collect delivery logs from supplier', relatedId: null, relatedType: 'task', isRead: true,

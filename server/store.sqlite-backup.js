@@ -94,7 +94,7 @@ if (isNewDb && fs.existsSync(LEGACY_JSON_PATH)) {
 
 const COLLECTIONS = [
   'users', 'roles', 'departments', 'cases', 'caseNotes', 'contracts',
-  'contractVersions', 'documents', 'tasks', 'approvals',
+  'contractVersions', 'documents', 'tasks',
   'notifications', 'sessions',
 ];
 

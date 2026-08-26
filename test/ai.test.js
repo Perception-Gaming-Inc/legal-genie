@@ -359,3 +359,27 @@ test('answerGroupQuestion: non-admin (regular Provider chat) omits per-line Prov
     }
   );
 });
+
+// ---------------------------------------------------------------------------
+// answerGroupQuestion: "ask Crystal" fallback instruction (2026-08-26, at
+// Tiffany's request) — a genuine on-topic question the bot has no data for
+// should still get SOME reply (shouldRespond stays true, with a fallback
+// "ask Crystal" answer), rather than the old total silence that made a
+// broken bot indistinguishable from one that simply had nothing to say.
+// This only checks the PROMPT correctly instructs the model to do this —
+// the model's actual shouldRespond/answer choice is exercised by the mocked
+// fetch in every other test here, not re-verified live.
+// ---------------------------------------------------------------------------
+test('answerGroupQuestion: prompt instructs the model to fall back to an "ask Crystal" reply instead of staying silent', async () => {
+  await withCapturedFetch(
+    { shouldRespond: true, answer: "I don't have information on that — you may want to ask Crystal directly." },
+    async (getCapturedBody) => {
+      await answerGroupQuestion({
+        providerName: 'FC', question: 'What is the exact minimum bet for Game Z?', cases: [], isAdmin: false,
+      });
+      const systemText = getCapturedBody().systemInstruction.parts[0].text;
+      assert.match(systemText, /ask Crystal directly/);
+      assert.match(systemText, /EVEN IF the case data/);
+    }
+  );
+});

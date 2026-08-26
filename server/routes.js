@@ -2627,12 +2627,23 @@ router.post('/api/telegram/register-webhook', async (req, res) => {
 // see exactly what Telegram thinks the current webhook state is, without
 // needing direct access to the bot token or Telegram's API. Same permission
 // gate as register-webhook above; makes no changes of any kind.
-router.get('/api/telegram/webhook-info', async (req, res) => {
+router.get('/api/telegram/webhook-info', async (req, res, params, body, query) => {
   const user = await requirePerm(req, res, 'settings', 'edit');
   if (!user) return;
   try {
     const [webhookInfo, me] = await Promise.all([telegram.getWebhookInfo(), telegram.getMe()]);
-    sendJson(res, 200, { webhookInfo, me });
+    const out = { webhookInfo, me };
+    // Optional ?chatId=... — also confirms whether this bot currently
+    // recognizes that specific chat (see telegram.js's getChat comment).
+    const chatId = query && query.chatId;
+    if (chatId) {
+      try {
+        out.chat = await telegram.getChat(chatId);
+      } catch (err) {
+        out.chatError = err.message;
+      }
+    }
+    sendJson(res, 200, out);
   } catch (err) {
     sendJson(res, 400, { error: err.message });
   }

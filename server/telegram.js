@@ -198,4 +198,29 @@ async function getMe() {
   return data;
 }
 
-module.exports = { sendTelegramMessage, setWebhook, getWebhookInfo, getMe };
+/**
+ * Diagnostic helper, added alongside getWebhookInfo/getMe above (2026-08-26)
+ * — calls Telegram's getChat for one specific chat ID, using this app's own
+ * bot token. This is the most direct possible test of "is the Chat ID saved
+ * in Settings actually a chat this bot currently belongs to?" — if the ID is
+ * stale, mistyped, or points at a chat the bot has since been removed from,
+ * Telegram returns a clear error here (e.g. "Bad Request: chat not found" or
+ * "Forbidden: bot is not a member of the chat") instead of silently never
+ * delivering anything.
+ * @param {string|number} chatId
+ * @returns {Promise<object>} Telegram's decoded JSON response.
+ */
+async function getChat(chatId) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) throw new Error('TELEGRAM_BOT_TOKEN is not configured on the server.');
+  if (!chatId) throw new Error('No chat ID provided.');
+  const res = await fetch(`${TELEGRAM_API_BASE}${token}/getChat?chat_id=${encodeURIComponent(chatId)}`);
+  let data = {};
+  try { data = await res.json(); } catch { /* non-JSON error body — data stays {} */ }
+  if (!res.ok || !data.ok) {
+    throw new Error(`Telegram API error: ${data.description || res.statusText || res.status}`);
+  }
+  return data;
+}
+
+module.exports = { sendTelegramMessage, setWebhook, getWebhookInfo, getMe, getChat };

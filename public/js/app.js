@@ -1493,7 +1493,7 @@ async function renderDashboard(content) {
       <div class="col-md-4"><div class="card stat-card"><div class="card-body">
         <div class="stat-icon tone-amber">${Icon('checkSquare')}</div>
         <div class="stat-value">${s.pendingApprovalsCount}</div>
-        <div class="stat-label">Pending Approvals (mine to review)</div>
+        <div class="stat-label">Cases Under Review (org-wide)</div>
       </div></div></div>
       <div class="col-md-4"><div class="card stat-card"><div class="card-body">
         <div class="stat-icon tone-rose">${Icon('clock')}</div>
@@ -1581,13 +1581,22 @@ function recentlyUpdatedCasesWidgetHtml(recentlyUpdatedCases) {
 // now." "View all →" still links to the full page (#/approvals — the route
 // itself was never removed, only its sidebar entry) for approval history
 // or anything beyond what's pending for this person.
+//
+// 2026-08-26, at Tiffany's request: this list (and the matching stat card
+// above) now shows EVERY pending approval org-wide, not just the ones
+// assigned to the logged-in reviewer — so anyone on the team can see how
+// many cases are under review at a glance, not just whoever happens to be
+// the reviewer. Each row now names its reviewer since the list is no
+// longer implicitly "mine". The Approve/Reject buttons still only render
+// for users holding the 'approvals'/'approve' permission (server enforces
+// this too) — viewing the queue is now open to everyone, acting on it is not.
 function pendingApprovalsWidgetHtml(pendingApprovals) {
   if (!pendingApprovals || !pendingApprovals.length) return '';
   const canApprove = canDo('approvals', 'approve');
   return `
     <div class="mt-4">
       <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 class="mb-0">Pending Approvals (mine to review)</h6>
+        <h6 class="mb-0">Cases Under Review (org-wide)</h6>
         <a href="#/approvals" class="small text-decoration-none">View all &rarr;</a>
       </div>
       <div class="card stat-card"><div class="list-group list-group-flush">
@@ -1595,7 +1604,7 @@ function pendingApprovalsWidgetHtml(pendingApprovals) {
           <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
             <div>
               <div class="fw-semibold">${escapeHtml(a.title)}</div>
-              <div class="small text-secondary text-capitalize">${escapeHtml(a.type)} · requested by ${escapeHtml(userName(a.requestedBy))}</div>
+              <div class="small text-secondary text-capitalize">${escapeHtml(a.type)} · requested by ${escapeHtml(userName(a.requestedBy))} · reviewer: ${escapeHtml(userName(a.reviewerId))}</div>
             </div>
             ${canApprove ? `
               <div class="d-flex gap-2">

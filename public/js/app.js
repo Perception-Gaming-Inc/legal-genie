@@ -636,25 +636,15 @@ function fileToBase64(file) {
 // actually attached to the record). Forms with no file field of their own
 // (cases, contracts) keep the standalone picker, since there's nothing to
 // reuse there.
-function aiAssistHtml(reuseFileField) {
-  return `
-    <div class="ai-assist border rounded p-3 mb-3 bg-light">
-      <div class="d-flex align-items-center justify-content-between mb-2">
-        <strong class="d-flex align-items-center gap-1">${sparkleMark()} AI Smart-Fill</strong>
-        <span class="small text-secondary">Optional — paste text${reuseFileField ? '' : ', or upload a file'}</span>
-      </div>
-      <textarea class="form-control form-control-sm mb-2" id="aiAssistText" rows="3" placeholder="Paste an email, case description, contract excerpt… (optional)"></textarea>
-      <div class="d-flex align-items-center gap-2">
-        ${reuseFileField
-          ? `<span class="small text-secondary">Will automatically read the file selected in "File Upload" below</span>`
-          : `<input type="file" class="form-control form-control-sm" id="aiAssistFile" accept=".pdf,image/*,.txt">`}
-        <button type="button" class="btn btn-sm btn-outline-primary text-nowrap ms-auto" id="aiAssistBtn">AI Smart-Fill</button>
-      </div>
-      <div id="aiAssistMsg" class="small mt-2"></div>
-    </div>`;
-}
-
-async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabel = 'Save', aiAssist = null }) {
+// (The generic "AI Smart-Fill" box — aiAssistHtml()/runAiAssist() below,
+// wired up here via showFormModal's `aiAssist` option — was removed
+// entirely 2026-08-26 at Tiffany's request. It had only ever been used by
+// the standalone Document Center "Upload Document" form (module:
+// 'documents'); real document/case intake now happens via the Excel
+// import instead. showFormModal itself is unchanged and still used by
+// every other form in the app — only its (now-unused) `aiAssist` option
+// and the file-field auto-run hook were removed.)
+async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabel = 'Save' }) {
   const modalId = 'formModal';
   let modalEl = document.getElementById(modalId);
   if (modalEl) modalEl.remove();
@@ -676,7 +666,7 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
     fields.filter((f) => f.section && initial[f.name] !== undefined && initial[f.name] !== null && initial[f.name] !== '')
       .map((f) => f.section)
   );
-  // This form's own real file-upload field, if it has one — see aiAssistHtml().
+  // This form's own real file-upload field, if it has one.
   const reuseFileField = fields.find((f) => f.type === 'file');
 
   modalEl.innerHTML = `
@@ -688,8 +678,6 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
         </div>
         <form id="modalForm">
           <div class="modal-body">
-            ${aiAssist ? aiAssistHtml(reuseFileField ? reuseFileField.name : null) : ''}
-            ${aiAssist ? '<div id="multiGameFillBlock"></div>' : ''}
             ${fields.map((f) => {
               if (f.controlsSection) {
                 const checked = sectionsToExpand.has(f.controlsSection);
@@ -736,117 +724,11 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
     toggleEl.addEventListener('change', () => setSectionExpanded(f.controlsSection, toggleEl.checked));
   });
 
-  // Set by runAiAssist below when the AI decides one uploaded file actually
-  // covers 2+ distinct games at once (see server/ai.js's `detectedGames` on
-  // the documents module schema) — read again by the submit handler further
-  // down to decide whether to create one document per checked game instead
-  // of the usual single record. Stays null for every other form (cases,
-  // contracts, ...) since only the documents schema ever returns this.
-  let detectedGames = null;
-
-  // Shared by both the "AI Smart-Fill" button (manual) and the file picker's
-  // own change handler below (automatic — see reuseFileField block).
-  // `auto` just changes the "reading…" message shown while it's running;
-  // an auto-run failing (e.g. no GEMINI_API_KEY configured) is expected to
-  // happen silently often enough that it shouldn't feel like an error the
-  // way a manual click's failure should.
-  const runAiAssist = async (auto) => {
-    const btn = modalEl.querySelector('#aiAssistBtn');
-    const msgEl = modalEl.querySelector('#aiAssistMsg');
-    const textEl = modalEl.querySelector('#aiAssistText');
-    const textVal = textEl ? textEl.value : '';
-    // Reuse the form's own real file field if this form has one (see
-    // aiAssistHtml's reuseFileField param) — otherwise fall back to the
-    // AI box's own standalone file picker.
-    const fileEl = reuseFileField
-      ? modalEl.querySelector('#modalForm').elements[reuseFileField.name]
-      : modalEl.querySelector('#aiAssistFile');
-    const payload = { text: textVal };
-    if (fileEl && fileEl.files && fileEl.files[0]) {
-      payload.fileName = fileEl.files[0].name;
-      payload.fileContentBase64 = await fileToBase64(fileEl.files[0]);
-    }
-    if (btn) btn.disabled = true;
-    const originalLabel = btn ? btn.textContent : null;
-    if (btn) btn.textContent = 'Processing…';
-    if (msgEl) { msgEl.className = 'small mt-2 text-secondary'; msgEl.textContent = auto ? 'AI reading file…' : ''; }
-    try {
-      const { fields: extracted } = await Api.post(`/api/ai/extract/${aiAssist.module}`, payload);
-      const form = modalEl.querySelector('#modalForm');
-      let filledCount = 0;
-      for (const f of fields) {
-        if (f.controlsSection || f.type === 'multiselect' || extracted[f.name] === undefined || extracted[f.name] === null || extracted[f.name] === '') continue;
-        const el = form.elements[f.name];
-        if (!el) continue;
-        el.value = extracted[f.name];
-        filledCount++;
-        // AI just filled a field that lives in a collapsed section (e.g.
-        // it recognized this as a PAGCOR game document and filled
-        // `provider`) — expand that section so the filled value is
-        // actually visible, instead of silently populating a hidden field.
-        if (f.section) setSectionExpanded(f.section, true);
-      }
-      // Multi-game bundle detection (Document Center only — see
-      // MODULE_SCHEMAS.documents' `detectedGames` in server/ai.js): when one
-      // uploaded file actually covers several different games at once (e.g.
-      // a combined front-end testing screenshot report), there's no single
-      // correct provider/gameTitle/gameId to fill in above. Show a
-      // checklist instead so the user picks which game folders this same
-      // file should be filed into — the submit handler further down reads
-      // the checked boxes and creates one document per selected game.
-      const multiBlock = modalEl.querySelector('#multiGameFillBlock');
-      if (multiBlock) {
-        if (Array.isArray(extracted.detectedGames) && extracted.detectedGames.length > 1) {
-          detectedGames = extracted.detectedGames;
-          multiBlock.innerHTML = `
-            <div class="border rounded p-3 mb-3 bg-light">
-              <div class="fw-semibold mb-2">${sparkleMark()} This document looks like it covers ${detectedGames.length} different games — check which ones to file it under:</div>
-              ${detectedGames.map((g, i) => `
-                <div class="form-check">
-                  <input type="checkbox" class="form-check-input" id="multiGame_${i}" data-idx="${i}" checked>
-                  <label class="form-check-label" for="multiGame_${i}">${escapeHtml(g.gameTitle || '(Unnamed game)')}${g.provider ? ` — ${escapeHtml(g.provider)}` : ''}${g.gameId ? ` (Game ID: ${escapeHtml(g.gameId)})` : ''}</label>
-                </div>`).join('')}
-              <div class="small text-secondary mt-2">Each checked game will get its own document record (same file content); unchecked games will not be filed.</div>
-            </div>`;
-          if (fields.some((f) => f.section === 'pagcor')) setSectionExpanded('pagcor', true);
-        } else {
-          detectedGames = null;
-          multiBlock.innerHTML = '';
-        }
-      }
-      if (msgEl) {
-        msgEl.className = 'small mt-2 text-success';
-        msgEl.textContent = detectedGames
-          ? `AI detected ${detectedGames.length} games in this document — check which ones to file it under above.`
-          : filledCount > 0
-            ? `AI auto-filled ${filledCount} field(s) — please check them before submitting.`
-            : 'AI could not find any fields to fill from this content. Please check the pasted content, or try pasting text/uploading a file instead.';
-      }
-    } catch (err) {
-      // An auto-run that fails because there's simply no file/text yet, or
-      // no GEMINI_API_KEY configured, shouldn't read as a scary error the
-      // moment someone picks a file — it just quietly clears the "reading…"
-      // status back out (fields are still fine to fill in by hand). A
-      // manual button click still surfaces the real error message.
-      if (msgEl) {
-        if (auto) { msgEl.className = 'small mt-2'; msgEl.textContent = ''; }
-        else { msgEl.className = 'small mt-2 text-danger'; msgEl.textContent = err.message; }
-      }
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
-    }
-  };
-
-  if (aiAssist) {
-    modalEl.querySelector('#aiAssistBtn').addEventListener('click', () => runAiAssist(false));
-  }
-
   // Title is a required field on every form that has one (so every record
   // has a real searchable label), but a form with its own file field
   // shouldn't force typing a title just to name-copy the file you're
   // already uploading — picking a file fills Title from the filename
-  // (extension stripped) as an instant fallback while AI (below) may
-  // overwrite it with something better once it's read the actual content.
+  // (extension stripped) as an instant fallback.
   if (reuseFileField) {
     const fileInputEl = modalEl.querySelector('#modalForm').elements[reuseFileField.name];
     const hasTitleField = fields.some((f) => f.name === 'title');
@@ -858,15 +740,6 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
             titleEl.value = fileInputEl.files[0].name.replace(/\.[^./\\]+$/, '');
           }
         }
-        // Auto-run AI extraction the moment a file is picked, instead of
-        // requiring a separate "AI Smart-Fill" click — this is the actual fix
-        // for the repeated report that Provider/Game Title (and other
-        // PAGCOR fields) were coming out blank: they were never wrong, AI
-        // just never got asked because clicking the button is an easy step
-        // to forget. Still fully editable/overridable afterward, and the
-        // button stays for re-running by hand (e.g. after pasting extra
-        // context text).
-        if (aiAssist && fileInputEl.files && fileInputEl.files[0]) runAiAssist(true);
       });
     }
   }
@@ -903,28 +776,8 @@ async function showFormModal({ title, fields, initial = {}, onSubmit, submitLabe
       modalEl.querySelector('#modalError').textContent = `${missingMultiselect.label} is required — select at least one.`;
       return;
     }
-    // Multi-game bundle: if a checklist is showing (see runAiAssist above)
-    // and at least one game is checked, this one uploaded file becomes N
-    // separate document records — one per checked game, each reusing the
-    // same fileContentBase64/title/category/etc, only provider/gameTitle/
-    // gameId swapped in per game — instead of the usual single record. If
-    // every box got unchecked, fall through to the normal single-record
-    // path below using whatever's in the provider/gameTitle/gameId fields.
-    const checkedGames = detectedGames
-      ? Array.from(modalEl.querySelectorAll('#multiGameFillBlock input[type=checkbox]:checked'))
-          .map((cb) => detectedGames[Number(cb.dataset.idx)])
-      : [];
     try {
-      if (checkedGames.length > 0) {
-        await Promise.all(checkedGames.map((g) => onSubmit({
-          ...data,
-          provider: g.provider || '',
-          gameTitle: g.gameTitle || '',
-          gameId: g.gameId || '',
-        })));
-      } else {
-        await onSubmit(data);
-      }
+      await onSubmit(data);
       modal.hide();
     } catch (err) {
       modalEl.querySelector('#modalError').textContent = err.message;
@@ -2598,8 +2451,7 @@ async function renderCaseDetail(content, id) {
   // checklist (Game ID / Game Manual / Game Version / Minimum Bet / Maximum
   // Bet) across every Document Center file whose "Related Case" points to
   // this case. See server/ai.js's checkDocumentConsistency and
-  // showConsistencyResultModal() below (shared with the Case intake
-  // wizard's auto-run version in renderCases()).
+  // showConsistencyResultModal() below.
   const consistencyBtn = content.querySelector('#btnCheckConsistency');
   if (consistencyBtn) consistencyBtn.addEventListener('click', async () => {
     const originalHtml = consistencyBtn.innerHTML;
@@ -3431,287 +3283,13 @@ async function renderCases(content) {
   }
 }
 
-// AI Case intake wizard — "when a new case comes in, upload every document
-// at once and let AI organize it into a Case and auto-check consistency"
-// (the workflow legal actually described). Two steps in one flow:
-//   1. Pick every document for this game submission at once (RNG report,
-//      Game Manual, approval notice...) and let AI read all of them
-//      together to propose the new Case's fields (server/ai.js's
-//      extractCaseFromDocuments) — reusing the same case form
-//      (caseFormFields()) the plain "New Case" button uses, so the user
-//      reviews/edits exactly like normal before anything is saved.
-//   2. On confirm: create the Case, upload every one of the originally
-//      selected files as Document Center records already linked to it
-//      (relatedCaseId + matching provider/gameTitle, so they show up
-//      immediately in that game's Document Center folder — see
-//      renderDocuments()'s folder view), then automatically run the same
-//      AI consistency check the case detail page's button runs, so the
-//      Compliant/mismatch result appears right away without a second click.
-function showCaseIntakeWizard() {
-  const modalId = 'caseIntakeModal';
-  let modalEl = document.getElementById(modalId);
-  if (modalEl) modalEl.remove();
-  modalEl = document.createElement('div');
-  modalEl.id = modalId;
-  modalEl.className = 'modal fade';
-  modalEl.tabIndex = -1;
-  modalEl.innerHTML = `
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">${sparkleMark('me-1')} Create Case from Documents (AI)</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <p class="small text-secondary">Upload all related documents for the same game at once (RNG report, Game Manual, approval notice, etc.).
-            AI will read these documents and organize the case fields for you to review; once the case is created, it will automatically compare these documents on Game ID, Game Manual,
-            Game Version, Minimum Bet, and Maximum Bet for consistency.</p>
-          <input type="file" class="form-control" id="caseIntakeFiles" multiple accept=".pdf,image/*,.txt">
-          <div id="caseIntakeMsg" class="small mt-2 text-danger"></div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="button" class="btn btn-primary" id="btnCaseIntakeNext">Read with AI &amp; Continue</button>
-        </div>
-      </div>
-    </div>`;
-  document.body.appendChild(modalEl);
-  const modal = new bootstrap.Modal(modalEl);
-  modal.show();
-  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
-
-  modalEl.querySelector('#btnCaseIntakeNext').addEventListener('click', async () => {
-    const fileInput = modalEl.querySelector('#caseIntakeFiles');
-    const msgEl = modalEl.querySelector('#caseIntakeMsg');
-    const files = Array.from(fileInput.files || []);
-    if (!files.length) { msgEl.textContent = 'Please select at least one document first.'; return; }
-    const nextBtn = modalEl.querySelector('#btnCaseIntakeNext');
-    const originalHtml = nextBtn.innerHTML;
-    nextBtn.disabled = true;
-    nextBtn.innerHTML = 'AI reading…';
-    msgEl.textContent = '';
-    try {
-      const documents = await Promise.all(files.map(async (f) => ({
-        fileName: f.name, fileContentBase64: await fileToBase64(f),
-      })));
-      const { common, games } = await Api.post('/api/cases/extract-from-documents', { documents });
-      modal.hide();
-      if (!games || !games.length) {
-        toast('AI could not read any game information from these documents. Please check the uploaded files, or use "New" to create the case manually.', 'danger');
-        return;
-      }
-      if (games.length === 1) {
-        showCaseIntakeSingleReview(documents, { status: 'Open', priority: 'Medium', ...common, ...games[0] });
-      } else {
-        showCaseIntakeMultiGameReview(documents, common || {}, games);
-      }
-    } catch (err) {
-      msgEl.textContent = err.message;
-      nextBtn.disabled = false;
-      nextBtn.innerHTML = originalHtml;
-    }
-  });
-}
-
-// Creates a single Case, uploads `documents` (already {fileName,
-// fileContentBase64} pairs) as Document Center records linked to it, and
-// (if 2+ uploaded successfully) auto-runs the AI consistency check —
-// shared by both the single-game intake review below and each row of the
-// multi-game review, so "what happens after a case is confirmed" only
-// exists in one place.
-async function createCaseFromIntake(caseData, documents) {
-  const newCase = await Api.post('/api/cases', caseData);
-  let uploadedCount = 0;
-  for (const doc of documents) {
-    try {
-      await Api.post('/api/documents', {
-        title: doc.fileName, category: 'Certificates',
-        provider: caseData.provider, gameTitle: caseData.gameTitle, gameId: caseData.gameId,
-        relatedCaseId: newCase.id,
-        fileName: doc.fileName, fileContentBase64: doc.fileContentBase64,
-      });
-      uploadedCount++;
-    } catch (err) {
-      toast(`Failed to upload "${doc.fileName}": ${err.message}`, 'danger');
-    }
-  }
-  let consistency = null;
-  if (uploadedCount >= 2) {
-    try { consistency = await Api.post(`/api/cases/${newCase.id}/check-consistency`, {}); }
-    catch (err) { toast(`Automatic consistency check for "${newCase.title}" failed: ${err.message}`, 'danger'); }
-  }
-  return { case: newCase, uploadedCount, consistency };
-}
-
-// The common case — AI found exactly 1 game in the uploaded documents.
-// Reuses the normal case form (caseFormFields()) so review/edit works
-// exactly like every other form in the app.
-function showCaseIntakeSingleReview(documents, initial) {
-  showFormModal({
-    title: `Confirm Case Details (${documents.length} document(s) read)`,
-    fields: caseFormFields(),
-    initial,
-    submitLabel: 'Create Case & Check Documents',
-    onSubmit: async (data) => {
-      const { case: newCase, uploadedCount, consistency } = await createCaseFromIntake(data, documents);
-      toast(`Case created — ${uploadedCount}/${documents.length} document(s) uploaded successfully`);
-      if (consistency) showConsistencyResultModal(newCase.title, consistency);
-      else if (uploadedCount < 2) toast('Fewer than 2 documents uploaded successfully, so the automatic consistency check was skipped — you can run it manually from the case detail page later.', 'danger');
-      location.hash = `#/cases/${newCase.id}`;
-    },
-  });
-}
-
-// The case that prompted this: a single PAGCOR submission bundle (most
-// often one Notice of Approval letter) can cover several DIFFERENT games
-// at once via an "Annex A"-style table. Forcing that into one flat case
-// form left the most important field (which game?) blank, since there
-// was never one correct single answer. Instead: show every detected game
-// as its own editable, checkable row, apply the shared `common` fields
-// (Provider/Type/Priority/Status/Deadline/Description) to whichever rows
-// stay checked, and create one Case per checked row — all of them getting
-// copies of the same uploaded documents (the one approval letter really
-// does apply to all of them), each auto-running its own consistency check.
-function showCaseIntakeMultiGameReview(documents, common, games) {
-  const modalId = 'caseIntakeMultiModal';
-  let modalEl = document.getElementById(modalId);
-  if (modalEl) modalEl.remove();
-  modalEl = document.createElement('div');
-  modalEl.id = modalId;
-  modalEl.className = 'modal fade';
-  modalEl.tabIndex = -1;
-  const gameTypeOptions = (selected) => `<option value="">—</option>${GAME_TYPE_OPTIONS.map((v) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${v}</option>`).join('')}`;
-  modalEl.innerHTML = `
-    <div class="modal-dialog modal-lg">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">${sparkleMark('me-1')} ${games.length} Game(s) Detected in These Documents</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <p class="small text-secondary">AI determined that this batch of documents (often the case when one approval notice covers several games at once) spans ${games.length} different game(s),
-            each organized into a row below. Uncheck a row to skip creating that case; every other field can be edited directly.
-            These ${documents.length} document(s) will be copied and linked to every case you check and create.</p>
-          <div class="border rounded p-3 mb-3 bg-light">
-            <div class="small fw-semibold mb-2">Shared Fields (applied to every checked case below)</div>
-            <div class="row g-2">
-              <div class="col-md-4">
-                <label class="small text-secondary">Provider</label>
-                <input class="form-control form-control-sm" id="intakeCommonProvider" value="${escapeHtml(common.provider || '')}">
-              </div>
-              <div class="col-md-4">
-                <label class="small text-secondary">Type</label>
-                <select class="form-select form-select-sm" id="intakeCommonType">
-                  ${['Regulatory', 'Commercial', 'IP', 'Litigation', 'Employment', 'Other'].map((v) => `<option value="${v}" ${v === (common.type || 'Regulatory') ? 'selected' : ''}>${v}</option>`).join('')}
-                </select>
-              </div>
-              <div class="col-md-4">
-                <label class="small text-secondary">Priority</label>
-                <select class="form-select form-select-sm" id="intakeCommonPriority">
-                  ${['High', 'Medium', 'Low'].map((v) => `<option value="${v}" ${v === (common.priority || 'Medium') ? 'selected' : ''}>${v}</option>`).join('')}
-                </select>
-              </div>
-            </div>
-          </div>
-          <div id="intakeGamesRows">
-            ${games.map((g, i) => `
-              <div class="card mb-2 intake-game-row" data-index="${i}">
-                <div class="card-body py-2">
-                  <div class="d-flex align-items-start gap-2">
-                    <input type="checkbox" class="form-check-input mt-2 intake-game-include" checked>
-                    <div class="flex-grow-1 row g-2">
-                      <div class="col-md-6">
-                        <label class="small text-secondary">Case Title</label>
-                        <input class="form-control form-control-sm intake-game-title" value="${escapeHtml(g.title || `PAGCOR game submission - ${g.gameTitle || ''}`)}">
-                      </div>
-                      <div class="col-md-6">
-                        <label class="small text-secondary">Game Title</label>
-                        <input class="form-control form-control-sm intake-game-gameTitle" value="${escapeHtml(g.gameTitle || '')}">
-                      </div>
-                      <div class="col-md-4">
-                        <label class="small text-secondary">Game ID</label>
-                        <input class="form-control form-control-sm intake-game-gameId" value="${escapeHtml(g.gameId || '')}">
-                      </div>
-                      <div class="col-md-4">
-                        <label class="small text-secondary">Game Type</label>
-                        <select class="form-select form-select-sm intake-game-gameType">${gameTypeOptions(g.gameType)}</select>
-                      </div>
-                      <div class="col-md-4">
-                        <label class="small text-secondary">Game Version</label>
-                        <input class="form-control form-control-sm intake-game-gameVersion" value="${escapeHtml(g.gameVersion || '')}">
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>`).join('')}
-          </div>
-          <div id="intakeMultiMsg" class="small text-danger"></div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="button" class="btn btn-primary" id="btnIntakeCreateAll">Create Selected Cases & Check Documents</button>
-        </div>
-      </div>
-    </div>`;
-  document.body.appendChild(modalEl);
-  const modal = new bootstrap.Modal(modalEl);
-  modal.show();
-  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
-
-  modalEl.querySelector('#btnIntakeCreateAll').addEventListener('click', async () => {
-    const msgEl = modalEl.querySelector('#intakeMultiMsg');
-    msgEl.textContent = '';
-    const commonData = {
-      provider: modalEl.querySelector('#intakeCommonProvider').value.trim() || undefined,
-      type: modalEl.querySelector('#intakeCommonType').value,
-      priority: modalEl.querySelector('#intakeCommonPriority').value,
-      status: 'Open',
-    };
-    const rows = Array.from(modalEl.querySelectorAll('.intake-game-row'))
-      .filter((row) => row.querySelector('.intake-game-include').checked)
-      .map((row) => ({
-        title: row.querySelector('.intake-game-title').value.trim(),
-        gameTitle: row.querySelector('.intake-game-gameTitle').value.trim(),
-        gameId: row.querySelector('.intake-game-gameId').value.trim() || undefined,
-        gameType: row.querySelector('.intake-game-gameType').value || undefined,
-        gameVersion: row.querySelector('.intake-game-gameVersion').value.trim() || undefined,
-      }));
-    if (!rows.length) { msgEl.textContent = 'Please check at least one game.'; return; }
-    if (rows.some((r) => !r.gameTitle)) { msgEl.textContent = 'Every checked game needs a Game Title.'; return; }
-
-    const createBtn = modalEl.querySelector('#btnIntakeCreateAll');
-    createBtn.disabled = true;
-    const results = [];
-    for (let i = 0; i < rows.length; i++) {
-      createBtn.innerHTML = `Creating… (${i + 1}/${rows.length})`;
-      try {
-        const caseData = { ...commonData, title: rows[i].title || `PAGCOR game submission - ${rows[i].gameTitle}`, gameTitle: rows[i].gameTitle, gameId: rows[i].gameId, gameType: rows[i].gameType, gameVersion: rows[i].gameVersion };
-        const result = await createCaseFromIntake(caseData, documents);
-        results.push(result);
-      } catch (err) {
-        toast(`Failed to create "${rows[i].gameTitle}": ${err.message}`, 'danger');
-      }
-    }
-    modal.hide();
-    if (!results.length) { toast('No cases were created successfully.', 'danger'); return; }
-    showInfoModal({
-      title: `${results.length} Case(s) Created`,
-      bodyHtml: `
-        <div class="list-group">
-          ${results.map((r) => `
-            <a href="#/cases/${r.case.id}" class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2 text-decoration-none" style="color:inherit;" data-bs-dismiss="modal">
-              <div>
-                <div class="fw-semibold">${escapeHtml(r.case.gameTitle || r.case.title)}</div>
-                <div class="small text-secondary">${r.uploadedCount}/${documents.length} document(s) uploaded${r.consistency ? ` · ${r.consistency.compliant ? '✅ Compliant' : '⚠️ Discrepancy needs review'}` : ' · Consistency check not run'}</div>
-              </div>
-              <span class="small text-secondary">View &rarr;</span>
-            </a>`).join('')}
-        </div>
-        <p class="small text-secondary mt-3 mb-0">Click any row to view that case's full comparison results and details.</p>
-      `,
-    });
-  });
-}
+// (The AI Case-Intake Wizard — "upload all documents for a game submission
+// at once and let AI organize them into a new Case" (showCaseIntakeWizard
+// and its supporting functions) — was removed entirely 2026-08-26 at
+// Tiffany's request, since real case creation is done via the Excel import
+// instead; it had also become unreachable dead code already, with no
+// button left calling it. See server/ai.js and server/routes.js for the
+// matching removal of extractCaseFromDocuments / /api/cases/extract-from-documents.)
 
 // Upload a real PAGCOR "Notice of Approval" letter (often a scanned image
 // with no text layer — pdf-parse can't read those, which is why "check the
@@ -3848,11 +3426,9 @@ async function renderDocuments(content) {
   const canEdit = canDo('documents', 'edit');
   const canDelete = canDo('documents', 'delete');
 
-  // fileName comes right after Title — deliberately near the top, right
-  // below the AI Smart-Fill box, so the natural flow is "pick the file, then
-  // (optionally) click AI Smart-Fill to read that same file" rather than
-  // needing to scroll all the way down before AI smart-fill has anything
-  // to read. See showFormModal's reuseFileField.
+  // fileName comes right after Title — deliberately near the top (the AI
+  // Smart-Fill box that used to sit above it was removed 2026-08-26). See
+  // showFormModal's reuseFileField.
   // relatedGameId (2026-08-24, at Tiffany's request): the field that
   // actually scopes a document to one game inside a multi-game case (see
   // docsForGame in routes.js) was previously only ever set once, at upload
@@ -3892,7 +3468,6 @@ async function renderDocuments(content) {
     btn.addEventListener('click', () => {
       showFormModal({
         title: 'Upload Document', fields: fields(prefill && prefill.relatedCaseId), initial: prefill || {}, submitLabel: 'Upload',
-        aiAssist: { module: 'documents' },
         onSubmit: async (data) => {
           // Duplicate-upload check (2026-08-25, at Tiffany's request), same
           // rule as the per-case batch upload modal: scoped to this
@@ -4000,8 +3575,8 @@ async function renderDocuments(content) {
     }));
     // The "AI Summarize" per-document button used to be wired up here —
     // removed 2026-08-18 at Tiffany's request (Document Center should just
-    // manage files, no AI on that page). Document Center's AI Smart-Fill on
-    // upload was deliberately kept; only this summarize button was removed.
+    // manage files). The Upload Document form's own "AI Smart-Fill" was
+    // removed later too, 2026-08-26 — see showFormModal's history above.
   };
 
   // Provider/Game Title text doesn't always come out byte-identical —

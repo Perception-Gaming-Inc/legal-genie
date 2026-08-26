@@ -2638,17 +2638,27 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
   document.body.appendChild(modalEl);
   const modal = new bootstrap.Modal(modalEl);
   modal.show();
-  modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
+  modalEl.addEventListener('hidden.bs.modal', () => { modalEl.remove(); if (didUpdateStages) route(); });
 
-  let filesData = []; // [{ file, base64, proposed: {title,category,reportType}, aiFailed, aiError }]
+  let filesData = []; // [{ file, base64, proposed: {title,category,reportType}, aiFailed, aiError, matchedGames }]
+  // Set true if "Identify Approved Games (AI)" (see below) actually changed
+  // a game's PAGCOR Stage — triggers a route() refresh once this modal
+  // closes so the case detail page behind it shows the new stage(s)
+  // without needing a manual reload.
+  let didUpdateStages = false;
   const rowsEl = modalEl.querySelector('#caseUploadRows');
   const uploadBtn = modalEl.querySelector('#btnCaseUploadAll');
   // Multi-game game-picker is now a checklist (see the HTML above), not a
   // single <select> — nothing is checked by default, so the upload button
   // also has to stay disabled until at least one game is picked (in
-  // addition to the existing "at least one file chosen" requirement).
+  // addition to the existing "at least one file chosen" requirement) —
+  // UNLESS at least one file already has its own AI-identified games (see
+  // "Identify Approved Games (AI)" below), which target themselves and
+  // don't need the shared picker at all.
   const gameCheckEls = () => Array.from(modalEl.querySelectorAll('.case-upload-game-check'));
-  const hasGameSelected = () => !isMultiGameCase || games.length <= 1 || gameCheckEls().some((c) => c.checked);
+  const hasGameSelected = () => !isMultiGameCase || games.length <= 1
+    || gameCheckEls().some((c) => c.checked)
+    || filesData.some((f) => f.matchedGames && f.matchedGames.length);
   const updateUploadBtnState = () => { uploadBtn.disabled = filesData.length === 0 || !hasGameSelected(); };
   // "All" checkbox — a shortcut for checking every game at once rather than
   // clicking each one individually (added 2026-08-20 at Tiffany's request,
@@ -2674,6 +2684,13 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
     });
   }
 
+  // Report Type "Letter of Approval (LOA)" is the signal for a real PAGCOR
+  // approval letter, not just another supporting document — see
+  // "Identify Approved Games (AI)" below (added 2026-08-26 at Tiffany's
+  // request). This block is hidden/shown per-row (see the reportType
+  // select's 'change' listener further down) without a full renderRows()
+  // re-render, so an in-progress edit to another row's Title etc. isn't lost.
+  const isApprovalReportType = (v) => v === 'Letter of Approval (LOA)';
   const renderRows = () => {
     rowsEl.innerHTML = filesData.map((f, i) => `
       <div class="card mb-2 upload-file-row" data-index="${i}">
@@ -2701,10 +2718,74 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
             </div>
           </div>
           <div class="small text-secondary mt-1 ms-4">${escapeHtml(f.file.name)}${f.aiFailed ? ` — <span class="text-danger">${escapeHtml(f.aiError || "AI could not read this file's content")}</span> — please double-check the category yourself` : ''}</div>
+          <div class="mt-2 ms-4 approval-identify-block" style="${isApprovalReportType(f.proposed.reportType) ? '' : 'display:none'}">
+            <button type="button" class="btn btn-sm btn-outline-primary btn-identify-approved-games">${sparkleMark()} Identify Approved Games (AI)</button>
+            <span class="small ms-2 approval-identify-msg"></span>
+          </div>
         </div>
       </div>`).join('');
     updateUploadBtnState();
   };
+
+  // Reads this real PAGCOR approval letter and matches the games it names
+  // against THIS case's own games only (server/routes.js's
+  // POST /api/cases/:id/import-approval-notice — see its comment for why
+  // this is scoped to one case rather than the whole system). A match
+  // immediately advances that game's PAGCOR Stage to Approved server-side
+  // (same as a manual stage edit — notifications/audit log included), and
+  // is remembered on this file's row (`matchedGames`) so the final Upload
+  // step below files this same document under each matched game's folder
+  // instead of relying on the shared "which game(s)" checklist above.
+  rowsEl.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.btn-identify-approved-games');
+    if (!btn) return;
+    const row = btn.closest('.upload-file-row');
+    const i = Number(row.dataset.index);
+    const msgEl = row.querySelector('.approval-identify-msg');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'AI reading…';
+    msgEl.className = 'small ms-2 approval-identify-msg text-secondary';
+    msgEl.textContent = '';
+    try {
+      const result = await Api.post(`/api/cases/${item.id}/import-approval-notice`, {
+        fileName: filesData[i].file.name, fileContentBase64: filesData[i].base64,
+      });
+      if (result.updatedCases.length) didUpdateStages = true;
+      // A game this case already had as Approved/Rejected still counts as
+      // "this letter is about that game" for filing purposes — only
+      // updatedCases actually changes the Stage; the other two are just
+      // informational (see server/pagcor-check.js's applyApprovalNoticeGames).
+      const matched = [...result.updatedCases, ...result.alreadyApproved, ...result.skippedRejected];
+      filesData[i].matchedGames = matched
+        .map((m) => (m.gameRowId ? games.find((g) => g.id === m.gameRowId) : games[0]))
+        .filter(Boolean);
+      const parts = [];
+      if (matched.length) parts.push(`Matched ${matched.length} game(s) in this case: ${matched.map((m) => escapeHtml(m.title || '(unnamed)')).join(', ')}`);
+      if (result.unmatched && result.unmatched.length) parts.push(`⚠️ Not found in this case: ${result.unmatched.map((g) => escapeHtml(g.gameTitle || '(unnamed)')).join(', ')}`);
+      if (result.ambiguous && result.ambiguous.length) parts.push(`⚠️ Matches more than one game here: ${result.ambiguous.map((g) => escapeHtml(g.gameTitle || '(unnamed)')).join(', ')}`);
+      msgEl.textContent = '';
+      msgEl.innerHTML = parts.length ? parts.join(' · ') : 'AI could not read any game information from this document.';
+      msgEl.className = `small ms-2 approval-identify-msg ${filesData[i].matchedGames.length ? 'text-success' : 'text-danger'}`;
+      updateUploadBtnState();
+    } catch (err) {
+      msgEl.className = 'small ms-2 approval-identify-msg text-danger';
+      msgEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  });
+  // Report Type can also be changed by hand (not just AI-proposed) — keep
+  // the "Identify Approved Games" block's visibility in sync either way,
+  // without a full renderRows() (which would blow away in-progress edits
+  // to other rows' Title/Category/Report Type).
+  rowsEl.addEventListener('change', (e) => {
+    if (!e.target.classList.contains('upload-file-reportType')) return;
+    const row = e.target.closest('.upload-file-row');
+    const block = row && row.querySelector('.approval-identify-block');
+    if (block) block.style.display = isApprovalReportType(e.target.value) ? '' : 'none';
+  });
 
   // A native <input type="file"> replaces its entire .files FileList on every
   // picker interaction — it's not additive. Re-opening the picker to browse
@@ -2744,7 +2825,7 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
         // shared-quota 429, only pushes the reset further out).
         aiError = err.message;
       }
-      return { file, base64, proposed, aiFailed, aiError };
+      return { file, base64, proposed, aiFailed, aiError, matchedGames: null };
     }));
     filesData = filesData.concat(newFilesData);
     renderRows();
@@ -2762,60 +2843,78 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
           title: row.querySelector('.upload-file-title').value.trim(),
           category: row.querySelector('.upload-file-category').value,
           reportType: row.querySelector('.upload-file-reportType').value || undefined,
+          // Set by "Identify Approved Games (AI)" above, when this specific
+          // file is a real PAGCOR approval letter — takes priority over the
+          // shared "which game(s)" checklist below for THIS row only, since
+          // a batch can mix an approval letter (which names its own exact
+          // games) with ordinary supporting documents (which apply to
+          // whatever's checked in the shared picker).
+          matchedGames: filesData[i].matchedGames,
         };
       });
     if (!rows.length) { msgEl.textContent = 'Please select at least one document.'; return; }
 
-    // Which game(s) these documents get stamped with. Multi-game case with
-    // more than one game: every checked box in the game-picker (a document
-    // covering several games is uploaded once per game it applies to, so
-    // each game's own document list — and its own AI consistency check —
-    // sees it). Single-game / legacy case: just that one game, no picker
-    // shown at all.
-    const selectedGames = (isMultiGameCase && games.length > 1)
+    // Which game(s) a row with no AI-identified games of its own falls back
+    // to. Multi-game case with more than one game: every checked box in the
+    // game-picker (a document covering several games is uploaded once per
+    // game it applies to, so each game's own document list — and its own AI
+    // consistency check — sees it). Single-game / legacy case: just that
+    // one game, no picker shown at all.
+    const sharedSelectedGames = (isMultiGameCase && games.length > 1)
       ? gameCheckEls().filter((c) => c.checked).map((c) => games.find((g) => g.id === c.value)).filter(Boolean)
       : [games[0] || {}];
-    if (!selectedGames.length) { msgEl.textContent = 'Please select at least one game.'; return; }
+    const targetGamesFor = (row) => (row.matchedGames && row.matchedGames.length) ? row.matchedGames : sharedSelectedGames;
+    if (rows.some((r) => !targetGamesFor(r).length)) {
+      msgEl.textContent = 'Please select at least one game (or use "Identify Approved Games (AI)" above for any Letter of Approval file).';
+      return;
+    }
 
     uploadBtn.disabled = true;
     const perGameUploaded = new Map(); // game (object identity) -> count of files uploaded successfully this batch
-    const totalSteps = rows.length * selectedGames.length;
+    // Union of every game ANY row will actually target, by id — used for
+    // the total step count and for the post-upload consistency-check loop
+    // below, so a game only reached via AI-matched filing (no shared
+    // checkbox needed) still gets counted and checked.
+    const allTargetGames = Array.from(
+      rows.reduce((map, r) => { targetGamesFor(r).forEach((g) => map.set(g.id, g)); return map; }, new Map())
+    ).map(([, g]) => g);
+    allTargetGames.forEach((g) => perGameUploaded.set(g, 0));
+    const totalSteps = rows.reduce((sum, r) => sum + targetGamesFor(r).length, 0);
     let step = 0;
-    for (const selectedGame of selectedGames) {
-      perGameUploaded.set(selectedGame, 0);
-      for (let i = 0; i < rows.length; i++) {
+    for (const row of rows) {
+      for (const targetGame of targetGamesFor(row)) {
         step++;
         uploadBtn.innerHTML = `Uploading… (${step}/${totalSteps})`;
-        const title = rows[i].title || rows[i].file.name;
+        const title = row.title || row.file.name;
         // Duplicate check, scoped to this one game's own folder — a title or
         // original file name that already exists there prompts a Replace/
         // Keep-Both choice instead of silently filing a second copy (see
         // findDuplicateInGameFolder above).
-        const dup = findDuplicateInGameFolder(relatedDocs, selectedGame, title, rows[i].file.name);
+        const dup = findDuplicateInGameFolder(relatedDocs, targetGame, title, row.file.name);
         const shouldReplace = dup && await confirmDialog(
-          `"${selectedGame.gameTitle || item.title}" already has "${dup.title || dup.fileName}" on file (uploaded ${fmtDate(dup.createdAt)}).\n\n` +
+          `"${targetGame.gameTitle || item.title}" already has "${dup.title || dup.fileName}" on file (uploaded ${fmtDate(dup.createdAt)}).\n\n` +
           `OK = replace it with this new file (the old file is kept as a version you can still download).\n` +
           `Cancel = keep both — upload this as a separate document.`
         );
         try {
           if (shouldReplace) {
-            await Api.post(`/api/documents/${dup.id}/replace-file`, { fileName: rows[i].file.name, fileContentBase64: rows[i].base64 });
+            await Api.post(`/api/documents/${dup.id}/replace-file`, { fileName: row.file.name, fileContentBase64: row.base64 });
           } else {
             await Api.post('/api/documents', {
-              title, category: rows[i].category, reportType: rows[i].reportType,
-              provider: item.provider, gameTitle: selectedGame.gameTitle, gameId: selectedGame.gameId,
+              title, category: row.category, reportType: row.reportType,
+              provider: item.provider, gameTitle: targetGame.gameTitle, gameId: targetGame.gameId,
               relatedCaseId: item.id,
               // Stable link to this specific game (not just its title) — see
               // docsForGame in server/routes.js for why this is preferred over
               // matching by gameTitle text. Legacy flat cases have no real game
               // id of their own to link to, so this is left unset for them.
-              relatedGameId: isMultiGameCase ? selectedGame.id : undefined,
-              fileName: rows[i].file.name, fileContentBase64: rows[i].base64,
+              relatedGameId: isMultiGameCase ? targetGame.id : undefined,
+              fileName: row.file.name, fileContentBase64: row.base64,
             });
           }
-          perGameUploaded.set(selectedGame, perGameUploaded.get(selectedGame) + 1);
+          perGameUploaded.set(targetGame, perGameUploaded.get(targetGame) + 1);
         } catch (err) {
-          toast(`Failed to upload "${rows[i].file.name}"${selectedGames.length > 1 ? ` for "${selectedGame.gameTitle || item.title}"` : ''}: ${err.message}`, 'danger');
+          toast(`Failed to upload "${row.file.name}"${allTargetGames.length > 1 ? ` for "${targetGame.gameTitle || item.title}"` : ''}: ${err.message}`, 'danger');
         }
       }
     }
@@ -2825,31 +2924,31 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
     toast(`Uploaded ${uploadedCount}/${totalSteps} document(s)`);
 
     // Auto-run the AI consistency check for every game that just crossed
-    // (or already had) 2+ filed documents. With exactly one game selected
+    // (or already had) 2+ filed documents. With exactly one game targeted
     // this is unchanged from before — the full result opens in a modal.
-    // With several games selected, popping one full-screen modal per game
+    // With several games targeted, popping one full-screen modal per game
     // back-to-back would just have each replace the last before anyone
     // could read it, so instead the checks still run and save (each game's
     // own "AI Parameter Consistency Check" button on the case page shows
     // its full result on demand), and a single toast summarizes pass/fail
     // per game here.
     const readyGames = [];
-    for (const selectedGame of selectedGames) {
-      const gameUploaded = perGameUploaded.get(selectedGame) || 0;
+    for (const targetGame of allTargetGames) {
+      const gameUploaded = perGameUploaded.get(targetGame) || 0;
       if (!gameUploaded) continue;
       const existingGameDocCount = isMultiGameCase
-        ? docsForGameInList(relatedDocs, selectedGame).length
+        ? docsForGameInList(relatedDocs, targetGame).length
         : relatedDocs.length;
       if (existingGameDocCount + gameUploaded < 2) continue;
       try {
-        const result = await Api.post(`/api/cases/${item.id}/check-consistency`, isMultiGameCase ? { gameId: selectedGame.id } : {});
-        if (selectedGames.length === 1) {
-          showConsistencyResultModal(selectedGame.gameTitle || item.title, result);
+        const result = await Api.post(`/api/cases/${item.id}/check-consistency`, isMultiGameCase ? { gameId: targetGame.id } : {});
+        if (allTargetGames.length === 1) {
+          showConsistencyResultModal(targetGame.gameTitle || item.title, result);
         } else {
-          readyGames.push(`${selectedGame.gameTitle || item.title}: ${result.overallStatus === 'ready' ? '🟢 ready' : result.overallStatus === 'error' ? '⚠️ check incomplete, re-run' : '🔴 not ready'}`);
+          readyGames.push(`${targetGame.gameTitle || item.title}: ${result.overallStatus === 'ready' ? '🟢 ready' : result.overallStatus === 'error' ? '⚠️ check incomplete, re-run' : '🔴 not ready'}`);
         }
       } catch (err) {
-        toast(`Automatic consistency check failed for "${selectedGame.gameTitle || item.title}": ${err.message}`, 'danger');
+        toast(`Automatic consistency check failed for "${targetGame.gameTitle || item.title}": ${err.message}`, 'danger');
       }
     }
     if (readyGames.length) toast(`Consistency check — ${readyGames.join(' · ')}`);
@@ -3291,87 +3390,17 @@ async function renderCases(content) {
 // button left calling it. See server/ai.js and server/routes.js for the
 // matching removal of extractCaseFromDocuments / /api/cases/extract-from-documents.)
 
-// Upload a real PAGCOR "Notice of Approval" letter (often a scanned image
-// with no text layer — pdf-parse can't read those, which is why "check the
-// PAGCOR approval list" alone isn't enough for approvals PAGCOR hasn't folded
-// into its public list yet) and have Gemini read it directly. Deliberately
-// conservative: the backend only auto-approves a game when it can match it
-// to exactly one case (by Game ID, or by exact title as a fallback) —
-// anything else comes back as "unmatched" or "ambiguous" and is shown here
-// so the user can resolve it by hand rather than the system guessing.
-function showImportApprovalNoticeModal() {
-  const modalId = 'importApprovalNoticeModal';
-  let modalEl = document.getElementById(modalId);
-  if (modalEl) modalEl.remove();
-  modalEl = document.createElement('div');
-  modalEl.id = modalId;
-  modalEl.className = 'modal fade';
-  modalEl.tabIndex = -1;
-  modalEl.innerHTML = `
-    <div class="modal-dialog">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title">Upload Approval Notice</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body" id="approvalNoticeModalBody">
-          <div class="small text-secondary mb-2">
-            Upload the approval notice PAGCOR sent you (PDF or image, scanned files are fine too).
-            AI will read the content, find the games approved in the letter, and automatically match them against the corresponding cases in your system,
-            changing matched cases to "Approved". If no match is found, or multiple cases match,
-            they'll be listed here for you to confirm manually — nothing is guessed.
-          </div>
-          <input type="file" class="form-control" id="approvalNoticeFile" accept="application/pdf,image/*">
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-          <button type="button" class="btn btn-primary" id="approvalNoticeSubmitBtn">Upload & Check</button>
-        </div>
-      </div>
-    </div>`;
-  document.body.appendChild(modalEl);
-  const modal = new bootstrap.Modal(modalEl);
-  modal.show();
-
-  let didUpdateAnything = false;
-  modalEl.addEventListener('hidden.bs.modal', () => {
-    modalEl.remove();
-    if (didUpdateAnything) route();
-  });
-
-  modalEl.querySelector('#approvalNoticeSubmitBtn').addEventListener('click', async () => {
-    const fileInput = modalEl.querySelector('#approvalNoticeFile');
-    const file = fileInput.files && fileInput.files[0];
-    if (!file) { toast('Please select a file first', 'danger'); return; }
-    const btn = modalEl.querySelector('#approvalNoticeSubmitBtn');
-    btn.disabled = true;
-    const originalLabel = btn.textContent;
-    btn.textContent = 'AI reading…';
-    try {
-      const fileContentBase64 = await fileToBase64(file);
-      const result = await Api.post('/api/cases/import-approval-notice', { fileName: file.name, fileContentBase64 });
-      if (result.updatedCases.length) didUpdateAnything = true;
-      const body = modalEl.querySelector('#approvalNoticeModalBody');
-      const section = (title, items, renderItem) => items && items.length
-        ? `<div class="mb-3"><div class="fw-semibold small mb-1">${escapeHtml(title)}</div><ul class="small mb-0">${items.map(renderItem).join('')}</ul></div>`
-        : '';
-      body.innerHTML = `
-        ${result.noticeReference || result.approvalDate ? `<div class="small text-secondary mb-2">${result.noticeReference ? `Reference No.: ${escapeHtml(result.noticeReference)}　` : ''}${result.approvalDate ? `Date: ${escapeHtml(result.approvalDate)}` : ''}</div>` : ''}
-        ${section('Automatically Approved', result.updatedCases, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)} (${escapeHtml(c.oldStage)} → Approved)</li>`)}
-        ${section('Already Approved', result.alreadyApproved, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
-        ${section('Case Status is Rejected — Not Automatically Changed', result.skippedRejected, (c) => `<li>${escapeHtml(c.caseNumber)} — ${escapeHtml(c.title)}</li>`)}
-        ${section('⚠️ No Matching Case Found (needs manual confirmation)', result.unmatched, (g) => `<li>${escapeHtml(g.gameTitle || '(unnamed)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''}${g.provider ? ` — ${escapeHtml(g.provider)}` : ''}</li>`)}
-        ${section('⚠️ Matches Multiple Cases — Not Automatically Changed (needs manual confirmation)', result.ambiguous, (g) => `<li>${escapeHtml(g.gameTitle || '(unnamed)')}${g.gameId ? ` — Game ID: ${escapeHtml(g.gameId)}` : ''} — Matches: ${g.matchedCaseNumbers.map(escapeHtml).join(', ')}</li>`)}
-        ${!result.updatedCases.length && !result.alreadyApproved.length && !result.skippedRejected.length && !result.unmatched.length && !result.ambiguous.length ? '<div class="small text-secondary">AI could not read any game information from this document.</div>' : ''}`;
-      modalEl.querySelector('.modal-footer').innerHTML = `<button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>`;
-      toast(`${result.updatedCases.length} case(s) automatically approved`, (result.unmatched.length || result.ambiguous.length) ? 'warning' : 'success');
-    } catch (err) {
-      toast(err.message, 'danger');
-      btn.disabled = false;
-      btn.textContent = originalLabel;
-    }
-  });
-}
+// (The standalone "Upload Approval Notice" wizard that used to live here —
+// its own separate modal for reading a PAGCOR Notice of Approval letter
+// and matching it against every case in the system — was replaced
+// 2026-08-26 at Tiffany's request with a version scoped to one case,
+// integrated directly into that case's "Upload Documents" flow instead
+// (see showCaseDocumentUploadModal's "Identify Approved Games (AI)" step,
+// shown when a file's Report Type is "Letter of Approval (LOA)"). This
+// wizard had no button left calling it anyway. See server/routes.js's
+// POST /api/cases/:id/import-approval-notice for the matching server
+// change — same underlying server/pagcor-check.js matching logic, just
+// scoped to one case's own games instead of every case in the system.)
 
 // ---------------------------------------------------------------------------
 // Page: Document Center

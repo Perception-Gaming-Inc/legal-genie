@@ -368,28 +368,11 @@ router.post('/api/ai/extract/:module', async (req, res, params, body) => {
   }
 });
 
-// "When a new case comes in, import all its documents at once and have AI
-// organize them into a Case" — the Case Management intake wizard's AI step.
-// Takes several files at once (the whole bundle a
-// Provider sends for one game) and returns proposed Case fields, same
-// permission as the "New Case" button itself. Read-only — this never
-// creates anything; the frontend shows the proposal in the normal case
-// form for the user to review/edit, and only POST /api/cases (below)
-// actually saves it. See server/ai.js's extractCaseFromDocuments.
-router.post('/api/cases/extract-from-documents', async (req, res, params, body) => {
-  const user = await requirePerm(req, res, 'cases', 'create');
-  if (!user) return;
-  try {
-    // {common, games} — `games` is always an array (usually length 1, but
-    // a single submission bundle can legitimately cover several games at
-    // once — see server/ai.js's extractCaseFromDocuments for why this
-    // isn't just one flat proposed Case).
-    const result = await ai.extractCaseFromDocuments({ documents: Array.isArray(body.documents) ? body.documents : [] });
-    sendJson(res, 200, result);
-  } catch (err) {
-    sendJson(res, 400, { error: err.message });
-  }
-});
+// (The AI Case-Intake Wizard's /api/cases/extract-from-documents route —
+// "upload all documents for a game submission at once and have AI organize
+// them into a proposed Case" — was removed entirely 2026-08-26 at Tiffany's
+// request, since real case creation is done via the Excel import instead.
+// See server/ai.js for the matching removal of extractCaseFromDocuments.)
 
 // ---------------------------------------------------------------------------
 // Dashboard

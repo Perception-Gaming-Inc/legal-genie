@@ -857,131 +857,14 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
   };
 }
 
-// ---------------------------------------------------------------------------
-// AI-assisted Case intake from multiple documents at once — the "when a new
-// case comes in, import all its documents at once and have AI organize them
-// into a Case" workflow. Unlike extractFields()
-// below (one file/text -> one module's fields), this always takes several
-// files together (the whole bundle a Provider sends for one submission).
-//
-// IMPORTANT, learned from real-world testing: a single PAGCOR submission
-// bundle very often covers MULTIPLE games at once — e.g. one Notice of
-// Approval letter with an "Annex A" table listing 3 separate games under
-// one Provider (this is completely normal PAGCOR practice, not an edge
-// case). An earlier version of this function proposed a single flat Case
-// object with one `gameTitle` field, which meant Gemini had no correct
-// single value to put there when 3 different games were named — it
-// (correctly, per its own instructions not to guess) left gameTitle
-// blank, which looked to the user like "the AI failed to fill in the most
-// important field" rather than "there wasn't one right answer to give."
-// The fix: split the response into `common` (fields that really are
-// shared across every game in the bundle — Type/Priority/Status/
-// Deadline/Description/Provider) and `games` (an array, ALWAYS an array
-// even when there's only one game, with each game's own title/gameTitle/
-// gameId/gameType/gameVersion/withJackpot as a separate entry). The
-// frontend (public/js/app.js's showCaseIntakeWizard) creates one Case per
-// entry in `games`, reusing the same uploaded documents for all of
-// them — same "user reviews everything before it's saved" rule as every
-// other AI feature here; this only ever proposes, server/routes.js's
-// /api/cases/extract-from-documents never creates anything itself.
-// ---------------------------------------------------------------------------
-const CASE_INTAKE_SCHEMA = {
-  type: 'OBJECT',
-  properties: {
-    common: {
-      type: 'OBJECT',
-      description: 'Fields that genuinely apply the same way to every game in `games` below (e.g. they were all submitted/approved together, under the same Provider). Omit any that don\'t clearly apply to all of them.',
-      properties: {
-        type: { type: 'STRING', enum: ['Regulatory', 'Commercial', 'IP', 'Litigation', 'Employment', 'Other'] },
-        priority: { type: 'STRING', enum: ['High', 'Medium', 'Low'] },
-        status: { type: 'STRING', enum: ['Open', 'In Progress', 'Closed'] },
-        deadline: { type: 'STRING', description: 'ISO date YYYY-MM-DD if a specific deadline/due date is mentioned that applies to all games here. Omit if none/not applicable.' },
-        description: { type: 'STRING', description: 'A clear 2-4 sentence summary of this submission, written for a legal case record. Mention that it covers multiple games if `games` has more than one entry.' },
-        provider: { type: 'STRING', description: 'The overseas game Provider company these games belong to (e.g. FC, JDB, VP), if this is a PAGCOR game-submission bundle. Omit entirely if not applicable/mentioned.' },
-      },
-    },
-    games: {
-      type: 'ARRAY',
-      description:
-        'Every distinct game these documents describe, each as its own separate entry — ALWAYS an array, even when there is only 1 game. ' +
-        'A single PAGCOR notice or submission bundle can legitimately cover several games at once (e.g. an approval letter with an ' +
-        '"Annex A"-style table listing multiple games under one Provider) — when that happens, list every one of them here as separate ' +
-        'entries. NEVER merge multiple distinct games into one entry, and never pick just one to represent the rest.',
-      items: {
-        type: 'OBJECT',
-        properties: {
-          title: { type: 'STRING', description: 'A short, concrete case title for this specific game (not a full sentence), e.g. "PAGCOR game submission - Fortune Dragon".' },
-          gameTitle: { type: 'STRING', description: 'This game\'s title, exactly as written in the documents.' },
-          gameId: { type: 'STRING', description: 'This game\'s Game ID / Table ID, if stated anywhere. Omit if not stated.' },
-          gameType: { type: 'STRING', enum: ['Slots', 'Arcade-Type', 'Table', 'eBingo', 'Other'], description: 'This game\'s type/category, if identifiable. Omit if not identifiable.' },
-          gameVersion: { type: 'STRING', description: 'This game\'s version/manual version number, if stated. Omit if not stated.' },
-          withJackpot: { type: 'STRING', enum: ['Yes', 'No'], description: 'Whether this specific game has a jackpot feature, only if explicitly stated. Omit entirely if not mentioned.' },
-        },
-        required: ['gameTitle'],
-      },
-    },
-  },
-  required: ['games'],
-};
-
-/**
- * @param {{documents: Array<{fileName?: string, fileContentBase64: string}>}} input
- * @returns {Promise<{common: object, games: Array<{title?: string, gameTitle: string, gameId?: string, gameType?: string, gameVersion?: string, withJackpot?: string}>}>}
- */
-async function extractCaseFromDocuments({ documents }) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      'The AI case-intake wizard is not set up yet — add GEMINI_API_KEY to your environment variables first ' +
-      '(see the README\'s AI setup section; you can get a free key at https://aistudio.google.com/apikey, ' +
-      'no credit card required).'
-    );
-  }
-  const docs = (Array.isArray(documents) ? documents : []).filter((d) => d && d.fileContentBase64 && String(d.fileContentBase64).trim());
-  if (!docs.length) {
-    throw new Error('Please upload at least one document so the AI can help organize the case data.');
-  }
-
-  const parts = [{
-    text:
-      `The following are ${docs.length} PAGCOR submission-related documents (may include RNG reports, Game ` +
-      'Manuals, approval notices, etc). Read through these documents and organize the case data that should be ' +
-      'created. Note: a single document (especially an approval notice) often covers MULTIPLE different games at ' +
-      'once (e.g. an attached table listing 2-3 different games) — in that case, list each game as its own ' +
-      'separate entry in the `games` array; do not merge them into one entry, and do not pick just one to ' +
-      'represent the rest. As for Type, Priority, Status, Deadline, Description, Provider — if these genuinely ' +
-      'apply to the whole batch of games, put them in `common`; when documents disagree on the same field, use ' +
-      'whichever version looks the most complete/authoritative; omit any field the documents never mention rather ' +
-      'than guessing.',
-  }];
-  docs.forEach((d, i) => {
-    parts.push({ text: `[Document ${i + 1}: ${d.fileName || `Document ${i + 1}`}]` });
-    parts.push(filePart(d.fileName, d.fileContentBase64));
-  });
-
-  const requestBody = {
-    systemInstruction: {
-      parts: [{
-        text:
-          'You are a document-extraction assistant embedded in an internal legal department system for a ' +
-          'gaming company. Given several documents that together describe one PAGCOR submission bundle, extract ' +
-          'the Case fields to propose. Pay close attention to whether the documents describe ONE game or SEVERAL ' +
-          '— a single approval notice commonly covers multiple games via a table/annex, and each one must become ' +
-          'its own separate entry in `games`, never merged or reduced to just one. Only extract facts explicitly ' +
-          'present in the documents — never invent information. The user will review and can edit every field ' +
-          'before anything is saved, so it is fine (and preferred) to omit a field rather than guess at it.',
-      }],
-    },
-    contents: [{ parts }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: CASE_INTAKE_SCHEMA,
-    },
-  };
-
-  const result = await callGemini(requestBody);
-  return { common: {}, games: [], ...result };
-}
+// (The AI Case-Intake Wizard — "upload all documents for a game submission
+// at once and let AI organize them into a new Case" — was removed entirely
+// 2026-08-26 at Tiffany's request, since real case creation is done via the
+// Excel import instead and this had become dead/unreachable code on the
+// frontend already. Removed along with it: this module's
+// extractCaseFromDocuments/CASE_INTAKE_SCHEMA, server/routes.js's
+// /api/cases/extract-from-documents route, and public/js/app.js's
+// showCaseIntakeWizard and its supporting functions.)
 
 function schemaFor(module) {
   const schema = MODULE_SCHEMAS[module];
@@ -1265,7 +1148,7 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
 
 module.exports = {
   extractFields, extractApprovalNotice, summarizeDocument, checkDocumentConsistency,
-  extractCaseFromDocuments, answerGroupQuestion, MODULE_SCHEMAS, toGeminiResponseSchema,
+  answerGroupQuestion, MODULE_SCHEMAS, toGeminiResponseSchema,
   // Exported for the automated test suite only (test/ai.test.js) — these were
   // previously internal-only helpers. Purely additive (no behavior change);
   // lets the RTP range-check / value-comparison logic underneath

@@ -5046,6 +5046,10 @@ async function renderTelegramSettingsTab(body) {
       <label class="form-label small text-secondary mb-1">Provider &rarr; Telegram group</label>
       <div id="tgMappingRows">${rowsHtml()}</div>
       ${canEdit ? `<button type="button" class="btn btn-sm btn-outline-secondary mb-3" id="btnAddTgRow">${Icon('plus', 'me-1')}Add Provider</button><br>` : ''}
+      <hr class="my-3">
+      <label class="form-label small text-secondary mb-1">Admin / internal chat (optional)</label>
+      <div class="small text-secondary mb-2">One Telegram chat that gets full access instead of being locked to a single Provider: the group Q&amp;A bot answers about ANY Provider's cases here, and the 30-business-day follow-up digest (normally sent to each task's Assignee individually) is sent here instead, combined into one message. Leave blank to keep the normal per-Provider/per-Assignee behavior.</div>
+      <input class="form-control form-control-sm mb-3" id="tgAdminChatId" placeholder="Admin chat's Telegram Chat ID (e.g. -5465690429)" value="${escapeHtml(settings.telegramAdminChatId || '')}" ${canEdit ? '' : 'disabled'}>
       ${canEdit ? `<button type="button" class="btn btn-primary" id="btnSaveTg">Save</button>` : '<div class="small text-secondary">You do not have permission to edit settings.</div>'}
     </div></div>`;
 
@@ -5078,8 +5082,9 @@ async function renderTelegramSettingsTab(body) {
     const providerTelegramChatIds = {};
     mappings.forEach((m) => { if (m.provider.trim() && m.chatId.trim()) providerTelegramChatIds[m.provider.trim()] = m.chatId.trim(); });
     const notifications = { ...n, notifyTelegramOnCaseStageChange: body.querySelector('#chk-telegramEnabled').checked };
+    const telegramAdminChatId = body.querySelector('#tgAdminChatId').value.trim();
     try {
-      await Api.put('/api/settings', { providerTelegramChatIds, notifications });
+      await Api.put('/api/settings', { providerTelegramChatIds, notifications, telegramAdminChatId });
       toast('Telegram settings saved');
     } catch (err) {
       toast(err.message, 'danger');

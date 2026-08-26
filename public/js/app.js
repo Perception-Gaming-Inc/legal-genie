@@ -209,14 +209,11 @@ const PROVIDER_NAME_ALIASES = { op: 'Omniplay' };
 let calendarNav = { year: null, month: null };
 let calendarSelectedDate = null;
 
-// "Approval Center" and "Notifications" deliberately have no entry here —
-// they're still real, fully working pages (routes untouched below), just
-// not permanent sidebar items anymore. Notifications is already one click
-// away via the bell icon in the topbar (see renderShell); Approval Center
-// now has its pending items surfaced directly as a Dashboard widget (see
-// renderDashboard), with a link out to the full page for anyone who wants
-// it. Removed to cut sidebar clutter — most days neither needs its own
-// permanent slot in the nav.
+// "Notifications" deliberately has no entry here — it's still a real,
+// fully working page (route untouched below), just not a permanent sidebar
+// item; it's already one click away via the bell icon in the topbar (see
+// renderShell). (The Approval Center used to be the other such page but
+// was removed entirely 2026-08-26 — see renderDashboard's history above.)
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { key: 'calendar', label: 'Calendar', icon: 'calendar' },
@@ -1028,7 +1025,6 @@ const ROUTES = {
   cases: renderCases,
   documents: renderDocuments,
   tasks: renderTasks,
-  approvals: renderApprovals,
   notifications: renderNotifications,
   knowledgeBase: renderKnowledgeBase,
   auditLog: renderAuditLog,
@@ -1562,17 +1558,16 @@ function recentlyUpdatedCasesWidgetHtml(recentlyUpdatedCases) {
 
 // "Cases Under Review" — 2026-08-26, at Tiffany's request, this replaced
 // what used to be the Approval Center's pending-queue widget here. That
-// older widget tracked a different thing entirely (internal Approval
-// Center requests, e.g. "案件審核中" was easy to misread for that), and
-// stayed at 0 whenever nobody had an Approval Center request open even
-// though plenty of games were genuinely sitting at PAGCOR in the For
-// Review stage. This widget (and the matching stat card above) instead
-// lists every game org-wide whose PAGCOR Stage is currently "For Review"
-// — see /api/dashboard/summary's casesUnderReview — so it always reflects
-// the real review queue, not an unrelated internal workflow. The Approval
-// Center itself is untouched and still lives at #/approvals; this
-// Dashboard slot just no longer doubles as its quick-view widget (so no
-// Approve/Reject buttons here — clicking a row goes to the case instead).
+// older widget tracked a different thing entirely (an internal sign-off
+// workflow unrelated to case review; "案件審核中" was easy to misread for
+// that), and stayed at 0 whenever nobody had an Approval Center request
+// open even though plenty of games were genuinely sitting at PAGCOR in the
+// For Review stage — and the Approval Center feature itself was removed
+// entirely shortly after (unused, and confusing alongside this). This
+// widget (and the matching stat card above) lists every game org-wide
+// whose PAGCOR Stage is currently "For Review" — see
+// /api/dashboard/summary's casesUnderReview — clicking a row goes to the
+// case (no Approve/Reject actions here; that was the removed feature).
 function casesUnderReviewWidgetHtml(casesUnderReview) {
   if (!casesUnderReview || !casesUnderReview.length) return '';
   return `
@@ -4354,85 +4349,11 @@ async function renderTasks(content) {
   }));
 }
 
-// ---------------------------------------------------------------------------
-// Page: Approval Center
-// ---------------------------------------------------------------------------
-async function renderApprovals(content) {
-  const approvals = await Api.get('/api/approvals');
-  const canCreate = canDo('approvals', 'create');
-  const canApprove = canDo('approvals', 'approve');
-  content.innerHTML = listToolbar({ title: 'Approval Center', canCreate }) + `
-    <div class="card stat-card">
-      <div class="table-responsive">
-        <table class="table table-hover mb-0">
-          <thead class="table-light"><tr><th>Title</th><th>Type</th><th>Requested By</th><th>Reviewer</th><th>Status</th><th></th></tr></thead>
-          <tbody>
-            ${approvals.map((a) => `
-              <tr>
-                <td>${escapeHtml(a.title)}</td>
-                <td><span class="badge text-bg-light border text-capitalize">${escapeHtml(a.type)}</span></td>
-                <td>${escapeHtml(userName(a.requestedBy))}</td>
-                <td>${escapeHtml(userName(a.reviewerId))}</td>
-                <td>${badge(a.status)}</td>
-                <td class="text-end">
-                  ${canApprove && a.status === 'Pending' && a.reviewerId === State.user.id ? `
-                    <button class="btn btn-sm btn-success btn-approve" data-id="${a.id}">${Icon('check')} Approve</button>
-                    <button class="btn btn-sm btn-outline-danger btn-reject" data-id="${a.id}">${Icon('x')} Reject</button>
-                  ` : `<button class="btn btn-sm btn-outline-secondary btn-view" data-id="${a.id}">View</button>`}
-                </td>
-              </tr>`).join('') || `<tr><td colspan="6" class="text-center text-secondary py-3">No approval requests yet.</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
-
-  if (canCreate) content.querySelector('#btnCreate').addEventListener('click', () => {
-    showFormModal({
-      title: 'Submit Approval Request',
-      fields: [
-        { name: 'title', label: 'Title', required: true },
-        { name: 'type', label: 'Type', type: 'select', options: ['contract', 'document', 'case', 'other'].map((v) => ({ value: v, label: v[0].toUpperCase() + v.slice(1) })), required: true },
-        { name: 'reviewerId', label: 'Reviewer', type: 'select', options: State.lookups.users.map((u) => ({ value: u.id, label: u.fullName })), required: true },
-      ],
-      onSubmit: async (data) => {
-        const created = await Api.post('/api/approvals', data);
-        notifyReviewer(created);
-        toast('Approval request submitted'); route();
-      },
-    });
-  });
-
-  async function notifyReviewer(created) {
-    // best-effort; server already stores approval, notification created via a lightweight endpoint is not exposed
-    // so we simply rely on dashboard aggregation to surface pending approvals to the reviewer.
-  }
-
-  content.querySelectorAll('.btn-approve').forEach((btn) => btn.addEventListener('click', async () => {
-    await Api.post(`/api/approvals/${btn.dataset.id}/decide`, { decision: 'approve' });
-    toast('Approved'); route();
-  }));
-  content.querySelectorAll('.btn-reject').forEach((btn) => btn.addEventListener('click', async () => {
-    const comment = window.prompt('Reason for rejection (optional):') || '';
-    await Api.post(`/api/approvals/${btn.dataset.id}/decide`, { decision: 'reject', comment });
-    toast('Rejected'); route();
-  }));
-  content.querySelectorAll('.btn-view').forEach((btn) => btn.addEventListener('click', () => {
-    const item = approvals.find((a) => a.id === btn.dataset.id);
-    const commentsHtml = (item.comments || []).map((c) => `<div class="border-bottom py-1"><strong>${escapeHtml(userName(c.by))}:</strong> ${escapeHtml(c.text)} <span class="text-secondary small">(${fmtDateTime(c.at)})</span></div>`).join('') || '<div class="text-secondary">No comments.</div>';
-    const modalEl = document.createElement('div');
-    modalEl.className = 'modal fade';
-    modalEl.innerHTML = `<div class="modal-dialog"><div class="modal-content">
-      <div class="modal-header"><h5 class="modal-title">${escapeHtml(item.title)}</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
-      <div class="modal-body">
-        <p><strong>Status:</strong> ${badge(item.status)}</p>
-        <p><strong>Requested by:</strong> ${escapeHtml(userName(item.requestedBy))} &nbsp; <strong>Reviewer:</strong> ${escapeHtml(userName(item.reviewerId))}</p>
-        <hr>${commentsHtml}
-      </div></div></div>`;
-    document.body.appendChild(modalEl);
-    new bootstrap.Modal(modalEl).show();
-    modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
-  }));
-}
+// (The "Approval Center" page — a standalone internal sign-off workflow,
+// unrelated to PAGCOR case review stages — was removed entirely 2026-08-26
+// at Tiffany's request, since it was unused and easy to confuse with actual
+// case-review status. See server/routes.js for the matching removal of its
+// API routes and server/auth.js/seed.js for its removed permission module.)
 
 // ---------------------------------------------------------------------------
 // Page: Notifications
@@ -4838,7 +4759,7 @@ async function renderRolesTab(body) {
   const modules = [
     { key: 'dashboard', label: 'Dashboard' }, { key: 'cases', label: 'Cases' },
     { key: 'documents', label: 'Documents' },
-    { key: 'tasks', label: 'Tasks' }, { key: 'approvals', label: 'Approvals' },
+    { key: 'tasks', label: 'Tasks' },
     { key: 'notifications', label: 'Notifications' }, { key: 'knowledgeBase', label: 'Knowledge Base' },
     { key: 'settings', label: 'Settings' },
   ];
@@ -4930,7 +4851,6 @@ async function renderNotificationSettingsTab(body) {
   const canEdit = canDo('settings', 'edit');
   const n = settings.notifications || {};
   const rows = [
-    { key: 'notifyOnApprovalDecision', label: 'Notify on Approval Decision', hint: 'Notify the requester when their approval request is approved or rejected.' },
     { key: 'notifyOnTaskAssignment', label: 'Notify on Task Assignment', hint: 'Notify a user when they are assigned (or reassigned) to a task.' },
     { key: 'notifyOnCaseStageChange', label: 'Notify on Case Status Change', hint: 'Notify a case\'s Owner when its PAGCOR Stage changes.' },
     { key: 'notifyOnFollowUpDueTelegram', label: 'Telegram Me on Follow-up Due Date', hint: 'Send a Telegram message on the day an auto-created follow-up reminder comes due — sent to the follow-up task\'s Assignee, using the "Telegram Chat ID" set on their own User record (Settings > Users). Setup: message the Legal Genie bot on Telegram, send it any message (e.g. /start), then visit https://api.telegram.org/bot<token>/getUpdates in a browser and look for "chat":{"id": ...} under your own message — enter that number as your Telegram Chat ID.' },

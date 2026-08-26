@@ -96,6 +96,9 @@ async function getSystemSettings() {
         notifyOnFollowUpDueTelegram: true,
       },
       providerTelegramChatIds: {},
+      // See the PUT /api/settings handler's telegramAdminChatId comment for
+      // what this does — defaults empty (feature off) until Tiffany sets it.
+      telegramAdminChatId: '',
       checklistItems: pagcor.PAGCOR_CHECKLIST_ITEMS,
     });
   }
@@ -2548,6 +2551,27 @@ router.put('/api/settings', async (req, res, params, body) => {
     }
     patch.providerTelegramChatIds = clean;
   }
+  // telegramAdminChatId (added 2026-08-26, at Tiffany's request): ONE
+  // Telegram chat treated as an internal/admin chat rather than a regular
+  // Provider group — edited in Settings > Telegram Notifications (see
+  // renderTelegramSettingsTab in app.js). Two effects, both gated on this
+  // single value:
+  //   1. The group Q&A bot (see the /api/telegram/webhook handler below)
+  //      answers questions about ALL Providers' cases in this chat, instead
+  //      of being locked to one Provider the way providerTelegramChatIds
+  //      entries are — so Tiffany (or whoever's in this chat) can ask about
+  //      any Provider's progress from one place.
+  //   2. The 30-PAGCOR-business-day follow-up digest (see
+  //      checkAndSendFollowUpReminders below) is sent here as a single
+  //      combined message instead of individually to each follow-up task's
+  //      Assignee's own personal Telegram chat.
+  // Deliberately a single chat ID, not a list — this is meant to be one
+  // internal "control room" chat, not a general permissions feature; a
+  // regular Provider group should never be given this same access, since it
+  // would let that Provider see every OTHER Provider's case data too.
+  if (body.telegramAdminChatId !== undefined) {
+    patch.telegramAdminChatId = String(body.telegramAdminChatId || '').trim();
+  }
   // checklistItems: an ordered [{key, label}, ...] list, edited in
   // Settings > Required Document Settings (see
   // renderChecklistSettingsTab in app.js). `key` is preserved as sent for
@@ -2708,10 +2732,18 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
   if (msg && msg.text && msg.chat) {
     try {
       const settings = await getSystemSettings();
-      const provider = findProviderForChatId(settings, msg.chat.id);
-      if (provider && looksLikeQuestion(msg.text)) {
+      // Admin/internal chat (added 2026-08-26, at Tiffany's request — see
+      // the PUT /api/settings handler's telegramAdminChatId comment): this
+      // ONE designated chat gets cross-Provider access instead of being
+      // locked to a single Provider's own cases. Checked before the normal
+      // per-Provider lookup so a chat can't accidentally be both.
+      const isAdminChat = !!(settings.telegramAdminChatId && String(settings.telegramAdminChatId) === String(msg.chat.id));
+      const provider = isAdminChat ? null : findProviderForChatId(settings, msg.chat.id);
+      if ((isAdminChat || provider) && looksLikeQuestion(msg.text)) {
         const allCases = await store.all('cases');
-        const providerCases = allCases.filter((c) => String(c.provider || '').trim().toLowerCase() === provider.trim().toLowerCase());
+        const relevantCases = isAdminChat
+          ? allCases
+          : allCases.filter((c) => String(c.provider || '').trim().toLowerCase() === provider.trim().toLowerCase());
         // Knowledge Base content (added 2026-08-25, at Tiffany's request) —
         // lets the bot also answer general PAGCOR/regulatory questions, not
         // just this Provider's own case status. Only 'Active' (i.e.
@@ -2724,13 +2756,13 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
         const activeKbFaqs = allKbFaqs.filter((f) => f.status === 'Active');
         const activeKbDocuments = allKbDocuments.filter((d) => d.status === 'Active');
         const result = await ai.answerGroupQuestion({
-          providerName: provider, question: msg.text, cases: providerCases,
-          kbFaqs: activeKbFaqs, kbDocuments: activeKbDocuments,
+          providerName: isAdminChat ? null : provider, question: msg.text, cases: relevantCases,
+          kbFaqs: activeKbFaqs, kbDocuments: activeKbDocuments, isAdmin: isAdminChat,
         });
         if (result && result.shouldRespond && result.answer) {
           await telegram.sendTelegramMessage(String(msg.chat.id), result.answer, { replyToMessageId: msg.message_id });
         }
-      } // else: not a known Provider group/DM — nothing to do
+      } // else: not a known Provider group/DM and not the admin chat — nothing to do
     } catch (err) {
       console.error('[telegram webhook] failed to process incoming message:', err.message);
     }
@@ -2780,43 +2812,77 @@ async function checkAndSendFollowUpReminders() {
   if (!notificationsEnabled(settings, 'notifyOnFollowUpDueTelegram')) return;
 
   const today = new Date().toISOString().slice(0, 10);
-  const [tasks, users] = await Promise.all([store.all('tasks'), store.all('users')]);
+  const [tasks, users, cases] = await Promise.all([store.all('tasks'), store.all('users'), store.all('cases')]);
   const due = tasks.filter((t) => t.isDeadlineFollowUp && t.status !== 'Completed'
     && t.dueDate === today && !t.followUpReminderSentAt);
   if (!due.length) return;
 
-  const taskLine = (t) => `• ${t.title}${t.description ? ` — ${t.description}` : ''}`;
-  // A single due task reads as a normal reminder; 2+ read as a bulleted
-  // digest, so a quiet day still gets the same friendly one-line message it
-  // always did instead of an oddly-formatted "1 follow-up" digest.
-  const combinedBody = (list) => (list.length === 1
-    ? (list[0].description || list[0].title)
-    : list.map(taskLine).join('\n'));
   const footer = '\n\nOpen Legal Genie to view/update: Task Management.';
-
   const sentTaskIds = new Set();
-  const groups = new Map(); // telegramChatId -> tasks[] due for that chat this run
-  for (const t of due) {
-    // A task can now have more than one Assignee (added 2026-08-18) — each
-    // assignee who has their own Telegram Chat ID configured gets this
-    // task included in their own combined message.
-    for (const uid of taskAssigneeIds(t)) {
-      const assignee = users.find((u) => u.id === uid);
-      if (!assignee || !assignee.telegramChatId) continue;
-      const list = groups.get(assignee.telegramChatId) || [];
-      list.push(t);
-      groups.set(assignee.telegramChatId, list);
-    }
-  }
-  for (const [chatId, group] of groups) {
-    const heading = group.length === 1
-      ? `⏰ Legal Genie reminder: ${group[0].title}`
-      : `⏰ Legal Genie: ${group.length} follow-ups due today`;
+
+  // telegramAdminChatId (added 2026-08-26, at Tiffany's request — see the
+  // PUT /api/settings handler's comment): when set, every due follow-up
+  // across ALL Assignees is combined into a single digest sent to this one
+  // chat instead of each Assignee getting their own personal Telegram
+  // message. This REPLACES the old per-Assignee behavior entirely (not
+  // "also sends") — Tiffany asked to centralize these in one place she
+  // monitors rather than have them scattered across individual chats.
+  if (settings.telegramAdminChatId) {
+    const caseById = new Map(cases.map((c) => [c.id, c]));
+    const taskLine = (t) => {
+      const relatedCase = t.relatedCaseId ? caseById.get(t.relatedCaseId) : null;
+      const provider = relatedCase && relatedCase.provider ? ` [${relatedCase.provider}]` : '';
+      const assigneeNames = taskAssigneeIds(t)
+        .map((uid) => users.find((u) => u.id === uid))
+        .filter(Boolean)
+        .map((u) => u.fullName || u.username)
+        .join(', ');
+      return `• ${t.title}${provider}${assigneeNames ? ` (Assignee: ${assigneeNames})` : ''}`;
+    };
+    const heading = due.length === 1
+      ? `⏰ Legal Genie reminder: ${due[0].title}`
+      : `⏰ Legal Genie: ${due.length} follow-ups due today`;
+    const body = due.length === 1
+      ? taskLine(due[0])
+      : due.map(taskLine).join('\n');
     try {
-      await telegram.sendTelegramMessage(chatId, `${heading}\n\n${combinedBody(group)}${footer}`);
-      group.forEach((t) => sentTaskIds.add(t.id));
+      await telegram.sendTelegramMessage(settings.telegramAdminChatId, `${heading}\n\n${body}${footer}`);
+      due.forEach((t) => sentTaskIds.add(t.id));
     } catch (err) {
-      console.error(`[telegram] failed to send follow-up reminder to chat ${chatId}:`, err.message);
+      console.error(`[telegram] failed to send follow-up digest to admin chat:`, err.message);
+    }
+  } else {
+    const taskLine = (t) => `• ${t.title}${t.description ? ` — ${t.description}` : ''}`;
+    // A single due task reads as a normal reminder; 2+ read as a bulleted
+    // digest, so a quiet day still gets the same friendly one-line message
+    // it always did instead of an oddly-formatted "1 follow-up" digest.
+    const combinedBody = (list) => (list.length === 1
+      ? (list[0].description || list[0].title)
+      : list.map(taskLine).join('\n'));
+
+    const groups = new Map(); // telegramChatId -> tasks[] due for that chat this run
+    for (const t of due) {
+      // A task can now have more than one Assignee (added 2026-08-18) — each
+      // assignee who has their own Telegram Chat ID configured gets this
+      // task included in their own combined message.
+      for (const uid of taskAssigneeIds(t)) {
+        const assignee = users.find((u) => u.id === uid);
+        if (!assignee || !assignee.telegramChatId) continue;
+        const list = groups.get(assignee.telegramChatId) || [];
+        list.push(t);
+        groups.set(assignee.telegramChatId, list);
+      }
+    }
+    for (const [chatId, group] of groups) {
+      const heading = group.length === 1
+        ? `⏰ Legal Genie reminder: ${group[0].title}`
+        : `⏰ Legal Genie: ${group.length} follow-ups due today`;
+      try {
+        await telegram.sendTelegramMessage(chatId, `${heading}\n\n${combinedBody(group)}${footer}`);
+        group.forEach((t) => sentTaskIds.add(t.id));
+      } catch (err) {
+        console.error(`[telegram] failed to send follow-up reminder to chat ${chatId}:`, err.message);
+      }
     }
   }
 

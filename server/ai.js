@@ -1154,7 +1154,14 @@ const GROUP_QA_SCHEMA = {
 };
 
 /**
- * @param {{providerName: string, question: string, cases: Array<object>, kbFaqs?: Array<object>, kbDocuments?: Array<object>}} input
+ * @param {{providerName: string|null, question: string, cases: Array<object>, kbFaqs?: Array<object>, kbDocuments?: Array<object>, isAdmin?: boolean}} input
+ *   `isAdmin` (added 2026-08-26, at Tiffany's request) — true for the one
+ *   designated internal/admin Telegram chat (see server/routes.js's
+ *   telegramAdminChatId), which is allowed to ask about ANY Provider's
+ *   cases rather than being locked to a single Provider. When true,
+ *   `providerName` is ignored (pass null) and `cases` should be every
+ *   Provider's cases, not one Provider's — each case line is labelled with
+ *   its own Provider so the model can tell them apart.
  *   `kbFaqs`/`kbDocuments` (added 2026-08-25, at Tiffany's request) — the
  *   company-approved Knowledge Base content (Knowledge Base > FAQ /
  *   Documents) with status 'Active', so the bot can also answer general
@@ -1172,13 +1179,16 @@ const GROUP_QA_SCHEMA = {
  *   independently useful — pass whichever exist).
  * @returns {Promise<{shouldRespond: boolean, answer: string}>}
  */
-async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDocuments }) {
+async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDocuments, isAdmin }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured on the server.');
   if (!question || !String(question).trim()) throw new Error('No message text to answer.');
 
   const caseLines = (Array.isArray(cases) ? cases : []).map((c) => {
     const bits = [
+      // isAdmin: each line is labelled with its own Provider up front,
+      // since this list now spans every Provider instead of just one.
+      isAdmin ? `Provider=${c.provider || 'Unknown'}` : null,
       `Stage=${c.pagcorStage || c.status || 'Unknown'}`,
       `Submit Date=${c.deadline || 'N/A'}`,
       c.gameId ? `Game ID=${c.gameId}` : null,
@@ -1196,29 +1206,36 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
     .filter((d) => d.notes && String(d.notes).trim())
     .map((d) => `- ${d.title}${d.category ? ` (${d.category})` : ''}: ${d.notes}`);
 
+  const scopeInstruction = isAdmin
+    ? 'You are shown ONE message from the group, a list of EVERY Provider\'s current cases from the internal ' +
+      'tracking system (each one labelled with its own Provider), and company-approved Knowledge Base content. ' +
+      'This is an internal/admin chat, not a Provider-facing one — you may discuss any Provider\'s cases freely, ' +
+      'and should name which Provider a case belongs to when it\'s not obvious from context.'
+    : 'You are shown ONE message from the group, a list of this Provider\'s current cases from the internal ' +
+      'tracking system, and company-approved Knowledge Base content. Only discuss THIS Provider\'s own cases — ' +
+      'never another Provider\'s.';
+
   const requestBody = {
     systemInstruction: {
       parts: [{
         text:
-          'You are a helpful assistant embedded in a Telegram group chat between a legal/regulatory team and one of ' +
-          'their game Providers, for tracking PAGCOR game submissions. You are shown ONE message from the group, ' +
-          'a list of this Provider\'s current cases from the internal tracking system, and company-approved ' +
-          'Knowledge Base content (FAQ entries and reference-document summaries — general PAGCOR/regulatory ' +
-          'material, not tied to any one case). First decide whether the message is genuinely a question you can ' +
-          'answer from what\'s given — either about this Provider\'s own cases (status, stage, required documents, ' +
-          'dates, rejection reasons), or a general regulatory/process question that the Knowledge Base content below ' +
-          'directly answers. If it looks like ordinary conversation between people, a greeting, or a question ' +
-          'neither the case data nor the Knowledge Base content actually answers, set shouldRespond to false and ' +
-          'leave answer empty. Never guess or invent information not present in the case data or the Knowledge Base ' +
-          'content given — if nothing given covers it, do not answer from general/outside knowledge, even if you ' +
-          'believe you know the answer. Keep answers short and friendly.',
+          'You are a helpful assistant embedded in a Telegram group chat for a legal/regulatory team tracking ' +
+          'PAGCOR game submissions. ' + scopeInstruction + ' Knowledge Base content (FAQ entries and ' +
+          'reference-document summaries) is general PAGCOR/regulatory material, not tied to any one case. First ' +
+          'decide whether the message is genuinely a question you can answer from what\'s given — either about ' +
+          'case status/stage/required documents/dates/rejection reasons, or a general regulatory/process question ' +
+          'that the Knowledge Base content below directly answers. If it looks like ordinary conversation between ' +
+          'people, a greeting, or a question neither the case data nor the Knowledge Base content actually answers, ' +
+          'set shouldRespond to false and leave answer empty. Never guess or invent information not present in the ' +
+          'case data or the Knowledge Base content given — if nothing given covers it, do not answer from ' +
+          'general/outside knowledge, even if you believe you know the answer. Keep answers short and friendly.',
       }],
     },
     contents: [{
       parts: [{
         text:
-          `Provider: ${providerName}\n\n` +
-          `This Provider's cases on file:\n${caseLines.length ? caseLines.join('\n') : '(no cases on file for this Provider yet)'}\n\n` +
+          (isAdmin ? 'Chat: internal/admin (all Providers)\n\n' : `Provider: ${providerName}\n\n`) +
+          `${isAdmin ? 'All Providers\' cases on file' : 'This Provider\'s cases on file'}:\n${caseLines.length ? caseLines.join('\n') : '(no cases on file yet)'}\n\n` +
           `Company-approved Knowledge Base FAQ entries:\n${kbFaqLines.length ? kbFaqLines.join('\n') : '(none on file yet)'}\n\n` +
           `Company-approved Knowledge Base reference document summaries:\n${kbDocLines.length ? kbDocLines.join('\n') : '(none on file yet)'}\n\n` +
           `Group message: "${question}"`,

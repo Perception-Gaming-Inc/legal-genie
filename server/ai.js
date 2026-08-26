@@ -409,7 +409,15 @@ async function summarizeDocument({ fileName, fileContentBase64, text }) {
 // 'EG Form' removed from this list 2026-08-25 at Tiffany's request — it's
 // not treated as a required submission document for AI Submission
 // Validation purposes.
-const REQUIRED_DOCUMENT_TYPES = ['Game Parameters', 'Game Manual', 'RNG Certification', 'RTP Verification', 'Content Provider Certification'];
+const REQUIRED_DOCUMENT_TYPES = ['Game Parameters', 'Game Manual', 'RNG Certification', 'RTP Verification'];
+// 'Content Provider Certification' demoted from required to supplementary
+// 2026-08-25 at Tiffany's request (option A of the two she was offered):
+// still checked and shown in the Document Completeness list so legal can
+// see whether it's on file, but its absence never blocks "Ready for
+// Submission" — unlike REQUIRED_DOCUMENT_TYPES, missing entries here don't
+// count against overallStatus (see its computation below).
+const SUPPLEMENTARY_DOCUMENT_TYPES = ['Content Provider Certification'];
+const ALL_DOCUMENT_TYPES = [...REQUIRED_DOCUMENT_TYPES, ...SUPPLEMENTARY_DOCUMENT_TYPES];
 const CHECKED_PARAMETERS = ['Game ID', 'Game Version', 'Minimum Bet', 'Maximum Bet', 'RTP'];
 
 // PAGCOR's allowed RTP band (2026-08-20, at Tiffany's request) — RTP is
@@ -502,11 +510,11 @@ const SUBMISSION_VALIDATION_SCHEMA = {
   properties: {
     documentCompleteness: {
       type: 'ARRAY',
-      description: `Exactly ${REQUIRED_DOCUMENT_TYPES.length} entries, one for each of: ${REQUIRED_DOCUMENT_TYPES.join(', ')} — always all of them, in that order, even when a type is not present at all (present: false in that case rather than omitting it).`,
+      description: `Exactly ${ALL_DOCUMENT_TYPES.length} entries, one for each of: ${ALL_DOCUMENT_TYPES.join(', ')} — always all of them, in that order, even when a type is not present at all (present: false in that case rather than omitting it). ${SUPPLEMENTARY_DOCUMENT_TYPES.join(', ')} ${SUPPLEMENTARY_DOCUMENT_TYPES.length > 1 ? 'are' : 'is'} supplementary (nice-to-have, not required for submission) — still check and report on it the same way, the caller treats it differently, not you.`,
       items: {
         type: 'OBJECT',
         properties: {
-          documentType: { type: 'STRING', enum: REQUIRED_DOCUMENT_TYPES },
+          documentType: { type: 'STRING', enum: ALL_DOCUMENT_TYPES },
           present: { type: 'BOOLEAN', description: 'true if one of the provided documents is (or clearly contains) this document type.' },
           detail: { type: 'STRING', description: 'One short sentence — e.g. which document matched this type, or that none did.' },
         },
@@ -615,7 +623,8 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
     text:
       `The following are ${docs.length} documents related to the same PAGCOR game-submission case${context ? ` (${context})` : ''}. ` +
       'Perform a pre-submission check, broken into three parts — report all three in full, do not omit any of them: ' +
-      `1) Document completeness: check whether each of these ${REQUIRED_DOCUMENT_TYPES.length} required submission document types is present — ${REQUIRED_DOCUMENT_TYPES.join(', ')}. ` +
+      `1) Document completeness: check whether each of these ${ALL_DOCUMENT_TYPES.length} submission document types is present — ${ALL_DOCUMENT_TYPES.join(', ')} ` +
+      `(${SUPPLEMENTARY_DOCUMENT_TYPES.join(', ')} ${SUPPLEMENTARY_DOCUMENT_TYPES.length > 1 ? 'are' : 'is'} supplementary/optional, the rest are required — check and report on all of them regardless). ` +
       'If any one document clearly belongs to a type, count it as present; mark it not present if no matching document is found (judge the type from the document\'s actual content, not just its file name). ' +
       `2) Parameter completeness: check whether each of these ${CHECKED_PARAMETERS.length} parameters has a value stated in "at least one document" — ${CHECKED_PARAMETERS.join(', ')}. ` +
       'This only judges whether a value exists, not whether it is consistent. ' +
@@ -673,7 +682,7 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
   // response (or vice versa — falsely flags one that was actually complete
   // before the override ran).
   const aiResponseIncomplete = (
-    documentCompleteness.length < REQUIRED_DOCUMENT_TYPES.length
+    documentCompleteness.length < ALL_DOCUMENT_TYPES.length
     || parameterValidation.length < CHECKED_PARAMETERS.length
     || rawConsistency.length < CHECKED_PARAMETERS.length
   );
@@ -814,9 +823,15 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
   // genuinely wrong". Without this distinction a truncated response reads
   // identically to a real compliance failure, which is worse than useless
   // for legal staff deciding whether to trust the result.
+  // Only REQUIRED_DOCUMENT_TYPES entries count toward "Ready for
+  // Submission" — a SUPPLEMENTARY_DOCUMENT_TYPES entry (e.g. Content
+  // Provider Certification, demoted 2026-08-25 at Tiffany's request) is
+  // still shown in documentCompleteness above, but a missing one never
+  // blocks overallStatus the way a missing required document does.
+  const requiredCompleteness = documentCompleteness.filter((d) => REQUIRED_DOCUMENT_TYPES.includes(d.documentType));
   const overallStatus = aiResponseIncomplete ? 'error' : (
-    documentCompleteness.length > 0
-    && documentCompleteness.every((d) => d.present)
+    requiredCompleteness.length > 0
+    && requiredCompleteness.every((d) => d.present)
     && parameterValidation.length > 0
     && parameterValidation.every((p) => p.present)
     && documentConsistency.length > 0
@@ -827,6 +842,13 @@ async function checkDocumentConsistency({ caseTitle, gameTitle, gameId, expected
     overallStatus,
     partial: aiResponseIncomplete,
     documentCompleteness,
+    // Passed through so the frontend (public/js/app.js's
+    // showConsistencyResultModal) can render supplementary entries with a
+    // neutral/informational badge instead of the same red "Missing" treatment
+    // required entries get — a missing supplementary document is expected to
+    // happen sometimes and isn't a compliance problem the way a missing
+    // required one is.
+    supplementaryDocumentTypes: SUPPLEMENTARY_DOCUMENT_TYPES,
     parameterValidation,
     documentConsistency,
     summary: aiResponseIncomplete

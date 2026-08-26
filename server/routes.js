@@ -2621,6 +2621,23 @@ router.post('/api/telegram/register-webhook', async (req, res) => {
   }
 });
 
+// Read-only diagnostic (added 2026-08-26 while troubleshooting a Provider
+// group whose Q&A bot never replied) — surfaces Telegram's own
+// getWebhookInfo so Settings (or a quick authenticated fetch, as here) can
+// see exactly what Telegram thinks the current webhook state is, without
+// needing direct access to the bot token or Telegram's API. Same permission
+// gate as register-webhook above; makes no changes of any kind.
+router.get('/api/telegram/webhook-info', async (req, res) => {
+  const user = await requirePerm(req, res, 'settings', 'edit');
+  if (!user) return;
+  try {
+    const result = await telegram.getWebhookInfo();
+    sendJson(res, 200, result);
+  } catch (err) {
+    sendJson(res, 400, { error: err.message });
+  }
+});
+
 // Telegram calls this for every message posted anywhere the bot is present
 // (once register-webhook above has been run) — a Provider's group, or a
 // private DM to the bot. No login/session exists here (Telegram is calling

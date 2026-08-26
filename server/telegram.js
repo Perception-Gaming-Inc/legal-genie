@@ -147,4 +147,29 @@ async function setWebhook(url, secretToken) {
   return data;
 }
 
-module.exports = { sendTelegramMessage, setWebhook };
+/**
+ * Diagnostic helper (added 2026-08-26 while troubleshooting a group whose
+ * Q&A bot never replied) — calls Telegram's own getWebhookInfo so Settings
+ * can surface exactly what Telegram thinks is going on: the URL it currently
+ * has registered, how many updates are queued undelivered
+ * (pending_update_count), and the text of the last delivery failure
+ * (last_error_message/last_error_date), if any. Telegram itself is the only
+ * source of truth for this — nothing in this app's own logs can show why a
+ * webhook call never arrived in the first place.
+ * @returns {Promise<object>} Telegram's decoded JSON response (the `result`
+ *   object has shape { url, has_custom_certificate, pending_update_count,
+ *   last_error_date?, last_error_message?, max_connections?, ... }).
+ */
+async function getWebhookInfo() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) throw new Error('TELEGRAM_BOT_TOKEN is not configured on the server.');
+  const res = await fetch(`${TELEGRAM_API_BASE}${token}/getWebhookInfo`);
+  let data = {};
+  try { data = await res.json(); } catch { /* non-JSON error body — data stays {} */ }
+  if (!res.ok || !data.ok) {
+    throw new Error(`Telegram API error: ${data.description || res.statusText || res.status}`);
+  }
+  return data;
+}
+
+module.exports = { sendTelegramMessage, setWebhook, getWebhookInfo };

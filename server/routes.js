@@ -11,7 +11,10 @@ const caseImport = require('./import');
 const { canonicalProviderName } = require('./providers');
 const telegram = require('./telegram');
 const { mimeFor } = require('./mime');
-const zipLite = require('./zip-lite');
+// zip-lite.js (dependency-free ZIP writer) was only used by the "Download
+// All Documents" route, removed 2026-08-26 — see the note near where that
+// route used to sit, just above "Knowledge Base" below. The module itself
+// is left on disk in case a future zip-export feature wants it again.
 
 const router = new Router();
 
@@ -577,7 +580,15 @@ router.get('/api/dashboard/summary', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Generic list/get/create/update/delete factory
 // ---------------------------------------------------------------------------
-function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCreate, afterUpdate, afterDelete, filterList }) {
+function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCreate, afterUpdate, afterDelete, filterList, skipCreate, skipDelete }) {
+  // skipCreate/skipDelete: omit the POST/DELETE routes entirely for a
+  // collection where the UI never offers "create new" / "delete" (e.g.
+  // Roles — 2026-08-26, at Tiffany's request: the roles list is a fixed
+  // seeded set edited only via PUT for Provider Scope, so a reachable
+  // create/delete endpoint sitting behind no button was orphaned surface
+  // area rather than a real feature). Other collections sharing this same
+  // factory (e.g. Departments) that DO have create/delete buttons are
+  // unaffected — they just don't pass these flags.
   // filterList(rows, user) -> rows the given user is allowed to see. Used both
   // for the list endpoint and (as a single-row check) for get/update/delete,
   // so a row hidden from the list can't be read/edited/deleted by guessing its id.
@@ -603,19 +614,21 @@ function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCre
     sendJson(res, 200, row);
   });
 
-  router.post(base, async (req, res, params, body) => {
-    const user = await requirePerm(req, res, moduleName, 'create');
-    if (!user) return;
-    const payload = onCreate ? await onCreate(body, user) : body;
-    const row = await store.insert(collection, payload);
-    // Fire-and-report side effects (e.g. auto-creating a follow-up task)
-    // after the row itself is safely written — a failure here shouldn't
-    // block the actual create from succeeding/returning to the client.
-    if (afterCreate) {
-      try { await afterCreate(row, user); } catch (err) { console.error(`afterCreate(${base}) failed:`, err); }
-    }
-    sendJson(res, 201, row);
-  });
+  if (!skipCreate) {
+    router.post(base, async (req, res, params, body) => {
+      const user = await requirePerm(req, res, moduleName, 'create');
+      if (!user) return;
+      const payload = onCreate ? await onCreate(body, user) : body;
+      const row = await store.insert(collection, payload);
+      // Fire-and-report side effects (e.g. auto-creating a follow-up task)
+      // after the row itself is safely written — a failure here shouldn't
+      // block the actual create from succeeding/returning to the client.
+      if (afterCreate) {
+        try { await afterCreate(row, user); } catch (err) { console.error(`afterCreate(${base}) failed:`, err); }
+      }
+      sendJson(res, 201, row);
+    });
+  }
 
   router.put(`${base}/:id`, async (req, res, params, body) => {
     const user = await requirePerm(req, res, moduleName, 'edit');
@@ -636,18 +649,20 @@ function crudRoutes({ base, moduleName, collection, onCreate, onUpdate, afterCre
     sendJson(res, 200, row);
   });
 
-  router.delete(`${base}/:id`, async (req, res, params) => {
-    const user = await requirePerm(req, res, moduleName, 'delete');
-    if (!user) return;
-    const existing = await visibleRow(await store.find(collection, params.id), user);
-    if (!existing) return sendJson(res, 404, { error: 'Not found' });
-    const ok = await store.remove(collection, params.id);
-    if (!ok) return sendJson(res, 404, { error: 'Not found' });
-    if (afterDelete) {
-      try { await afterDelete(existing, user); } catch (err) { console.error(`afterDelete(${base}) failed:`, err); }
-    }
-    sendJson(res, 200, { ok: true });
-  });
+  if (!skipDelete) {
+    router.delete(`${base}/:id`, async (req, res, params) => {
+      const user = await requirePerm(req, res, moduleName, 'delete');
+      if (!user) return;
+      const existing = await visibleRow(await store.find(collection, params.id), user);
+      if (!existing) return sendJson(res, 404, { error: 'Not found' });
+      const ok = await store.remove(collection, params.id);
+      if (!ok) return sendJson(res, 404, { error: 'Not found' });
+      if (afterDelete) {
+        try { await afterDelete(existing, user); } catch (err) { console.error(`afterDelete(${base}) failed:`, err); }
+      }
+      sendJson(res, 200, { ok: true });
+    });
+  }
 }
 
 // Auto-managed "follow up 30 days later" reminder task for a case's Submit Date.
@@ -1096,11 +1111,13 @@ router.post('/api/cases/:id/import-approval-notice', async (req, res, params, bo
   }
 });
 
-router.get('/api/cases/:id/notes', async (req, res, params) => {
-  const user = await requirePerm(req, res, 'cases', 'view');
-  if (!user) return;
-  sendJson(res, 200, (await store.all('caseNotes')).filter((n) => n.caseId === params.id));
-});
+// Note: a "Case Notes" GET/POST /api/cases/:id/notes pair used to live here,
+// backed by a `caseNotes` collection. Removed 2026-08-26, at Tiffany's
+// request — the UI never grew a Notes panel that called either route, so
+// they were reachable but dead. Any `caseNotes` rows already in the
+// database (there likely aren't any, since nothing ever wrote one) are left
+// untouched; the `caseNotes` collection name is still listed in
+// store.js/store.sqlite-backup.js's COLLECTIONS for that reason.
 
 // Import Excel/CSV -> bulk-create Cases (see server/import.js). Two steps:
 // preview (parse + show what would be created, without writing anything),
@@ -1712,17 +1729,6 @@ router.post('/api/cases/import/commit', async (req, res, params, body) => {
   });
 });
 
-router.post('/api/cases/:id/notes', async (req, res, params, body) => {
-  const user = await requirePerm(req, res, 'cases', 'edit');
-  if (!user) return;
-  const note = await store.insert('caseNotes', { caseId: params.id, note: body.note, createdBy: user.id });
-  try {
-    const preview = String(body.note || '').slice(0, 60);
-    await logAction('caseNote', note.id, 'created', preview || 'Note added', user, { caseId: params.id });
-  } catch (err) { console.error('Failed to log case note create:', err.message); }
-  sendJson(res, 201, note);
-});
-
 // Note: the Contract Management module/UI was removed at Tiffany's request
 // (2026-08-11) — there is no longer a dedicated /api/contracts CRUD or
 // versions API. Existing `contracts`/`contractVersions` records are kept
@@ -2007,82 +2013,16 @@ router.post('/api/cases/:id/check-consistency', async (req, res, params, body) =
   }
 });
 
-// Same consistency check as the Case-detail version above, but scoped to
-// whatever documents Document Center's own Provider+Game folder view has
-// on screen (documentIds, passed straight from the client) instead of
-// requiring every document to already have a Related Case set. Not every
-// game folder has a Case behind it yet — this lets Tiffany compare
-// "everything filed under this game" directly from Document Center without
-// first having to create a Case and re-link each file to it.
-router.post('/api/documents/check-consistency', async (req, res, params, body) => {
-  const user = await requirePerm(req, res, 'documents', 'view');
-  if (!user) return;
-  const ids = Array.isArray(body.documentIds) ? body.documentIds : [];
-  if (ids.length < 2) {
-    return sendJson(res, 400, { error: 'At least 2 documents with an attached file are needed before an AI parameter consistency check can run.' });
-  }
-  try {
-    const docRecords = [];
-    for (const id of ids) {
-      const doc = await store.find('documents', id);
-      if (doc && doc.filePath) docRecords.push(doc);
-    }
-    if (docRecords.length < 2) {
-      return sendJson(res, 400, { error: 'At least 2 documents with an attached file are needed before an AI parameter consistency check can run.' });
-    }
-    const documents = [];
-    for (const doc of docRecords) {
-      const buffer = await storage.readFile(doc.filePath);
-      if (!buffer) continue; // file record exists but bytes missing in storage — skip rather than fail the whole check
-      const bareMimeType = mimeFor(doc.fileName || doc.filePath).split(';')[0].trim();
-      documents.push({
-        fileName: doc.title || doc.fileName,
-        fileContentBase64: `data:${bareMimeType};base64,${buffer.toString('base64')}`,
-      });
-    }
-    if (documents.length < 2) {
-      return sendJson(res, 404, { error: 'The documents\' file content could not be found in storage, so they cannot be compared.' });
-    }
-    // Optional — this ad hoc Document Center check has no Case/game record
-    // behind it, so there's nowhere to read submitted values from unless the
-    // caller passes them explicitly (not currently done by the frontend;
-    // RTP's range check runs regardless since it doesn't need one).
-    // Best-effort lookup (2026-08-25, at Tiffany's request) — a Document
-    // Center folder still often corresponds to a real game sitting inside
-    // some Case's `games[]`, it's just not linked by ID from this ad hoc
-    // check. Without this, a jackpot game checked straight from its
-    // Document Center folder (no Case button click) would silently miss the
-    // combined-RTP rule below, even though the same game's Case page would
-    // catch it. Matched by gameId first (more specific), falling back to
-    // gameTitle — first match wins, same tolerance as docsForGame's own
-    // fallback matching elsewhere in this file.
-    let withJackpot = null;
-    let jackpotRtp = null;
-    if (body.gameId || body.gameTitle) {
-      const allCases = await store.all('cases');
-      const allGames = allCases.flatMap((c) => (Array.isArray(c.games) ? c.games : []));
-      const matchedGame = (body.gameId && allGames.find((g) => g.gameId && normMatchKey(g.gameId) === normMatchKey(body.gameId)))
-        || (body.gameTitle && allGames.find((g) => g.gameTitle && normMatchKey(g.gameTitle) === normMatchKey(body.gameTitle)))
-        || null;
-      if (matchedGame) {
-        withJackpot = matchedGame.withJackpot ?? null;
-        jackpotRtp = matchedGame.jackpotRtp ?? null;
-      }
-    }
-    const expectedValues = { ...(body.expectedValues || {}) };
-    if (jackpotRtp != null && expectedValues.jackpotRtp == null) expectedValues.jackpotRtp = jackpotRtp;
-    const result = await ai.checkDocumentConsistency({
-      gameTitle: body.gameTitle,
-      gameId: body.gameId,
-      expectedValues,
-      documents,
-      withJackpot: body.withJackpot ?? withJackpot,
-    });
-    sendJson(res, 200, { ...result, documentsCompared: documents.length, documentTitles: documents.map((d) => d.fileName) });
-  } catch (err) {
-    sendJson(res, 400, { error: err.message });
-  }
-});
+// Note: a second "AI Parameter Consistency Check" endpoint used to live
+// here, POST /api/documents/check-consistency — scoped to whatever
+// documents Document Center's own Provider+Game folder view had on screen
+// (documentIds passed straight from the client), for checking a game folder
+// that has no Case behind it yet. Removed 2026-08-26, at Tiffany's request:
+// Document Center's own "AI Parameter Consistency Check" button
+// (#btnCheckFolderConsistency) that used to call this was itself already
+// removed earlier, so this route had been reachable with no UI left calling
+// it. The Case-detail version above (POST /api/cases/:id/check-consistency)
+// is unaffected and remains the one actually in use.
 
 // A stored lastConsistencyCheck is only trustworthy for the exact set of
 // documents it compared — if a document was uploaded, replaced, or removed
@@ -2098,106 +2038,15 @@ function isCheckStale(check, currentDocs) {
   if (currentIds.length !== lastIds.length) return true;
   return currentIds.some((id, i) => id !== lastIds[i]);
 }
-function isConsistencyCheckStale(kase, currentDocs) {
-  return isCheckStale(kase.lastConsistencyCheck, currentDocs);
-}
-
-// Case-level "is this case ready to download" gate. Multi-game case: ready
-// only once EVERY game that actually has 2+ filed documents has its own
-// passed, non-stale check — a game with fewer than 2 docs is left out of
-// the gate entirely (nothing to have checked yet), same as the case-level
-// gate always let a case with <2 total docs through this specific check
-// (download still separately requires at least 1 filed doc — see the route).
-function caseDownloadGateStatus(kase, relatedDocs) {
-  if (Array.isArray(kase.games) && kase.games.length) {
-    for (const g of kase.games) {
-      const gameDocs = docsForGame(relatedDocs, g);
-      if (gameDocs.length < 2) continue;
-      const label = g.gameTitle || '(untitled game)';
-      if (!g.lastConsistencyCheck || g.lastConsistencyCheck.overallStatus !== 'ready') {
-        return { ok: false, error: `Please run the AI Parameter Consistency Check for game "${label}" and confirm no anomalies before downloading.` };
-      }
-      if (isCheckStale(g.lastConsistencyCheck, gameDocs)) {
-        return { ok: false, error: `Documents for game "${label}" have changed since its last AI Parameter Consistency Check. Please re-run it before downloading.` };
-      }
-    }
-    return { ok: true };
-  }
-  if (!kase.lastConsistencyCheck || kase.lastConsistencyCheck.overallStatus !== 'ready') {
-    return { ok: false, error: 'Please run the AI Parameter Consistency Check and confirm it comes back with no anomalies before downloading.' };
-  }
-  if (isConsistencyCheckStale(kase, relatedDocs)) {
-    return { ok: false, error: 'Documents have changed since the last AI Parameter Consistency Check. Please re-run the check and confirm no anomalies before downloading.' };
-  }
-  return { ok: true };
-}
-
-// Strip characters that are illegal (or awkward) in a filename on Windows/
-// macOS/most zip tools, since these become entry names inside the .zip and,
-// for the folder name, part of the downloaded file's own filename.
-function safeFileSegment(name) {
-  return String(name || '').replace(/[\\/:*?"<>|]/g, '-').trim() || 'file';
-}
-
-// One-click "Download All Documents" for a Case — bundles every document
-// linked to this case (relatedCaseId) into a single .zip, but only once the
-// AI Parameter Consistency Check (POST /api/cases/:id/check-consistency
-// above) last came back "ready" — every required document type present,
-// every tracked parameter present, nothing mismatched — for the CURRENT set
-// of documents (not stale — see isConsistencyCheckStale). This used to also
-// require a separate manually-maintained PAGCOR Checklist to be fully
-// checked off; that checklist was removed at Tiffany's request once the AI
-// check's own documentCompleteness section started covering "which required
-// documents are missing" automatically, making the manual checklist
-// redundant. Uses zip-lite.js's dependency-free ZIP writer, same reasoning
-// as xlsx-lite.js: this sandbox has no npm registry access, so a package
-// like archiver/jszip can't be installed.
-router.get('/api/cases/:id/download-all', async (req, res, params) => {
-  const user = await requirePerm(req, res, 'cases', 'view');
-  if (!user) return;
-  const kase = await store.find('cases', params.id);
-  if (!kase) return sendJson(res, 404, { error: 'Case not found' });
-
-  const allDocs = await store.all('documents');
-  const relatedDocs = allDocs.filter((d) => d.relatedCaseId === params.id && d.filePath);
-  if (relatedDocs.length === 0) {
-    return sendJson(res, 400, { error: 'This case has no uploaded documents yet.' });
-  }
-
-  const gate = caseDownloadGateStatus(kase, relatedDocs);
-  if (!gate.ok) return sendJson(res, 400, { error: gate.error });
-
-  try {
-    const folderName = safeFileSegment(`${kase.caseNumber || kase.id} - ${kase.title || kase.gameTitle || 'Case'}`);
-    const usedNames = new Set();
-    const files = [];
-    for (const doc of relatedDocs) {
-      const buffer = await storage.readFile(doc.filePath);
-      if (!buffer) continue; // file record exists but bytes missing in storage — skip rather than fail the whole download
-      const baseName = safeFileSegment(doc.fileName || doc.title || `document-${doc.id}`);
-      let name = baseName;
-      let n = 2;
-      while (usedNames.has(name)) {
-        const dot = baseName.lastIndexOf('.');
-        name = dot > 0 ? `${baseName.slice(0, dot)} (${n})${baseName.slice(dot)}` : `${baseName} (${n})`;
-        n += 1;
-      }
-      usedNames.add(name);
-      files.push({ name: `${folderName}/${name}`, data: buffer });
-    }
-    if (!files.length) {
-      return sendJson(res, 404, { error: 'This case\'s document files could not be found in storage.' });
-    }
-    const zipBuffer = zipLite.buildZip(files);
-    res.writeHead(200, {
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${folderName.replace(/"/g, '')}.zip"`,
-    });
-    res.end(zipBuffer);
-  } catch (err) {
-    sendJson(res, 400, { error: err.message });
-  }
-});
+// Note: the case-level download gate (caseDownloadGateStatus/
+// isConsistencyCheckStale/safeFileSegment) and the "Download All Documents"
+// route itself (GET /api/cases/:id/download-all) used to live here. Removed
+// 2026-08-26, at Tiffany's request — the "Download All Documents" .zip
+// button that used to call this had already been removed from the case
+// detail page (2026-08-20), leaving this route reachable with no UI left
+// calling it. isCheckStale (used by the still-active
+// POST /api/cases/:id/check-consistency's cache check above) is unaffected
+// and kept.
 
 // Knowledge Base ------------------------------------------------------------
 // A repository of reference material (PAGCOR Guidelines/Circulars, company
@@ -2456,20 +2305,19 @@ router.delete('/api/users/:id', async (req, res, params) => {
   sendJson(res, 200, { ok: true });
 });
 
-// Settings: Roles ---------------------------------------------------------
+// Settings: Roles -----------------------------------------------------------
+// Roles are a fixed seeded set — the Settings > Roles tab only ever reads
+// the list and PUTs Provider Scope changes; there is no "New Role"/"Delete
+// Role" button (the tab's own footer note tells the user to contact their
+// system administrator for that). POST/DELETE were previously still wired
+// up here with nothing in the UI ever calling them; removed 2026-08-26 at
+// Tiffany's request rather than left reachable with no entry point.
 crudRoutes({
   base: '/api/roles', moduleName: 'settings', collection: 'roles',
-  afterCreate: async (row, user) => {
-    try { await logAction('role', row.id, 'created', row.name || 'Role', user, {}); }
-    catch (err) { console.error('Failed to log role create:', err.message); }
-  },
+  skipCreate: true, skipDelete: true,
   afterUpdate: async (row, user) => {
     try { await logAction('role', row.id, 'updated', row.name || 'Role', user, {}); }
     catch (err) { console.error('Failed to log role update:', err.message); }
-  },
-  afterDelete: async (row, user) => {
-    try { await logAction('role', row.id, 'deleted', row.name || 'Role', user, {}); }
-    catch (err) { console.error('Failed to log role delete:', err.message); }
   },
 });
 

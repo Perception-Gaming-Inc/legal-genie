@@ -1050,7 +1050,7 @@ const GROUP_QA_SCHEMA = {
 };
 
 /**
- * @param {{providerName: string|null, question: string, cases: Array<object>, kbFaqs?: Array<object>, kbDocuments?: Array<object>, isAdmin?: boolean}} input
+ * @param {{providerName: string|null, question: string, cases: Array<object>, kbFaqs?: Array<object>, kbDocuments?: Array<object>, calendarEvents?: Array<object>, isAdmin?: boolean}} input
  *   `isAdmin` (added 2026-08-26, at Tiffany's request) — true for the one
  *   designated internal/admin Telegram chat (see server/routes.js's
  *   telegramAdminChatId), which is allowed to ask about ANY Provider's
@@ -1073,9 +1073,16 @@ const GROUP_QA_SCHEMA = {
  *   value ends up coming from kbFaqs' short direct answers and from
  *   kbDocuments entries that do have a notes summary; both are optional and
  *   independently useful — pass whichever exist).
+ *   `calendarEvents` (added 2026-08-27, at Tiffany's request) — freeform
+ *   Calendar page entries (server/routes.js's /api/calendar-events:
+ *   `title`, `date`, optional `note`), so the bot can also answer "what's
+ *   coming up" / "any events on X date" questions. These are visible to
+ *   everyone regardless of Provider (same as the Calendar page itself), so
+ *   the caller should pass every calendar event on file, not filter by
+ *   Provider/isAdmin.
  * @returns {Promise<{shouldRespond: boolean, answer: string}>}
  */
-async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDocuments, isAdmin }) {
+async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDocuments, calendarEvents, isAdmin }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured on the server.');
   if (!question || !String(question).trim()) throw new Error('No message text to answer.');
@@ -1119,6 +1126,15 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
     .filter((d) => d.notes && String(d.notes).trim())
     .map((d) => `- ${d.title}${d.category ? ` (${d.category})` : ''}: ${d.notes}`);
 
+  // Sorted chronologically so "what's coming up" reads naturally; the model
+  // is also told today's date (below) so it can resolve "tomorrow"/"this
+  // week" relative to it rather than guessing.
+  const calendarLines = (Array.isArray(calendarEvents) ? calendarEvents : [])
+    .slice()
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
+    .map((e) => `- ${e.date || 'N/A'}: ${e.title || '(untitled)'}${e.note ? ` — ${e.note}` : ''}`);
+  const todayStr = new Date().toISOString().slice(0, 10);
+
   const scopeInstruction = isAdmin
     ? 'You are shown ONE message from the group, a list of EVERY Provider\'s current cases from the internal ' +
       'tracking system (each one labelled with its own Provider), and company-approved Knowledge Base content. ' +
@@ -1134,18 +1150,21 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
         text:
           'You are a helpful assistant embedded in a Telegram group chat for a legal/regulatory team tracking ' +
           'PAGCOR game submissions. ' + scopeInstruction + ' Knowledge Base content (FAQ entries and ' +
-          'reference-document summaries) is general PAGCOR/regulatory material, not tied to any one case. First ' +
-          'decide whether the message is a genuine, on-topic question — about case status/stage/required ' +
-          'documents/dates/rejection reasons, or a general PAGCOR/regulatory question. If it is, set shouldRespond ' +
-          'to true, EVEN IF the case data and Knowledge Base content given don\'t actually cover it — in that ' +
+          'reference-document summaries) is general PAGCOR/regulatory material, not tied to any one case. You are ' +
+          `also given the team's shared Calendar events (visible to everyone, not Provider-specific) and today's ` +
+          `date is ${todayStr} — use it to resolve relative dates like "tomorrow" or "this week" in questions ` +
+          'about upcoming events. First decide whether the message is a genuine, on-topic question — about case ' +
+          'status/stage/required documents/dates/rejection reasons, a general PAGCOR/regulatory question, or a ' +
+          'question about upcoming/scheduled Calendar events. If it is, set shouldRespond ' +
+          'to true, EVEN IF the case data, Knowledge Base content, and Calendar events given don\'t actually cover it — in that ' +
           'situation, don\'t guess: reply with a short, honest "I don\'t have information on that — you may want to ' +
           'ask Crystal directly" instead (in the same language as the question), rather than staying silent, since a ' +
           'real on-topic question deserves some reply even when the answer is "I don\'t know." Only set ' +
           'shouldRespond to false (and leave answer empty) when the message ISN\'T really a question for this bot at ' +
           'all — ordinary conversation between people, a greeting, or something entirely unrelated to cases/PAGCOR ' +
           '(e.g. the weather, the stock market) — so the bot doesn\'t reply to every stray message in a busy group. ' +
-          'Never guess or invent a stage, date, or document status that isn\'t present in the case data or the ' +
-          'Knowledge Base content given. Keep answers short and friendly.',
+          'Never guess or invent a stage, date, document status, or calendar event that isn\'t present in the ' +
+          'case data, Knowledge Base content, or Calendar events given. Keep answers short and friendly.',
       }],
     },
     contents: [{
@@ -1155,6 +1174,8 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
           `${isAdmin ? 'All Providers\' cases on file' : 'This Provider\'s cases on file'}:\n${caseLines.length ? caseLines.join('\n') : '(no cases on file yet)'}\n\n` +
           `Company-approved Knowledge Base FAQ entries:\n${kbFaqLines.length ? kbFaqLines.join('\n') : '(none on file yet)'}\n\n` +
           `Company-approved Knowledge Base reference document summaries:\n${kbDocLines.length ? kbDocLines.join('\n') : '(none on file yet)'}\n\n` +
+          `Today's date: ${todayStr}\n\n` +
+          `Shared Calendar events on file:\n${calendarLines.length ? calendarLines.join('\n') : '(none on file yet)'}\n\n` +
           `Group message: "${question}"`,
       }],
     }],

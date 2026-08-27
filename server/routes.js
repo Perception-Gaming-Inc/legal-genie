@@ -2653,12 +2653,19 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
         // not the underlying file) — Draft/Pending Review/Archived entries
         // are deliberately excluded so nothing unreviewed or outdated ever
         // gets quoted back to a Provider.
-        const [allKbFaqs, allKbDocuments] = await Promise.all([store.all('kbFaqs'), store.all('kbDocuments')]);
+        const [allKbFaqs, allKbDocuments, allCalendarEvents] = await Promise.all([
+          store.all('kbFaqs'), store.all('kbDocuments'), store.all('calendarEvents'),
+        ]);
         const activeKbFaqs = allKbFaqs.filter((f) => f.status === 'Active');
         const activeKbDocuments = allKbDocuments.filter((d) => d.status === 'Active');
+        // Calendar events (added 2026-08-27, at Tiffany's request) are
+        // visible to everyone on the Calendar page regardless of Provider —
+        // same reasoning as kbFaqs/kbDocuments not being Provider-scoped —
+        // so every event on file is passed, not filtered by provider/isAdmin.
         const result = await ai.answerGroupQuestion({
           providerName: isAdminChat ? null : provider, question: msg.text, cases: relevantCases,
-          kbFaqs: activeKbFaqs, kbDocuments: activeKbDocuments, isAdmin: isAdminChat,
+          kbFaqs: activeKbFaqs, kbDocuments: activeKbDocuments, calendarEvents: allCalendarEvents,
+          isAdmin: isAdminChat,
         });
         if (result && result.shouldRespond && result.answer) {
           await telegram.sendTelegramMessage(String(msg.chat.id), result.answer, { replyToMessageId: msg.message_id });

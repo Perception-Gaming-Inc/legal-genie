@@ -2427,21 +2427,8 @@ async function renderCaseDetail(content, id) {
     ${canDo('documents', 'view') ? `
     <div class="card mt-3"><div class="card-body">
       <h6 class="mb-2">Uploaded Documents${relatedDocs.length ? ` <span class="badge text-bg-light border">${relatedDocs.length}</span>` : ''}</h6>
-      ${relatedDocs.length ? `
-      <div class="list-group list-group-flush">
-        ${relatedDocs.map((d) => `
-          <div class="list-group-item d-flex justify-content-between align-items-center px-0">
-            <div>
-              <div>${escapeHtml(d.title)}</div>
-              <div class="small text-secondary">${escapeHtml(userName(d.uploadedBy))} · ${fmtDate(d.createdAt)}</div>
-            </div>
-            ${d.filePath ? `
-              <div class="btn-group">
-                <button type="button" class="btn btn-sm btn-outline-secondary btn-preview-doc" data-id="${d.id}" title="Preview">${Icon('eye')}</button>
-                <button type="button" class="btn btn-sm btn-outline-secondary btn-download-doc" data-id="${d.id}" data-filename="${escapeHtml(d.fileName || 'file')}" title="Download">${Icon('download')}</button>
-              </div>` : ''}
-          </div>`).join('')}
-      </div>` : `<div class="small text-secondary">No documents linked to this case yet${canUploadDocs ? ' — click "Upload Documents" above to get started.' : '.'}</div>`}
+      ${relatedDocs.length ? renderCaseDocumentsGroupedByGame(relatedDocs, games)
+        : `<div class="small text-secondary">No documents linked to this case yet${canUploadDocs ? ' — click "Upload Documents" above to get started.' : '.'}</div>`}
     </div></div>` : ''}`;
 
   content.querySelectorAll('.btn-download-doc').forEach((btn) => btn.addEventListener('click', () => {
@@ -2650,6 +2637,55 @@ async function renderCaseDetail(content, id) {
 function docsForGameInList(relatedDocs, game) {
   return relatedDocs.filter((d) => d.filePath).filter((d) => (game.id && d.relatedGameId === game.id)
     || (!d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === (game.gameTitle || '').trim().toLowerCase()));
+}
+
+// One document row for the "Uploaded Documents" list (2026-08-27, at
+// Tiffany's request, after the flat list of 15 documents on a multi-game
+// case became hard to scan — "後來覺得這樣看太亂了 可以把它歸到每個遊戲下面嗎").
+function caseDocListItemHtml(d) {
+  return `
+    <div class="list-group-item d-flex justify-content-between align-items-center px-0">
+      <div>
+        <div>${escapeHtml(d.title)}</div>
+        <div class="small text-secondary">${escapeHtml(userName(d.uploadedBy))} · ${fmtDate(d.createdAt)}</div>
+      </div>
+      ${d.filePath ? `
+        <div class="btn-group">
+          <button type="button" class="btn btn-sm btn-outline-secondary btn-preview-doc" data-id="${d.id}" title="Preview">${Icon('eye')}</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary btn-download-doc" data-id="${d.id}" data-filename="${escapeHtml(d.fileName || 'file')}" title="Download">${Icon('download')}</button>
+        </div>` : ''}
+    </div>`;
+}
+
+// Groups a case's Uploaded Documents under the game each one belongs to —
+// same relatedGameId-first, gameTitle-fallback matching as docsForGameInList/
+// docsForGame (server/routes.js), just without the filePath filter so every
+// linked document row still shows up even if its file failed to attach.
+// Anything that doesn't match any game in the case (case-level imports like
+// the Annex A spreadsheet, or docs left over from before per-game tagging
+// existed) falls into a trailing "Other Documents" bucket rather than being
+// silently dropped.
+function renderCaseDocumentsGroupedByGame(relatedDocs, games) {
+  if (!games || games.length <= 1) {
+    return `<div class="list-group list-group-flush">${relatedDocs.map(caseDocListItemHtml).join('')}</div>`;
+  }
+  const claimed = new Set();
+  const groups = games.map((g) => {
+    const docs = relatedDocs.filter((d) => (g.id && d.relatedGameId === g.id)
+      || (!d.relatedGameId && (d.gameTitle || '').trim().toLowerCase() === (g.gameTitle || '').trim().toLowerCase() && (g.gameTitle || '').trim()));
+    docs.forEach((d) => claimed.add(d.id));
+    return { title: g.gameTitle || 'Untitled Game', docs };
+  });
+  const other = relatedDocs.filter((d) => !claimed.has(d.id));
+  const sectionHtml = (title, docs) => `
+    <div class="mb-3">
+      <div class="fw-semibold small text-uppercase text-secondary mb-1">${escapeHtml(title)} ${docs.length ? `<span class="badge text-bg-light border">${docs.length}</span>` : ''}</div>
+      ${docs.length ? `<div class="list-group list-group-flush">${docs.map(caseDocListItemHtml).join('')}</div>`
+        : '<div class="small text-secondary">No documents linked to this game yet.</div>'}
+    </div>`;
+  return `
+    ${groups.map((g) => sectionHtml(g.title, g.docs)).join('')}
+    ${other.length ? sectionHtml('Other Documents', other) : ''}`;
 }
 
 // Duplicate-upload check (2026-08-25, at Tiffany's request, after finding a

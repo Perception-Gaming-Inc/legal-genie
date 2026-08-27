@@ -2703,6 +2703,39 @@ function findDuplicateInGameFolder(relatedDocs, game, title, fileName) {
   const f = (fileName || '').trim().toLowerCase();
   return gameDocs.find((d) => (t && (d.title || '').trim().toLowerCase() === t) || (f && (d.fileName || '').trim().toLowerCase() === f)) || null;
 }
+// Guesses which game(s) an uploaded file's own filename belongs to, so a
+// batch upload doesn't have to rely purely on the shared "which game(s)"
+// checklist (2026-08-27, at Tiffany's request, after a 17-game batch upload
+// with "All" checked cross-linked every one of its 17 files to all 17 games
+// instead of each file's own game — see the case cleanup earlier this
+// session). Matching order:
+//   1. Game ID — the most reliable signal, since real filenames from
+//      providers are consistently prefixed with the numeric/alphanumeric
+//      Game ID (e.g. "22080_CATLA'S MONEY MACHINE.pdf", "VP_230038_1...").
+//   2. Game Title substring — only used when no ID match exists. Ties are
+//      broken by preferring the LONGEST matching title: e.g. a filename for
+//      "PLAYTIME BANG BANG 2" also textually contains the shorter title
+//      "PLAYTIME BANG BANG", so without this the shorter game would falsely
+//      match too. Titles under 4 normalized characters are skipped as too
+//      short to match reliably (e.g. a title that's just a number).
+// Returns [] when nothing matches confidently — callers should fall back to
+// the shared checklist / manual selection in that case, same as before this
+// existed.
+function guessGamesForFileName(fileName, games) {
+  if (!games || !games.length) return [];
+  const norm = (s) => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const fnNorm = norm((fileName || '').replace(/\.[a-zA-Z0-9]+$/, ''));
+  if (!fnNorm) return [];
+  const idMatches = games.filter((g) => g.gameId && norm(g.gameId) && fnNorm.includes(norm(g.gameId)));
+  if (idMatches.length) return idMatches;
+  const titleMatches = games
+    .filter((g) => g.gameTitle && norm(g.gameTitle).length >= 4 && fnNorm.includes(norm(g.gameTitle)))
+    .sort((a, b) => norm(b.gameTitle).length - norm(a.gameTitle).length);
+  if (!titleMatches.length) return [];
+  const topLen = norm(titleMatches[0].gameTitle).length;
+  return titleMatches.filter((g) => norm(g.gameTitle).length === topLen);
+}
+
 function showCaseDocumentUploadModal(item, relatedDocs) {
   const games = caseGamesList(item);
   const isMultiGameCase = Array.isArray(item.games);
@@ -2721,10 +2754,10 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
-          <p class="small text-secondary">You can select multiple files at once. Provider / Game Title / Game ID are filled in automatically from this case — AI only needs to guess each file's Title / Category / Report Type, which you can edit before saving.</p>
+          <p class="small text-secondary">You can select multiple files at once. Provider / Game Title / Game ID are filled in automatically from this case — AI only needs to guess each file's Title / Category / Report Type, which you can edit before saving. Each file's own game is also auto-matched from its filename (Game ID or title) where possible — see the match shown under each file below.</p>
           ${isMultiGameCase && games.length > 1 ? `
           <div class="mb-3">
-            <label class="small text-secondary d-block">Which game(s) are these documents for? Check every game this batch applies to — a document that covers multiple games (e.g. one RTP certificate listing several titles) gets linked to each game you check, so it shows up under all of them. Nothing is checked by default; pick at least one before uploading, even if it's just the one game.</label>
+            <label class="small text-secondary d-block">Which game(s) are these documents for? Only used as a fallback for files whose game couldn't be auto-matched by filename (see below) — check every game this batch applies to for those. A document that covers multiple games (e.g. one RTP certificate listing several titles) gets linked to each game you check, so it shows up under all of them. Nothing is checked by default; pick at least one before uploading files that need it.</label>
             <div class="form-check form-check-inline border-end pe-2 me-2">
               <input class="form-check-input" type="checkbox" id="caseUploadGameAll">
               <label class="form-check-label small fw-semibold" for="caseUploadGameAll">All</label>
@@ -2828,6 +2861,11 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
             </div>
           </div>
           <div class="small text-secondary mt-1 ms-4">${escapeHtml(f.file.name)}${f.aiFailed ? ` — <span class="text-danger">${escapeHtml(f.aiError || "AI could not read this file's content")}</span> — please double-check the category yourself` : ''}</div>
+          ${f.matchedGames && f.matchedGames.length && f.matchedGamesSource === 'filename' ? `
+          <div class="small mt-1 ms-4 ${f.matchedGames.length > 1 ? 'text-warning-emphasis' : 'text-success'}">
+            🔗 Auto-matched by filename to: <strong>${f.matchedGames.map((g) => escapeHtml(g.gameTitle || '(untitled)')).join(', ')}</strong>${f.matchedGames.length > 1 ? ' — more than one game matched, double-check this is right' : ''}
+            <button type="button" class="btn btn-link btn-sm p-0 ms-1 btn-clear-filename-match" style="font-size: inherit;">Not right? Use the checklist above instead</button>
+          </div>` : ''}
           <div class="mt-2 ms-4 approval-identify-block" style="${isApprovalReportType(f.proposed.reportType) ? '' : 'display:none'}">
             <button type="button" class="btn btn-sm btn-outline-primary btn-identify-approved-games">${sparkleMark()} Identify Approved Games (AI)</button>
             <span class="small ms-2 approval-identify-msg"></span>
@@ -2847,6 +2885,15 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
   // step below files this same document under each matched game's folder
   // instead of relying on the shared "which game(s)" checklist above.
   rowsEl.addEventListener('click', async (e) => {
+    const clearBtn = e.target.closest('.btn-clear-filename-match');
+    if (clearBtn) {
+      const row = clearBtn.closest('.upload-file-row');
+      const i = Number(row.dataset.index);
+      filesData[i].matchedGames = null;
+      filesData[i].matchedGamesSource = null;
+      renderRows();
+      return;
+    }
     const btn = e.target.closest('.btn-identify-approved-games');
     if (!btn) return;
     const row = btn.closest('.upload-file-row');
@@ -2870,6 +2917,7 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
       filesData[i].matchedGames = matched
         .map((m) => (m.gameRowId ? games.find((g) => g.id === m.gameRowId) : games[0]))
         .filter(Boolean);
+      filesData[i].matchedGamesSource = 'ai-loa';
       const parts = [];
       if (matched.length) parts.push(`Matched ${matched.length} game(s) in this case: ${matched.map((m) => escapeHtml(m.title || '(unnamed)')).join(', ')}`);
       if (result.unmatched && result.unmatched.length) parts.push(`⚠️ Not found in this case: ${result.unmatched.map((g) => escapeHtml(g.gameTitle || '(unnamed)')).join(', ')}`);
@@ -2935,7 +2983,22 @@ function showCaseDocumentUploadModal(item, relatedDocs) {
         // shared-quota 429, only pushes the reset further out).
         aiError = err.message;
       }
-      return { file, base64, proposed, aiFailed, aiError, matchedGames: null };
+      // Auto-match this file's own game from its filename (Game ID or title
+      // — see guessGamesForFileName above) so a batch of many files each
+      // gets filed under its own correct game by default, without relying on
+      // the shared checklist (which applies the same set of games to every
+      // file in the batch and is the reason a 17-file/17-game upload with
+      // "All" checked cross-linked every file to every game). Only attempted
+      // for multi-game cases with more than one game — a single-game case
+      // has nothing to disambiguate. The user can still clear this per file
+      // (see the "Not right?" link in renderRows) and fall back to the
+      // shared checklist for that one file.
+      const guessedGames = (isMultiGameCase && games.length > 1) ? guessGamesForFileName(file.name, games) : [];
+      return {
+        file, base64, proposed, aiFailed, aiError,
+        matchedGames: guessedGames.length ? guessedGames : null,
+        matchedGamesSource: guessedGames.length ? 'filename' : null,
+      };
     }));
     filesData = filesData.concat(newFilesData);
     renderRows();

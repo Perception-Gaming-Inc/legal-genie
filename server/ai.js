@@ -1039,18 +1039,18 @@ const GROUP_QA_SCHEMA = {
   properties: {
     shouldRespond: {
       type: 'BOOLEAN',
-      description: 'true if this message is a genuine, on-topic question the bot should reply to — either because the case data/Knowledge Base can actually answer it, OR because it\'s clearly a real question about a case/Provider/PAGCOR-regulatory topic that the bot happens to lack data for (in that second situation, still set this true and use the "no information on file, ask Crystal" fallback wording described under `answer`). Set false ONLY for messages that are not really questions at all for this bot — greetings, small talk, messages clearly directed at another person, or topics entirely unrelated to cases/PAGCOR (e.g. the weather, the stock market) — so the bot stays silent rather than replying to every stray message. When genuinely unsure whether it\'s even a real question, prefer false.',
+      description: 'true if this message is a genuine, on-topic question the bot should reply to — either because the case data/Knowledge Base/Calendar events/Task items can actually answer it, OR because it\'s clearly a real question about a case/Provider/PAGCOR-regulatory/calendar/task topic that the bot happens to lack data for (in that second situation, still set this true and use the "no information on file, ask Crystal" fallback wording described under `answer`). Set false ONLY for messages that are not really questions at all for this bot — greetings, small talk, messages clearly directed at another person, or topics entirely unrelated to cases/PAGCOR/calendar/tasks (e.g. the weather, the stock market) — so the bot stays silent rather than replying to every stray message. When genuinely unsure whether it\'s even a real question, prefer false.',
     },
     answer: {
       type: 'STRING',
-      description: 'A short, direct, friendly reply, in the same language the question was asked in. When the case data or Knowledge Base actually covers it, answer from ONLY that data — never invent a stage, date, or document status not present in it. When it\'s a genuine on-topic question but nothing given actually answers it, instead reply with a brief, honest "I don\'t have information on that — you may want to ask Crystal directly" in that same language (never guess at an answer in this situation either). Empty string when shouldRespond is false.',
+      description: 'A short, direct, friendly reply, in the same language the question was asked in. When the case data, Knowledge Base, Calendar events, or Task items actually cover it, answer from ONLY that data — never invent a stage, date, document status, event, or task not present in it. When it\'s a genuine on-topic question but nothing given actually answers it, instead reply with a brief, honest "I don\'t have information on that — you may want to ask Crystal directly" in that same language (never guess at an answer in this situation either). Empty string when shouldRespond is false.',
     },
   },
   required: ['shouldRespond', 'answer'],
 };
 
 /**
- * @param {{providerName: string|null, question: string, cases: Array<object>, kbFaqs?: Array<object>, kbDocuments?: Array<object>, calendarEvents?: Array<object>, isAdmin?: boolean}} input
+ * @param {{providerName: string|null, question: string, cases: Array<object>, kbFaqs?: Array<object>, kbDocuments?: Array<object>, calendarEvents?: Array<object>, tasks?: Array<object>, isAdmin?: boolean}} input
  *   `isAdmin` (added 2026-08-26, at Tiffany's request) — true for the one
  *   designated internal/admin Telegram chat (see server/routes.js's
  *   telegramAdminChatId), which is allowed to ask about ANY Provider's
@@ -1080,9 +1080,23 @@ const GROUP_QA_SCHEMA = {
  *   everyone regardless of Provider (same as the Calendar page itself), so
  *   the caller should pass every calendar event on file, not filter by
  *   Provider/isAdmin.
+ *   `tasks` (added 2026-08-27, at Tiffany's request) — Task Management
+ *   entries the bot may discuss, so it can answer "what's outstanding" /
+ *   task-status questions. Deliberately restricted by the caller
+ *   (server/routes.js's telegram webhook handler) to TEAM tasks only —
+ *   `type !== 'personal'` — since a Task can be marked Personal specifically
+ *   to keep it visible only to its creator/assignee (see
+ *   filterPersonalTasks() in routes.js); a group-chat bot must never expose
+ *   a Personal task to the whole group. Each entry expected as
+ *   `{title, dueDate, status, provider, assigneeNames}` — `provider` (the
+ *   Provider of the task's linked case, if any) is caller-resolved so this
+ *   function doesn't need the full cases/users tables just for that; for a
+ *   non-admin chat the caller should have already filtered to only this
+ *   Provider's own case-linked tasks (same Provider-isolation rule as
+ *   `cases`).
  * @returns {Promise<{shouldRespond: boolean, answer: string}>}
  */
-async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDocuments, calendarEvents, isAdmin }) {
+async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDocuments, calendarEvents, tasks, isAdmin }) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured on the server.');
   if (!question || !String(question).trim()) throw new Error('No message text to answer.');
@@ -1135,6 +1149,22 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
     .map((e) => `- ${e.date || 'N/A'}: ${e.title || '(untitled)'}${e.note ? ` — ${e.note}` : ''}`);
   const todayStr = new Date().toISOString().slice(0, 10);
 
+  // Team tasks only — the caller has already excluded Personal tasks and
+  // (for a non-admin/Provider chat) already restricted to this Provider's
+  // own case-linked tasks. See the JSDoc above for why.
+  const taskLines = (Array.isArray(tasks) ? tasks : [])
+    .slice()
+    .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')))
+    .map((t) => {
+      const bits = [
+        t.dueDate ? `Due=${t.dueDate}` : null,
+        `Status=${t.status || 'Unknown'}`,
+        isAdmin && t.provider ? `Provider=${t.provider}` : null,
+        t.assigneeNames ? `Assignee=${t.assigneeNames}` : null,
+      ].filter(Boolean).join(', ');
+      return `- ${t.title || '(untitled)'}: ${bits}`;
+    });
+
   const scopeInstruction = isAdmin
     ? 'You are shown ONE message from the group, a list of EVERY Provider\'s current cases from the internal ' +
       'tracking system (each one labelled with its own Provider), and company-approved Knowledge Base content. ' +
@@ -1151,20 +1181,22 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
           'You are a helpful assistant embedded in a Telegram group chat for a legal/regulatory team tracking ' +
           'PAGCOR game submissions. ' + scopeInstruction + ' Knowledge Base content (FAQ entries and ' +
           'reference-document summaries) is general PAGCOR/regulatory material, not tied to any one case. You are ' +
-          `also given the team's shared Calendar events (visible to everyone, not Provider-specific) and today's ` +
-          `date is ${todayStr} — use it to resolve relative dates like "tomorrow" or "this week" in questions ` +
-          'about upcoming events. First decide whether the message is a genuine, on-topic question — about case ' +
-          'status/stage/required documents/dates/rejection reasons, a general PAGCOR/regulatory question, or a ' +
-          'question about upcoming/scheduled Calendar events. If it is, set shouldRespond ' +
-          'to true, EVEN IF the case data, Knowledge Base content, and Calendar events given don\'t actually cover it — in that ' +
+          `also given the team's shared Calendar events (visible to everyone, not Provider-specific), and a list ` +
+          'of TEAM Task Management items (Personal tasks are deliberately never shown to you). ' +
+          `Today's date is ${todayStr} — use it to resolve relative dates like "tomorrow" or "this week" in ` +
+          'questions about upcoming events or task due dates. First decide whether the message is a genuine, ' +
+          'on-topic question — about case status/stage/required documents/dates/rejection reasons, a general ' +
+          'PAGCOR/regulatory question, a question about upcoming/scheduled Calendar events, or a question about ' +
+          'outstanding/team Task Management items. If it is, set shouldRespond ' +
+          'to true, EVEN IF the case data, Knowledge Base content, Calendar events, and Task items given don\'t actually cover it — in that ' +
           'situation, don\'t guess: reply with a short, honest "I don\'t have information on that — you may want to ' +
           'ask Crystal directly" instead (in the same language as the question), rather than staying silent, since a ' +
           'real on-topic question deserves some reply even when the answer is "I don\'t know." Only set ' +
           'shouldRespond to false (and leave answer empty) when the message ISN\'T really a question for this bot at ' +
           'all — ordinary conversation between people, a greeting, or something entirely unrelated to cases/PAGCOR ' +
           '(e.g. the weather, the stock market) — so the bot doesn\'t reply to every stray message in a busy group. ' +
-          'Never guess or invent a stage, date, document status, or calendar event that isn\'t present in the ' +
-          'case data, Knowledge Base content, or Calendar events given. Keep answers short and friendly.',
+          'Never guess or invent a stage, date, document status, calendar event, or task that isn\'t present in the ' +
+          'case data, Knowledge Base content, Calendar events, or Task items given. Keep answers short and friendly.',
       }],
     },
     contents: [{
@@ -1176,6 +1208,7 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
           `Company-approved Knowledge Base reference document summaries:\n${kbDocLines.length ? kbDocLines.join('\n') : '(none on file yet)'}\n\n` +
           `Today's date: ${todayStr}\n\n` +
           `Shared Calendar events on file:\n${calendarLines.length ? calendarLines.join('\n') : '(none on file yet)'}\n\n` +
+          `${isAdmin ? 'Team Task Management items on file' : 'This Provider\'s own Task Management items on file'} (Personal tasks excluded):\n${taskLines.length ? taskLines.join('\n') : '(none on file yet)'}\n\n` +
           `Group message: "${question}"`,
       }],
     }],

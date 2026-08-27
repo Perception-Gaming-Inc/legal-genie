@@ -2653,8 +2653,8 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
         // not the underlying file) — Draft/Pending Review/Archived entries
         // are deliberately excluded so nothing unreviewed or outdated ever
         // gets quoted back to a Provider.
-        const [allKbFaqs, allKbDocuments, allCalendarEvents] = await Promise.all([
-          store.all('kbFaqs'), store.all('kbDocuments'), store.all('calendarEvents'),
+        const [allKbFaqs, allKbDocuments, allCalendarEvents, allTasks, allUsers] = await Promise.all([
+          store.all('kbFaqs'), store.all('kbDocuments'), store.all('calendarEvents'), store.all('tasks'), store.all('users'),
         ]);
         const activeKbFaqs = allKbFaqs.filter((f) => f.status === 'Active');
         const activeKbDocuments = allKbDocuments.filter((d) => d.status === 'Active');
@@ -2662,10 +2662,36 @@ router.post('/api/telegram/webhook', async (req, res, params, body) => {
         // visible to everyone on the Calendar page regardless of Provider —
         // same reasoning as kbFaqs/kbDocuments not being Provider-scoped —
         // so every event on file is passed, not filtered by provider/isAdmin.
+        // Tasks (added 2026-08-27, at Tiffany's request): explicitly TEAM
+        // tasks only — `type !== 'personal'` — a Personal task is meant to
+        // stay visible only to its creator/assignee (filterPersonalTasks()
+        // above), so this bot must never surface one to a group chat. For a
+        // non-admin/Provider chat, further restrict to tasks linked (via
+        // relatedCaseId) to one of THIS Provider's own cases, same
+        // Provider-isolation rule already applied to `cases` above — a task
+        // with no case link, or linked to another Provider's case, is not
+        // sent to that Provider's chat.
+        const caseByIdForTasks = new Map(allCases.map((c) => [c.id, c]));
+        const userByIdForTasks = new Map(allUsers.map((u) => [u.id, u]));
+        const teamTasks = allTasks.filter((t) => t.type !== 'personal');
+        const relevantTasks = (isAdminChat ? teamTasks : teamTasks.filter((t) => {
+          const relatedCase = t.relatedCaseId ? caseByIdForTasks.get(t.relatedCaseId) : null;
+          return relatedCase && String(relatedCase.provider || '').trim().toLowerCase() === provider.trim().toLowerCase();
+        })).map((t) => ({
+          title: t.title,
+          dueDate: t.dueDate,
+          status: t.status,
+          provider: t.relatedCaseId ? (caseByIdForTasks.get(t.relatedCaseId) || {}).provider || null : null,
+          assigneeNames: taskAssigneeIds(t)
+            .map((uid) => userByIdForTasks.get(uid))
+            .filter(Boolean)
+            .map((u) => u.fullName || u.username)
+            .join(', ') || null,
+        }));
         const result = await ai.answerGroupQuestion({
           providerName: isAdminChat ? null : provider, question: msg.text, cases: relevantCases,
           kbFaqs: activeKbFaqs, kbDocuments: activeKbDocuments, calendarEvents: allCalendarEvents,
-          isAdmin: isAdminChat,
+          tasks: relevantTasks, isAdmin: isAdminChat,
         });
         if (result && result.shouldRespond && result.answer) {
           await telegram.sendTelegramMessage(String(msg.chat.id), result.answer, { replyToMessageId: msg.message_id });

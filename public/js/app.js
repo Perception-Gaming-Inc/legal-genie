@@ -3097,7 +3097,7 @@ async function renderCases(content) {
         <table class="table table-hover mb-0 table-clickable">
           <thead class="table-light"><tr>
             <th style="width:34px;"><input type="checkbox" id="selectAllCheckbox" title="Select all on this page"></th>
-            <th class="sortable-th" data-sort="dateReceived">Date Received <span class="sort-indicator"></span></th>
+            <th class="sortable-th" data-sort="dateReceived">Date Received <span class="sort-indicator"> ▼</span></th>
             <th class="sortable-th" data-sort="gameId">Game ID <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="title">Title <span class="sort-indicator"></span></th>
             <th class="sortable-th" data-sort="type">Type <span class="sort-indicator"></span></th>
@@ -3119,8 +3119,17 @@ async function renderCases(content) {
   let currentPage = 1;
   let filteredCases = cases;
   let currentPageItems = [];
-  let sortColumn = null;
-  let sortDir = 'asc';
+  // Default view (2026-08-27, at Tiffany's request: "按照 data recieved 越新
+  // 的越上面然後如果closed 就把它移到最後面") — newest Date Received first,
+  // with Closed cases always pushed to the bottom regardless of which column
+  // is actually sorted. Clicking a column header still overrides this
+  // default sortColumn/sortDir exactly as before; sortedFilteredCases()
+  // below applies the Closed-last rule as a second pass on top of whatever
+  // single-column sort is active, so switching to sort by e.g. Provider
+  // keeps Closed cases at the bottom too rather than only doing so for the
+  // Date Received default.
+  let sortColumn = 'dateReceived';
+  let sortDir = 'desc';
   const selectedIds = new Set();
 
   const fields = caseFormFields;
@@ -3342,8 +3351,18 @@ async function renderCases(content) {
     const cmp = (typeof va === 'number' && typeof vb === 'number') ? va - vb : String(va).localeCompare(String(vb));
     return sortDir === 'asc' ? cmp : -cmp;
   }
+  // Closed-last: a stable second pass on top of the primary column sort
+  // above (Array.prototype.sort is a stable sort in every engine this app
+  // runs on) — it only ever reorders Closed vs. non-Closed relative to each
+  // other, so the ordering the primary sort already established WITHIN
+  // each of those two groups (e.g. newest Date Received first) is left
+  // untouched.
   function sortedFilteredCases() {
-    return sortColumn ? [...filteredCases].sort(sortComparator) : filteredCases;
+    const base = sortColumn ? [...filteredCases].sort(sortComparator) : [...filteredCases];
+    return base
+      .map((c, i) => ({ c, i, closed: c.status === 'Closed' ? 1 : 0 }))
+      .sort((a, b) => (a.closed - b.closed) || (a.i - b.i))
+      .map((x) => x.c);
   }
 
   function csvEscape(v) {

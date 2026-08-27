@@ -737,12 +737,32 @@ async function syncDeadlineFollowUpTask(caseRow) {
 // For a multi-game case this only fires once ALL of its games are
 // Approved, not just one, so the reminder isn't lost while other games in
 // the same case are still under review.
+//
+// Also auto-closes the case itself once fully approved — added 2026-08-27
+// at Tiffany's request ("全部遊戲都approved就closed"). Previously only the
+// LOA-import path (applyApprovalNoticeGames, for a legacy flat/single-game
+// case) ever flipped `status` to 'Closed'; a multi-game case's overall
+// status was never touched by anything, even once every one of its games
+// individually reached Approved. This runs from the same single choke
+// point as the follow-up-task cleanup above, so it fires uniformly no
+// matter which path got the case to fully-approved — a manual per-game
+// Stage edit, the bulk "update stage" action, an Excel import whose Status
+// column already reads Approved (see server/import.js's
+// isApprovedStatusText), or a real PAGCOR approval letter matched via
+// "Identify Approved Games (AI)". Deliberately unconditional on *how* full
+// approval was reached: as long as `fullyApproved` holds and the case
+// isn't already Closed, it gets closed — including on a later, unrelated
+// edit to an already-fully-approved case (e.g. someone manually reopened it
+// to "In Progress" while every game stayed Approved), matching what was
+// asked for rather than only closing at the exact moment the last game
+// flips to Approved.
 async function removeFollowUpIfFullyApproved(caseRow) {
   if (!caseRow || !caseRow.id) return;
   const fullyApproved = (Array.isArray(caseRow.games) && caseRow.games.length)
     ? caseRow.games.every((g) => g.pagcorStage === 'Approved')
     : caseRow.pagcorStage === 'Approved';
   if (!fullyApproved) return;
+  if (caseRow.status !== 'Closed') await store.update('cases', caseRow.id, { status: 'Closed' });
   const tasks = await store.all('tasks');
   const existing = tasks.find((t) => t.relatedCaseId === caseRow.id && t.isDeadlineFollowUp);
   // Same care as syncDeadlineFollowUpTask: never remove a task someone

@@ -13,6 +13,15 @@
 </head>
 <body>
 <div id="app"></div>
+<!-- SheetJS (2026-08-28, at Tiffany's request): writes real .xlsx files for
+     the Case Management / Document Center "Export" buttons, which used to
+     write a hand-built CSV instead. A real .xlsx cell has an explicit type
+     (string/number/formula/...) in its own XML, so a title or description
+     that happens to start with "=" or "+" is stored as plain text and can
+     never be misread as a formula the way a CSV cell can when Excel has to
+     guess its type from the raw text on open — this fixes that CSV
+     "formula injection" risk instead of just re-escaping around it. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="/js/ui-shim.js"></script>
 <script src="/js/app.js"></script>
 </body>

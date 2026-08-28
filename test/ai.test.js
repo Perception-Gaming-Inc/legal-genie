@@ -355,7 +355,7 @@ test('answerGroupQuestion: non-admin (regular Provider chat) omits per-line Prov
       });
       const promptText = getCapturedBody().contents[0].parts[0].text;
       assert.doesNotMatch(promptText, /Provider=FC/);
-      assert.match(promptText, /^Provider: FC/);
+      assert.match(promptText, /^Chat: Provider "FC" only/);
     }
   );
 });

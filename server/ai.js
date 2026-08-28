@@ -192,6 +192,134 @@ const APPROVAL_NOTICE_SCHEMA = {
   required: ['games'],
 };
 
+// ---------------------------------------------------------------------------
+// Gemini Context Caching (added 2026-08-28, at Tiffany's request) — every
+// Telegram question previously resent the ENTIRE Knowledge Base (all
+// company-approved FAQ entries + all document summaries, now several
+// full page-by-page manual summaries deep) to Gemini from scratch, even for
+// back-to-back questions seconds apart. That's a lot of repeated input
+// tokens for content that barely changes minute to minute. Gemini's
+// CachedContent API lets that large, slow-changing block (KB FAQs/document
+// summaries + the assistant's standing instructions) be uploaded ONCE and
+// referenced by name on every later request instead of resent — the parts
+// that genuinely change per question (this chat's cases, calendar events,
+// tasks, today's date, the question itself) are still sent fresh every time.
+//
+// Deliberately fails soft: if cache creation fails for ANY reason (API
+// key/tier doesn't support explicit caching, the KB is currently too small
+// to meet Gemini's minimum cacheable-token floor, a transient network/API
+// error, etc.) this silently falls back to sending everything inline on
+// every request, exactly as it worked before this existed. The bot must
+// keep answering questions correctly even when the optimization itself
+// isn't available — this is a cost/latency improvement, never a
+// requirement.
+const crypto = require('crypto');
+const GEMINI_CACHE_TTL_SECONDS = Number(process.env.GEMINI_CACHE_TTL_SECONDS) || 1800; // 30 min
+
+// In-memory only — resets on server restart / cold start, which is fine
+// since a cold start is exactly when re-deriving it is cheap and correct
+// anyway. Persisting the Google-side cache name across restarts (e.g. in
+// server/store.js) isn't worth the complexity for what's a cost/latency
+// optimization, not a correctness requirement.
+let kbCache = null; // { name, hash, model, expiresAtMs }
+
+function hashStableText(text) {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+// The part of the prompt that's identical for every question at a given
+// moment — the assistant's standing instructions. Deliberately excludes
+// anything isAdmin/Provider/question/case/calendar/task-specific (that
+// still goes in the live per-request text below) so this same cache serves
+// EVERY chat, admin or Provider-scoped alike, not just one.
+const STABLE_SYSTEM_INSTRUCTION =
+  'You are a helpful assistant embedded in a Telegram group chat for a legal/regulatory team tracking PAGCOR ' +
+  'game submissions. Each message will tell you whether this is an internal/admin chat (all Providers\' cases ' +
+  'visible — name which Provider a case belongs to when it\'s not obvious) or a single Provider\'s own chat (only ' +
+  'discuss THAT Provider\'s own cases, never another Provider\'s) — follow that scope strictly. Company-approved ' +
+  'Knowledge Base content (FAQ entries and reference-document summaries, given below) is general PAGCOR/' +
+  'regulatory material, not tied to any one case. Each message will also include that chat\'s current cases, the ' +
+  'team\'s shared Calendar events (visible to everyone, not Provider-specific), a list of TEAM Task Management ' +
+  'items (Personal tasks are deliberately never shown to you), and today\'s date — use today\'s date to resolve ' +
+  'relative dates like "tomorrow" or "this week" in questions about upcoming events or task due dates. First ' +
+  'decide whether the message is a genuine, on-topic question — about case status/stage/required documents/' +
+  'dates/rejection reasons, a general PAGCOR/regulatory question, a question about upcoming/scheduled Calendar ' +
+  'events, or a question about outstanding/team Task Management items. If it is, set shouldRespond to true, EVEN ' +
+  'IF the case data, Knowledge Base content, Calendar events, and Task items given don\'t actually cover it — in ' +
+  'that situation, don\'t guess: reply with a short, honest "I don\'t have information on that — you may want to ' +
+  'ask Crystal directly" instead (in the same language as the question), rather than staying silent, since a real ' +
+  'on-topic question deserves some reply even when the answer is "I don\'t know." Only set shouldRespond to false ' +
+  '(and leave answer empty) when the message ISN\'T really a question for this bot at all — ordinary conversation ' +
+  'between people, a greeting, or something entirely unrelated to cases/PAGCOR (e.g. the weather, the stock ' +
+  'market) — so the bot doesn\'t reply to every stray message in a busy group. Never guess or invent a stage, ' +
+  'date, document status, calendar event, or task that isn\'t present in the case data, Knowledge Base content, ' +
+  'Calendar events, or Task items given. Keep answers short and friendly.';
+
+async function deleteGeminiCache(name) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  try {
+    await fetch(`https://generativelanguage.googleapis.com/v1beta/${name}`, {
+      method: 'DELETE',
+      headers: { 'x-goog-api-key': apiKey },
+    });
+  } catch (err) { /* best-effort cleanup only — the TTL expires it either way */ }
+}
+
+// Returns the cached content's resource name (e.g. "cachedContents/abc123")
+// on success, or null if caching isn't usable right now for any reason.
+// Callers MUST treat null as "fall back to sending everything inline" —
+// this never throws.
+async function getOrRefreshKbCache({ kbFaqLines, kbDocLines, model }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  const stableText =
+    `Company-approved Knowledge Base FAQ entries:\n${kbFaqLines.length ? kbFaqLines.join('\n') : '(none on file yet)'}\n\n` +
+    `Company-approved Knowledge Base reference document summaries:\n${kbDocLines.length ? kbDocLines.join('\n') : '(none on file yet)'}`;
+  // Re-hash on every call (cheap) so a KB edit — a new FAQ, a rewritten
+  // document summary, a newly-Active document — is picked up on the very
+  // next question instead of staying stale for up to GEMINI_CACHE_TTL_SECONDS.
+  const hash = hashStableText(STABLE_SYSTEM_INSTRUCTION + ' ' + stableText + ' ' + model);
+
+  const now = Date.now();
+  if (kbCache && kbCache.hash === hash && kbCache.expiresAtMs > now + 30000) {
+    return kbCache.name;
+  }
+
+  const staleCache = kbCache;
+  try {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/cachedContents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        model: `models/${model}`,
+        systemInstruction: { parts: [{ text: STABLE_SYSTEM_INSTRUCTION }] },
+        contents: [{ role: 'user', parts: [{ text: stableText }] }],
+        ttl: `${GEMINI_CACHE_TTL_SECONDS}s`,
+      }),
+    });
+    if (!response.ok) {
+      // Most likely cause: this KB is currently too small to meet Gemini's
+      // minimum cacheable-token floor, or this API key's tier doesn't
+      // support explicit caching. Either way, just don't cache this time —
+      // answerGroupQuestion() falls back to the original inline behavior.
+      kbCache = null;
+      return null;
+    }
+    const data = await response.json();
+    if (!data?.name) {
+      kbCache = null;
+      return null;
+    }
+    kbCache = { name: data.name, hash, model, expiresAtMs: now + GEMINI_CACHE_TTL_SECONDS * 1000 };
+    // Best-effort: drop the now-superseded cache at Google so unused ones
+    // don't linger — failures here are harmless, TTL cleans them up anyway.
+    if (staleCache && staleCache.name !== kbCache.name) deleteGeminiCache(staleCache.name);
+    return kbCache.name;
+  } catch (err) {
+    kbCache = null;
+    return null;
+  }
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Pulls the "Please retry in Xs" hint out of Gemini's own 429 message body so
@@ -1165,55 +1293,50 @@ async function answerGroupQuestion({ providerName, question, cases, kbFaqs, kbDo
       return `- ${t.title || '(untitled)'}: ${bits}`;
     });
 
-  const scopeInstruction = isAdmin
-    ? 'You are shown ONE message from the group, a list of EVERY Provider\'s current cases from the internal ' +
-      'tracking system (each one labelled with its own Provider), and company-approved Knowledge Base content. ' +
-      'This is an internal/admin chat, not a Provider-facing one — you may discuss any Provider\'s cases freely, ' +
-      'and should name which Provider a case belongs to when it\'s not obvious from context.'
-    : 'You are shown ONE message from the group, a list of this Provider\'s current cases from the internal ' +
-      'tracking system, and company-approved Knowledge Base content. Only discuss THIS Provider\'s own cases — ' +
-      'never another Provider\'s.';
+  const chatScopeLine = isAdmin
+    ? 'Chat: internal/admin (all Providers\' cases visible — name which Provider each case belongs to when not obvious)'
+    : `Chat: Provider "${providerName}" only — only discuss this Provider's own cases, never another Provider's.`;
 
-  const requestBody = {
-    systemInstruction: {
-      parts: [{
-        text:
-          'You are a helpful assistant embedded in a Telegram group chat for a legal/regulatory team tracking ' +
-          'PAGCOR game submissions. ' + scopeInstruction + ' Knowledge Base content (FAQ entries and ' +
-          'reference-document summaries) is general PAGCOR/regulatory material, not tied to any one case. You are ' +
-          `also given the team's shared Calendar events (visible to everyone, not Provider-specific), and a list ` +
-          'of TEAM Task Management items (Personal tasks are deliberately never shown to you). ' +
-          `Today's date is ${todayStr} — use it to resolve relative dates like "tomorrow" or "this week" in ` +
-          'questions about upcoming events or task due dates. First decide whether the message is a genuine, ' +
-          'on-topic question — about case status/stage/required documents/dates/rejection reasons, a general ' +
-          'PAGCOR/regulatory question, a question about upcoming/scheduled Calendar events, or a question about ' +
-          'outstanding/team Task Management items. If it is, set shouldRespond ' +
-          'to true, EVEN IF the case data, Knowledge Base content, Calendar events, and Task items given don\'t actually cover it — in that ' +
-          'situation, don\'t guess: reply with a short, honest "I don\'t have information on that — you may want to ' +
-          'ask Crystal directly" instead (in the same language as the question), rather than staying silent, since a ' +
-          'real on-topic question deserves some reply even when the answer is "I don\'t know." Only set ' +
-          'shouldRespond to false (and leave answer empty) when the message ISN\'T really a question for this bot at ' +
-          'all — ordinary conversation between people, a greeting, or something entirely unrelated to cases/PAGCOR ' +
-          '(e.g. the weather, the stock market) — so the bot doesn\'t reply to every stray message in a busy group. ' +
-          'Never guess or invent a stage, date, document status, calendar event, or task that isn\'t present in the ' +
-          'case data, Knowledge Base content, Calendar events, or Task items given. Keep answers short and friendly.',
-      }],
-    },
-    contents: [{
-      parts: [{
-        text:
-          (isAdmin ? 'Chat: internal/admin (all Providers)\n\n' : `Provider: ${providerName}\n\n`) +
-          `${isAdmin ? 'All Providers\' cases on file' : 'This Provider\'s cases on file'}:\n${caseLines.length ? caseLines.join('\n') : '(no cases on file yet)'}\n\n` +
-          `Company-approved Knowledge Base FAQ entries:\n${kbFaqLines.length ? kbFaqLines.join('\n') : '(none on file yet)'}\n\n` +
-          `Company-approved Knowledge Base reference document summaries:\n${kbDocLines.length ? kbDocLines.join('\n') : '(none on file yet)'}\n\n` +
-          `Today's date: ${todayStr}\n\n` +
-          `Shared Calendar events on file:\n${calendarLines.length ? calendarLines.join('\n') : '(none on file yet)'}\n\n` +
-          `${isAdmin ? 'Team Task Management items on file' : 'This Provider\'s own Task Management items on file'} (Personal tasks excluded):\n${taskLines.length ? taskLines.join('\n') : '(none on file yet)'}\n\n` +
-          `Group message: "${question}"`,
-      }],
-    }],
-    generationConfig: { responseMimeType: 'application/json', responseSchema: GROUP_QA_SCHEMA },
-  };
+  const dynamicLines =
+    `${chatScopeLine}\n\n` +
+    `${isAdmin ? 'All Providers\' cases on file' : 'This Provider\'s cases on file'}:\n${caseLines.length ? caseLines.join('\n') : '(no cases on file yet)'}\n\n` +
+    `Today's date: ${todayStr}\n\n` +
+    `Shared Calendar events on file:\n${calendarLines.length ? calendarLines.join('\n') : '(none on file yet)'}\n\n` +
+    `${isAdmin ? 'Team Task Management items on file' : 'This Provider\'s own Task Management items on file'} (Personal tasks excluded):\n${taskLines.length ? taskLines.join('\n') : '(none on file yet)'}\n\n` +
+    `Group message: "${question}"`;
+
+  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
+  const cacheName = await getOrRefreshKbCache({ kbFaqLines, kbDocLines, model });
+
+  const requestBody = cacheName
+    ? {
+        // Fast path: the standing instructions + KB FAQs/document summaries
+        // already live in Google's cache under `cacheName` — only the
+        // genuinely-per-question content is sent here.
+        cachedContent: cacheName,
+        contents: [{ parts: [{ text: dynamicLines }] }],
+        generationConfig: { responseMimeType: 'application/json', responseSchema: GROUP_QA_SCHEMA },
+      }
+    : {
+        // Fallback: caching isn't usable right now (see getOrRefreshKbCache's
+        // comments) — send everything inline exactly as before this feature
+        // existed, so the bot keeps working regardless.
+        systemInstruction: { parts: [{ text: STABLE_SYSTEM_INSTRUCTION }] },
+        contents: [{
+          parts: [{
+            text:
+              `${chatScopeLine}\n\n` +
+              `${isAdmin ? 'All Providers\' cases on file' : 'This Provider\'s cases on file'}:\n${caseLines.length ? caseLines.join('\n') : '(no cases on file yet)'}\n\n` +
+              `Company-approved Knowledge Base FAQ entries:\n${kbFaqLines.length ? kbFaqLines.join('\n') : '(none on file yet)'}\n\n` +
+              `Company-approved Knowledge Base reference document summaries:\n${kbDocLines.length ? kbDocLines.join('\n') : '(none on file yet)'}\n\n` +
+              `Today's date: ${todayStr}\n\n` +
+              `Shared Calendar events on file:\n${calendarLines.length ? calendarLines.join('\n') : '(none on file yet)'}\n\n` +
+              `${isAdmin ? 'Team Task Management items on file' : 'This Provider\'s own Task Management items on file'} (Personal tasks excluded):\n${taskLines.length ? taskLines.join('\n') : '(none on file yet)'}\n\n` +
+              `Group message: "${question}"`,
+          }],
+        }],
+        generationConfig: { responseMimeType: 'application/json', responseSchema: GROUP_QA_SCHEMA },
+      };
   return callGemini(requestBody);
 }
 

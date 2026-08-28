@@ -78,6 +78,23 @@ const Api = {
 // the file as a Blob with the token attached, then triggers the save via a
 // throwaway object URL (same trick exportCasesCsv already uses for its
 // client-built CSV, just fed a server response instead of a local Blob).
+// Writes an array-of-arrays out as a real .xlsx download via SheetJS
+// (loaded in index.html, as the global XLSX). Every cell aoa_to_sheet()
+// builds from a plain JS string gets an explicit string type ("s") in the
+// file's own XML — unlike a hand-built CSV, where Excel has to guess each
+// cell's type from the raw text on open, and a value starting with "="/
+// "+"/"-"/"@" gets silently guessed as a formula and executed ("CSV formula
+// injection"). That guessing never happens here, so this is immune to it
+// by construction rather than by escaping specific characters. Used by both
+// Case Management's and Document Center's "Export" buttons (2026-08-28,
+// replacing what used to be two separate hand-built-CSV functions).
+function downloadXlsx(rows, filenameBase, sheetName) {
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  XLSX.writeFile(wb, `${filenameBase}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
 async function downloadAuthedFile(url, fileName) {
   const headers = {};
   if (Api.token) headers['Authorization'] = `Bearer ${Api.token}`;
@@ -3139,7 +3156,7 @@ async function renderCases(content) {
   content.innerHTML = listToolbar({
     title: 'Case Management', canCreate,
     extraButtonsHtml: `
-      <button class="btn btn-outline-secondary btn-sm" id="btnExportCases">${Icon('download', 'me-1')}Export CSV</button>
+      <button class="btn btn-outline-secondary btn-sm" id="btnExportCases">${Icon('download', 'me-1')}Export Excel</button>
       ${canCreate ? `<button class="btn btn-outline-secondary btn-sm" id="btnImportCases">${Icon('download', 'me-1')}Import Excel/CSV</button>` : ''}`,
   }) + `
     <div class="d-flex flex-wrap gap-2 mb-3">
@@ -3428,19 +3445,14 @@ async function renderCases(content) {
       .map((x) => x.c);
   }
 
-  function csvEscape(v) {
-    const s = v === null || v === undefined ? '' : String(v);
-    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  }
-
   // Exports every row matching the current Provider/Stage/search filters
-  // (not just the current page) in the current sort order — a CSV rather
-  // than a real .xlsx since that needs no library/build step and opens
-  // fine in Excel; mirrors the same field set the Import feature reads.
+  // (not just the current page) in the current sort order — mirrors the
+  // same field set the Import feature reads. Was a hand-built CSV until
+  // 2026-08-28 (see downloadXlsx's comment above for why that changed).
   function exportCasesCsv() {
     const header = ['Case #', 'Title', 'Type', 'Provider', 'Game Title', 'Game Type', 'Game ID', 'Game Version', 'With Jackpot',
       'PAGCOR Stage', 'Owner', 'Priority', 'Status', 'Date Received', 'Submit Date', 'LOA Expiry Date', 'Description'];
-    const lines = [header.map(csvEscape).join(',')];
+    const rows = [header];
     // Multi-game case: one row per game, so every game's own PAGCOR Stage/
     // Game ID/etc. is actually visible in the export instead of only the
     // first game's — case-level fields (Case #, Title, Provider, Owner,
@@ -3449,31 +3461,23 @@ async function renderCases(content) {
     // Date comes from the game (each game tracks its own), not the case.
     sortedFilteredCases().forEach((c) => {
       caseGamesList(c).forEach((g) => {
-        lines.push([
+        rows.push([
           c.caseNumber, c.title, c.type, c.provider || '', g.gameTitle || '', g.gameType || '', g.gameId || '', g.gameVersion || '', g.withJackpot || '',
           g.pagcorStage || '',
           userName(c.ownerId), c.priority, c.status, c.dateReceived || '', c.deadline || '', g.loaExpiryDate || '', c.description || '',
-        ].map(csvEscape).join(','));
+        ]);
       });
       if (!caseGamesList(c).length) {
         // Non-PAGCOR case (no provider, no games) — still export exactly one
         // row so it isn't silently dropped from the file.
-        lines.push([
+        rows.push([
           c.caseNumber, c.title, c.type, '', '', '', '', '', '',
           '',
           userName(c.ownerId), c.priority, c.status, c.dateReceived || '', c.deadline || '', '', c.description || '',
-        ].map(csvEscape).join(','));
+        ]);
       }
     });
-    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `cases_export_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadXlsx(rows, 'cases_export', 'Cases');
   }
 
   // 30 rows per page (see renderPage()) — filtering always jumps back to
@@ -3617,18 +3621,14 @@ async function renderCases(content) {
 // no equivalent). Same throwaway-object-URL trick exportCasesCsv uses.
 function exportDocumentsCsv(list) {
   const header = ['Title', 'File Name', 'Provider', 'Game Title', 'Game ID', 'Related Case', 'Uploaded By', 'Uploaded'];
-  const lines = [header.map(csvEscape).join(',')];
+  const rows = [header];
   list.forEach((d) => {
-    lines.push([
+    rows.push([
       d.title || '', d.fileName || '', d.provider || '', d.gameTitle || '', d.gameId || '',
       caseName(d.relatedCaseId) || '', userName(d.uploadedBy), fmtDate(d.createdAt),
-    ].map(csvEscape).join(','));
+    ]);
   });
-  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'documents.csv'; a.click();
-  URL.revokeObjectURL(url);
+  downloadXlsx(rows, 'documents_export', 'Documents');
 }
 
 async function renderDocuments(content) {
@@ -3889,7 +3889,7 @@ async function renderDocuments(content) {
 
     content.innerHTML = listToolbar({
       title: 'Document Center', canCreate,
-      extraButtonsHtml: `<button type="button" class="btn btn-outline-secondary btn-sm" id="btnExportDocsCsv">${Icon('download', 'me-1')}Export CSV</button>`,
+      extraButtonsHtml: `<button type="button" class="btn btn-outline-secondary btn-sm" id="btnExportDocsCsv">${Icon('download', 'me-1')}Export Excel</button>`,
     }) + searchBarHtml + tabsHtml + (
       gameRows.length
         ? `<div class="card stat-card">
@@ -3957,7 +3957,7 @@ async function renderDocuments(content) {
   // page, which is where document review/upload work actually happens.
   content.innerHTML = listToolbar({
     title: `Document Center — ${documentsFolderNav.provider} / ${documentsFolderNav.gameTitle}`, canCreate,
-    extraButtonsHtml: `<button type="button" class="btn btn-outline-secondary btn-sm" id="btnExportDocsCsv">${Icon('download', 'me-1')}Export CSV</button>`,
+    extraButtonsHtml: `<button type="button" class="btn btn-outline-secondary btn-sm" id="btnExportDocsCsv">${Icon('download', 'me-1')}Export Excel</button>`,
   }) + `
     <div class="mb-3"><a href="#" id="btnBackToList" class="small text-decoration-none">&larr; All Documents</a></div>
     <div class="card stat-card">
